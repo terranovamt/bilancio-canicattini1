@@ -38,7 +38,7 @@ Creare un bot Telegram privato per un piccolo gruppo. Il bot riceve foto o PDF d
 
 ## Stato e informazioni ancora da raccogliere
 
-- Repository Git locale inizializzato sul ramo `main`; repository GitHub privato creato. Non è stato fatto alcun push né commit.
+- Repository Git locale inizializzato sul ramo `main`; repository GitHub privato creato. I moduli di base e l'avvio iniziale del bot sono stati committati localmente; non è stato fatto alcun push.
 - `.env` locale creato e ignorato da Git; il token del bot va inserito solo localmente dall'utente.
 - Nome utente del bot confermato dall'utente: `@bilanciocanicattini1_bot`.
 - L'utente ha recuperato l'ID Telegram dell'amministratore; gli ID degli altri utenti arriveranno in seguito. Gli ID vanno configurati localmente, non inseriti in questo documento.
@@ -54,4 +54,4 @@ Creare un bot Telegram privato per un piccolo gruppo. Il bot riceve foto o PDF d
 - L'utente riferisce che la registrazione della seconda prova è stata chiusa senza salvare e che non trova la prima operazione di prova nel conto. Prima di qualsiasi test ulteriore, non assumere che una registrazione Playwright abbia cancellato o verificato dati nel portale.
 - Prima dell'implementazione occorre ancora documentare in sicurezza il caricamento allegato e le tipologie di uscita. Non eseguire le registrazioni come script contro il portale.
 - L'utente ha escluso un approccio basato soltanto su OCR: la prima versione deve usare un modello visivo locale per comprendere i campi della ricevuta e una fase locale di correzione, ritaglio e raddrizzamento dell'immagine. Modello e risorse necessarie sul NAS restano da verificare; non attivare servizi online.
-- È stata approvata una struttura modulare per future integrazioni. Configurazione, persistenza SQLite, archivio ricevute, modello Pydantic, correzione locale delle immagini, client Ollama, regole di accesso e contratto del client AGESCI sono stati implementati con test e committati. La conservazione temporanea dei file in attesa di conferma è in sviluppo, insieme all'applicazione Telegram asincrona; non usare un approccio basato solo su OCR.
+- È stata approvata una struttura modulare per future integrazioni. Configurazione, persistenza SQLite, archivio ricevute, modello Pydantic, correzione locale delle immagini, client Ollama, regole di accesso, contratto del client AGESCI, comandi Telegram iniziali e conservazione temporanea delle ricevute sono implementati con test. Sono in sviluppo il flusso completo di ricezione/conferma e la registrazione nel portale; non usare un approccio basato solo su OCR.

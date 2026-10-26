@@ -15,6 +15,7 @@ _EXPENSE_STATUSES = {
     "confirmed",
     "queued",
     "submitted",
+    "dry_run",
     "failed",
     "cancelled",
 }
@@ -55,7 +56,7 @@ class Database:
                     status TEXT NOT NULL CHECK (
                         status IN (
                             'received', 'confirmed', 'queued',
-                            'submitted', 'failed', 'cancelled'
+                            'submitted', 'dry_run', 'failed', 'cancelled'
                         )
                     ),
                     archive_path TEXT,
@@ -225,6 +226,36 @@ class Database:
             )
             if cursor.rowcount == 0:
                 raise KeyError(f"Expense not found: {expense_id}")
+
+    def update_expense_payload(
+        self,
+        expense_id: str,
+        payload: Mapping[str, object],
+    ) -> None:
+        payload_json = json.dumps(dict(payload), ensure_ascii=False, sort_keys=True)
+        now = self._now()
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE expenses
+                SET payload_json = ?, updated_at = ?
+                WHERE expense_id = ?
+                """,
+                (payload_json, now, expense_id),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"Expense not found: {expense_id}")
+
+    def delete_expense(self, expense_id: str) -> bool:
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM expenses
+                WHERE expense_id = ? AND status IN ('received', 'cancelled')
+                """,
+                (expense_id,),
+            )
+        return cursor.rowcount > 0
 
     def enqueue_retry(
         self,

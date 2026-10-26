@@ -116,6 +116,43 @@ class DatabaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "status"):
             self.database.update_expense_status("expense-1", "unknown")
 
+    def test_updates_expense_payload(self) -> None:
+        self.create_expense()
+
+        self.database.update_expense_payload(
+            "expense-1",
+            {"merchant": "Updated Shop", "total_amount": "15.00"},
+        )
+
+        stored = self.database.get_expense("expense-1")
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertEqual(stored.payload["merchant"], "Updated Shop")
+        self.assertEqual(stored.payload["total_amount"], "15.00")
+
+    def test_deleting_received_expense_releases_duplicate_hash(self) -> None:
+        self.create_expense()
+
+        self.assertTrue(self.database.delete_expense("expense-1"))
+        self.assertFalse(self.database.contains_file_hash("a" * 64))
+        self.assertFalse(self.database.delete_expense("expense-1"))
+
+    def test_cannot_delete_submitted_expense(self) -> None:
+        self.create_expense()
+        self.database.update_expense_status("expense-1", "submitted")
+
+        self.assertFalse(self.database.delete_expense("expense-1"))
+
+    def test_accepts_dry_run_status(self) -> None:
+        self.create_expense()
+
+        self.database.update_expense_status("expense-1", "dry_run")
+
+        stored = self.database.get_expense("expense-1")
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertEqual(stored.status, "dry_run")
+
 
 if __name__ == "__main__":
     unittest.main()
