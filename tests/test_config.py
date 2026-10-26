@@ -24,6 +24,7 @@ class SettingsTests(unittest.TestCase):
         self.assertIsNone(settings.local_vision_model)
         self.assertIsNone(settings.anthropic_api_key)
         self.assertIsNone(settings.bilancio_url)
+        self.assertIsNone(settings.playwright_browser_channel)
 
     def test_loads_custom_data_path(self) -> None:
         self.environ["DATA_PATH"] = "C:\\project\\local-data"
@@ -99,6 +100,23 @@ class SettingsTests(unittest.TestCase):
         self.environ["LOCAL_VISION_URL"] = "http://ollama:11434/remote-proxy"
 
         with self.assertRaisesRegex(ConfigurationError, "local HTTP service"):
+            Settings.from_env(self.environ)
+
+    def test_accepts_installed_browser_channel_for_local_testing(self) -> None:
+        self.environ["PLAYWRIGHT_BROWSER_CHANNEL"] = "chrome"
+
+        self.assertEqual(
+            Settings.from_env(self.environ).playwright_browser_channel,
+            "chrome",
+        )
+
+    def test_rejects_unsupported_browser_channel(self) -> None:
+        self.environ["PLAYWRIGHT_BROWSER_CHANNEL"] = "chromium"
+
+        with self.assertRaisesRegex(
+            ConfigurationError,
+            "PLAYWRIGHT_BROWSER_CHANNEL",
+        ):
             Settings.from_env(self.environ)
 
     def test_secret_values_are_not_in_settings_repr(self) -> None:

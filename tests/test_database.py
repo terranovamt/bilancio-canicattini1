@@ -39,6 +39,20 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(stored.archive_path, "/scontrini/2026/10/test.jpg")
         self.assertTrue(self.database.contains_file_hash("a" * 64))
 
+    def test_create_manual_expense_has_no_receipt_hash_or_archive(self) -> None:
+        self.database.create_manual_expense(
+            expense_id="manual-1",
+            telegram_user_id=12345,
+            payload={"manual_entry": True},
+        )
+
+        stored = self.database.get_expense("manual-1")
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertEqual(stored.status, "received")
+        self.assertIsNone(stored.archive_path)
+        self.assertTrue(stored.payload["manual_entry"])
+
     def test_duplicate_hash_is_rejected(self) -> None:
         self.assertTrue(self.create_expense())
 

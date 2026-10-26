@@ -231,10 +231,81 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(type_markup.inline_keyboard[0][0].text, "Tipo uscita")
         self.assertEqual(portal.requested_dates[0], date(2026, 10, 26))
         self.assertEqual(portal.requested_dates[1], date(2026, 10, 26))
-        self.assertEqual(
-            self.database.get_conversation_state(12345)[0],
-            "awaiting_transaction_type",
+
+    async def test_manual_expense_skips_receipt_ai_and_archive(self) -> None:
+        portal = FakeBilancioClient()
+        workflow = ReceiptWorkflow(
+            settings=make_settings(),
+            database=self.database,
+            analyzer=None,
+            pending_store=PendingReceiptStore(self.root / "pending"),
+            archive=FileArchive(self.root / "archive"),
+            bilancio_client=portal,
         )
+        user = SimpleNamespace(id=12345)
+        initial_message = SimpleNamespace(reply_text=AsyncMock())
+        await workflow.start_manual_expense(
+            SimpleNamespace(message=initial_message, effective_user=user),
+            SimpleNamespace(),
+        )
+        state = self.database.get_conversation_state(user.id)
+        self.assertIsNotNone(state)
+        assert state is not None
+        expense_id = state[1]["expense_id"]
+
+        entry_message = SimpleNamespace(
+            text="26/10/2026 | Prova Telegram | 1,00",
+            reply_text=AsyncMock(),
+        )
+        await workflow.handle_text(
+            SimpleNamespace(message=entry_message, effective_user=user),
+            SimpleNamespace(),
+        )
+        for callback_data in (
+            "receipt:confirm",
+            "receipt:choose:0",
+            "receipt:direction:uscita",
+            "receipt:voice:Voci Scout",
+            "receipt:choose:0",
+            "receipt:choose:0",
+            "receipt:choose:0",
+        ):
+            await workflow.handle_callback(
+                SimpleNamespace(
+                    callback_query=self.make_query(callback_data),
+                    effective_user=user,
+                ),
+                SimpleNamespace(),
+            )
+
+        notes_message = SimpleNamespace(text="-", reply_text=AsyncMock())
+        await workflow.handle_text(
+            SimpleNamespace(message=notes_message, effective_user=user),
+            SimpleNamespace(),
+        )
+        final_state = self.database.get_conversation_state(user.id)
+        self.assertEqual(final_state[0], "awaiting_manual_final_confirmation")
+
+        final_message = SimpleNamespace(reply_text=AsyncMock())
+        save_query = self.make_query("receipt:manual_save")
+        await workflow.handle_callback(
+            SimpleNamespace(
+                message=final_message,
+                callback_query=save_query,
+                effective_user=user,
+            ),
+            SimpleNamespace(),
+        )
+
+        stored = self.database.get_expense(expense_id)
+        self.assertIsNotNone(stored)
+        assert stored is not None
+        self.assertEqual(stored.status, "dry_run")
+        self.assertIsNone(stored.archive_path)
+        self.assertIsNone(self.database.get_conversation_state(user.id))
+        self.assertEqual(len(portal.submitted), 1)
+        self.assertTrue(portal.submitted[0][1])
+        self.assertTrue(portal.submitted[0][0].accounting_voice == "Voci Scout")
 
     async def test_confirmed_receipt_is_archived_and_submitted_in_dry_run(self) -> None:
         portal = FakeBilancioClient()

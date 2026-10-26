@@ -104,6 +104,7 @@ class Settings:
     bilancio_password: str | None = field(repr=False)
     local_vision_url: str
     local_vision_model: str | None
+    playwright_browser_channel: str | None
     data_path: str
     storage_path: str
     timezone: str
@@ -142,6 +143,14 @@ class Settings:
             raise ConfigurationError(
                 "BILANCIO_URL, BILANCIO_USER, and BILANCIO_PASSWORD must all be set together"
             )
+        playwright_browser_channel = _optional_text(
+            source,
+            "PLAYWRIGHT_BROWSER_CHANNEL",
+        )
+        if playwright_browser_channel not in {None, "chrome", "msedge"}:
+            raise ConfigurationError(
+                "Setting PLAYWRIGHT_BROWSER_CHANNEL must be chrome, msedge, or empty"
+            )
 
         return cls(
             bot_token=bot_token,
@@ -158,6 +167,7 @@ class Settings:
                 "http://ollama:11434",
             ),
             local_vision_model=_optional_text(source, "LOCAL_VISION_MODEL"),
+            playwright_browser_channel=playwright_browser_channel,
             data_path=_optional_text(source, "DATA_PATH") or "/data",
             storage_path=_optional_text(source, "STORAGE_PATH") or "/scontrini",
             timezone=_optional_text(source, "TZ") or "Europe/Rome",

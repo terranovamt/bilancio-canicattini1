@@ -50,11 +50,22 @@ $env:LOCAL_VISION_URL = "http://127.0.0.1:11434"
 $env:LOCAL_VISION_MODEL = "qwen3-vl:2b"
 $env:DATA_PATH = "$PWD\data-local"
 $env:STORAGE_PATH = "$PWD\scontrini-local"
+$env:PLAYWRIGHT_BROWSER_CHANNEL = "chrome"
 $env:DRY_RUN = "true"
 .\.venv\Scripts\python.exe -m bot.main
 ```
 
 Il bot legge token e ID dal file `.env`; non inviare quel file o le sue credenziali in chat. La prova salva database, registri e diagnostica in `data-local`, e le ricevute in `scontrini-local`, cartelle escluse da Git. Per fermare il bot, torna alla finestra PowerShell e premi `Ctrl+C`.
+
+### Prova manuale AGESCI senza ricevuta
+
+L’amministratore può usare `/testspesa` per inserire data, descrizione e importo direttamente in Telegram, senza scontrino e senza AI. Il bot mostra poi le scelte del portale e un riepilogo finale.
+
+- Con `DRY_RUN=true`, il portale non salva la spesa.
+- Con `DRY_RUN=false`, il pulsante finale inserisce davvero la spesa nel portale.
+- Usa `/annulla` per interrompere prima della conferma finale.
+
+Per la prima prova usa una descrizione chiaramente riconoscibile e controlla con attenzione anno, conto, direzione, voci, tipologia, unità, categoria e importo. Non condividere i dati della spesa in chat con altre persone.
 
 ## Verifiche automatiche sul PC
 

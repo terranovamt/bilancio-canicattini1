@@ -61,6 +61,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(message.reply_text.await_args.args[0], HELP_TEXT)
         self.assertIn("/ultime", HELP_TEXT)
+        self.assertIn("/testspesa", HELP_TEXT)
 
     async def test_cancel_command_clears_saved_state(self) -> None:
         workflow = Mock()

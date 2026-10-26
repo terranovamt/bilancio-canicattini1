@@ -157,6 +157,31 @@ class Database:
             )
         return True
 
+    def create_manual_expense(
+        self,
+        *,
+        expense_id: str,
+        telegram_user_id: int,
+        payload: Mapping[str, object],
+    ) -> None:
+        if not expense_id.strip():
+            raise ValueError("expense_id must not be empty")
+        if telegram_user_id <= 0:
+            raise ValueError("telegram_user_id must be positive")
+
+        now = self._now()
+        payload_json = json.dumps(dict(payload), ensure_ascii=False, sort_keys=True)
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO expenses (
+                    expense_id, telegram_user_id, payload_json, status,
+                    archive_path, created_at, updated_at
+                ) VALUES (?, ?, ?, 'received', NULL, ?, ?)
+                """,
+                (expense_id, telegram_user_id, payload_json, now, now),
+            )
+
     def get_expense(self, expense_id: str) -> StoredExpense | None:
         with self._connection() as connection:
             row = connection.execute(

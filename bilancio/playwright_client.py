@@ -50,12 +50,14 @@ class PlaywrightBilancioClient:
         selectors_path: str | Path,
         session_state_path: str | Path,
         debug_path: str | Path,
+        browser_channel: str | None = None,
         timeout_ms: int = 20_000,
     ) -> None:
         self._username = username
         self._password = password
         self._session_state_path = Path(session_state_path)
         self._debug_path = Path(debug_path)
+        self._browser_channel = browser_channel
         self._timeout_ms = timeout_ms
         self._lock = asyncio.Lock()
 
@@ -256,7 +258,10 @@ class PlaywrightBilancioClient:
     @asynccontextmanager
     async def _page_context(self):
         async with async_playwright() as playwright:
-            browser: Browser = await playwright.chromium.launch(headless=True)
+            launch_options: dict[str, object] = {"headless": True}
+            if self._browser_channel is not None:
+                launch_options["channel"] = self._browser_channel
+            browser: Browser = await playwright.chromium.launch(**launch_options)
             context: BrowserContext | None = None
             try:
                 state_path = self._session_state_path

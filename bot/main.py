@@ -37,6 +37,7 @@ def main() -> None:
             base_url=settings.bilancio_url,
             username=settings.bilancio_user,
             password=settings.bilancio_password,
+            browser_channel=settings.playwright_browser_channel,
             selectors_path=(
                 Path(__file__).resolve().parents[1]
                 / "bilancio"

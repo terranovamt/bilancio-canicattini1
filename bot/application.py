@@ -38,6 +38,7 @@ HELP_TEXT = (
     "/annulla - annulla l’operazione in corso\n"
     "/coda - mostra le spese in attesa o da verificare\n"
     "/riprova - ritenta le spese in coda\n"
+    "/testspesa - inserisce una spesa manuale (solo amministratore)\n"
     "/testbilancio - controlla il portale (solo amministratore)"
 )
 
@@ -87,6 +88,7 @@ def create_application(
     application.add_handler(CommandHandler("ultime", latest_expenses_command))
     application.add_handler(CommandHandler("coda", queue_command))
     application.add_handler(CommandHandler("riprova", retry_command))
+    application.add_handler(CommandHandler("testspesa", manual_expense_command))
     application.add_handler(CommandHandler("testbilancio", test_bilancio_command))
     application.add_handler(
         MessageHandler(
@@ -124,7 +126,8 @@ async def start_command(
         return
     await update.message.reply_text(
         "Ciao! Inviami la foto o il PDF di uno scontrino. "
-        "Prima di registrare una spesa, ti mostrerò i dati da controllare."
+        "Per una prova manuale senza scontrino, l’amministratore può usare "
+        "/testspesa. Prima di registrare una spesa, ti mostrerò i dati da controllare."
     )
 
 
@@ -241,6 +244,14 @@ async def retry_command(
         f"Tentativo completato: {summary.succeeded} riuscite, "
         f"{summary.pending} ancora in attesa, {summary.failed} da verificare."
     )
+
+
+async def manual_expense_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    workflow: ReceiptWorkflow = context.application.bot_data["receipt_workflow"]
+    await workflow.start_manual_expense(update, context)
 
 
 async def test_bilancio_command(

@@ -105,7 +105,10 @@ class ExpenseRetryService:
 
         try:
             portal_expense = self._portal_expense(stored)
-            if stored.archive_path is None:
+            if (
+                stored.archive_path is None
+                and stored.payload.get("manual_entry") is not True
+            ):
                 archived = await asyncio.to_thread(
                     self._archive.archive,
                     self._pending_path(stored),

@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Protocol
+import uuid
 
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import TelegramError
@@ -62,6 +63,60 @@ class ReceiptWorkflow:
         self._pending_store = pending_store
         self._archive = archive
         self._bilancio = bilancio_client
+
+    async def start_manual_expense(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        message = update.message
+        user = update.effective_user
+        if message is None or user is None:
+            return
+        if user.id != self._settings.admin_user_id:
+            await message.reply_text("Comando riservato all’amministratore.")
+            return
+        if self._bilancio is None:
+            await message.reply_text(
+                "Il collegamento al portale non è configurato. Non ho creato "
+                "alcuna spesa."
+            )
+            return
+        if await asyncio.to_thread(
+            self._database.get_conversation_state,
+            user.id,
+        ) is not None:
+            await message.reply_text(
+                "C’è già un’operazione in corso. Usa /annulla prima di iniziare "
+                "la prova manuale."
+            )
+            return
+
+        expense_id = uuid.uuid4().hex
+        await asyncio.to_thread(
+            self._database.create_manual_expense,
+            expense_id=expense_id,
+            telegram_user_id=user.id,
+            payload={"manual_entry": True},
+        )
+        await self._save_state(
+            user.id,
+            "manual_entry_data",
+            {"expense_id": expense_id},
+        )
+        mode_notice = (
+            "La modalità attuale è SIMULATA: il portale non salverà la spesa."
+            if self._settings.dry_run
+            else "La modalità attuale è REALE: dopo le scelte ti chiederò un’ultima "
+            "conferma prima di inserirla nel portale."
+        )
+        await message.reply_text(
+            "Prova manuale senza scontrino e senza analisi AI.\n"
+            "Scrivi data, descrizione e importo separati da |.\n"
+            "Esempio: 26/10/2026 | Prova Telegram | 1,00\n"
+            f"{mode_notice}\n"
+            "Per interrompere in qualsiasi momento usa /annulla."
+        )
 
     async def receive_receipt(
         self,
@@ -190,6 +245,26 @@ class ReceiptWorkflow:
             )
             return
 
+        if state == "manual_entry_data":
+            try:
+                updated = self._parse_manual_entry(expense.payload, message.text)
+            except ValueError:
+                await message.reply_text(
+                    "Formato non valido. Scrivi data, descrizione e importo "
+                    "separati da |, per esempio 26/10/2026 | Prova Telegram | 1,00."
+                )
+                return
+            await asyncio.to_thread(
+                self._database.update_expense_payload,
+                expense_id,
+                updated,
+            )
+            await self._save_state(user.id, "awaiting_confirmation", state_data)
+            await message.reply_text(
+                self._manual_confirmation_text(updated),
+                reply_markup=self._confirmation_keyboard(),
+            )
+            return
         if state == "awaiting_receipt_data":
             field_name = self._next_missing_field(expense.payload)
         elif state == "awaiting_edit":
@@ -197,6 +272,23 @@ class ReceiptWorkflow:
             if field_name not in _EDIT_FIELDS:
                 raise ValueError("Conversation state contains an unsupported edit field")
         elif state == "awaiting_notes":
+            if expense.payload.get("manual_entry") is True:
+                state_data["portal_notes"] = (
+                    None if message.text.strip() == "-" else message.text.strip()
+                )
+                await self._save_state(
+                    user.id,
+                    "awaiting_manual_final_confirmation",
+                    state_data,
+                )
+                await message.reply_text(
+                    self._manual_final_confirmation_text(
+                        expense.payload,
+                        state_data,
+                    ),
+                    reply_markup=self._manual_final_confirmation_keyboard(),
+                )
+                return
             await self._submit_expense(
                 update,
                 context,
@@ -230,6 +322,12 @@ class ReceiptWorkflow:
             await message.reply_text(_FIELD_PROMPTS[missing[0]])
             return
         await self._save_state(user.id, "awaiting_confirmation", state_data)
+        if updated.get("manual_entry") is True:
+            await message.reply_text(
+                self._manual_confirmation_text(updated),
+                reply_markup=self._confirmation_keyboard(),
+            )
+            return
         await message.reply_text(
             self._confirmation_text(receipt),
             reply_markup=self._confirmation_keyboard(),
@@ -296,6 +394,23 @@ class ReceiptWorkflow:
                 expense.payload,
                 query,
                 context,
+            )
+        elif value == "manual_save":
+            if (
+                state != "awaiting_manual_final_confirmation"
+                or expense.payload.get("manual_entry") is not True
+            ):
+                await query.edit_message_text("Questa conferma non è più disponibile.")
+                return
+            notes_text = state_data.get("portal_notes")
+            await self._submit_expense(
+                update,
+                context,
+                user.id,
+                expense_id,
+                expense.payload,
+                state_data,
+                notes_text if isinstance(notes_text, str) else "-",
             )
         elif value.startswith("direction:"):
             await self._select_direction(
@@ -619,7 +734,7 @@ class ReceiptWorkflow:
         state_data: dict[str, object],
         notes_text: str,
     ) -> None:
-        message = update.message
+        message = getattr(update, "effective_message", None) or update.message
         if message is None:
             return
         if self._bilancio is None:
@@ -649,7 +764,13 @@ class ReceiptWorkflow:
             expense = await asyncio.to_thread(self._database.get_expense, expense_id)
             if expense is None:
                 raise KeyError("Expense no longer exists")
-            if expense.archive_path is None:
+            if payload.get("manual_entry") is True:
+                await asyncio.to_thread(
+                    self._database.update_expense_status,
+                    expense_id,
+                    "confirmed",
+                )
+            elif expense.archive_path is None:
                 archived = await asyncio.to_thread(
                     self._archive.archive,
                     Path(str(payload["pending_path"])),
@@ -758,10 +879,16 @@ class ReceiptWorkflow:
                         self._pending_store.delete,
                         pending_path,
                     )
-                await message.reply_text(
-                    "Non ho potuto verificare la registrazione. La ricevuta è "
-                    "conservata sul NAS e l’operazione è in coda per un nuovo tentativo."
-                )
+                if payload.get("manual_entry") is True:
+                    await message.reply_text(
+                        "Non ho potuto verificare la registrazione manuale. "
+                        "L’operazione è in coda per un nuovo tentativo."
+                    )
+                else:
+                    await message.reply_text(
+                        "Non ho potuto verificare la registrazione. La ricevuta è "
+                        "conservata sul NAS e l’operazione è in coda per un nuovo tentativo."
+                    )
             else:
                 await self._clear_state(user_id)
                 await message.reply_text(
@@ -782,9 +909,19 @@ class ReceiptWorkflow:
             await asyncio.to_thread(self._pending_store.delete, pending_path)
         await self._clear_state(user_id)
         if result.dry_run:
+            if payload.get("manual_entry") is True:
+                await message.reply_text(
+                    "Prova manuale completata: il portale non ha salvato la spesa."
+                )
+            else:
+                await message.reply_text(
+                    "Prova completata: il portale non ha salvato la spesa. "
+                    "La ricevuta è stata archiviata sul NAS."
+                )
+        elif payload.get("manual_entry") is True:
             await message.reply_text(
-                "Prova completata: il portale non ha salvato la spesa. "
-                "La ricevuta è stata archiviata sul NAS."
+                "Spesa manuale registrata e verificata nel portale. "
+                "Non è stato archiviato uno scontrino."
             )
         else:
             await message.reply_text(
@@ -920,6 +1057,101 @@ class ReceiptWorkflow:
             f"Categoria suggerita: {category}\n"
             f"Affidabilità: {receipt.confidence:.0%}{warning}\n\n"
             "La ricevuta sarà conservata sul NAS, non allegata al portale."
+        )
+
+    @classmethod
+    def _parse_manual_entry(
+        cls,
+        payload: dict[str, object],
+        raw_value: str,
+    ) -> dict[str, object]:
+        parts = [part.strip() for part in raw_value.split("|")]
+        if len(parts) != 3:
+            raise ValueError("Manual expense needs date, description, and amount")
+        updated = dict(payload)
+        for field_name, value in zip(
+            ("date", "merchant", "total_amount"),
+            parts,
+            strict=True,
+        ):
+            updated = cls._apply_user_value(updated, field_name, value)
+        updated.update(
+            currency="EUR",
+            confidence=1.0,
+            manual_entry=True,
+        )
+        cls._receipt_from_payload(updated)
+        return updated
+
+    @staticmethod
+    def _manual_confirmation_text(payload: dict[str, object]) -> str:
+        return (
+            "Controlla la spesa manuale:\n"
+            f"Data: {payload['date']}\n"
+            f"Descrizione: {payload['merchant']}\n"
+            f"Importo: {payload['total_amount']} EUR\n\n"
+            "Non verrà usata l’AI e non verrà archiviato uno scontrino. "
+            "Dopo questa conferma sceglierai le opzioni del portale."
+        )
+
+    def _manual_final_confirmation_text(
+        self,
+        payload: dict[str, object],
+        state_data: dict[str, object],
+    ) -> str:
+        account = self._option_from(state_data, "account").label
+        transaction_type = self._option_from(
+            state_data,
+            "transaction_type",
+        ).label
+        unit = self._option_from(state_data, "unit").label
+        category_data = state_data.get("category")
+        category = (
+            PortalOption(**category_data).label
+            if isinstance(category_data, dict)
+            else "nessuna"
+        )
+        direction = (
+            "Entrata"
+            if state_data.get("direction") == TransactionDirection.INCOME.value
+            else "Uscita"
+        )
+        action = (
+            "SIMULAZIONE: premendo il pulsante il portale NON salverà la spesa."
+            if self._settings.dry_run
+            else "ATTENZIONE: premendo il pulsante inserirai DAVVERO la spesa."
+        )
+        return (
+            "Ultimo controllo prima di procedere:\n"
+            f"Data: {payload['date']}\n"
+            f"Descrizione: {payload['merchant']}\n"
+            f"Importo: {payload['total_amount']} EUR\n"
+            f"Cassa: {account}\n"
+            f"Operazione: {direction}\n"
+            f"Voci: {state_data.get('accounting_voice', 'Voci Scout')}\n"
+            f"Tipologia: {transaction_type}\n"
+            f"Unità: {unit}\n"
+            f"Categoria: {category}\n"
+            f"Note: {state_data.get('portal_notes') or 'nessuna'}\n\n"
+            f"{action}"
+        )
+
+    def _manual_final_confirmation_keyboard(self) -> InlineKeyboardMarkup:
+        button_text = (
+            "Esegui prova simulata"
+            if self._settings.dry_run
+            else "CONFERMA INSERIMENTO REALE"
+        )
+        return InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        button_text,
+                        callback_data="receipt:manual_save",
+                    )
+                ],
+                [InlineKeyboardButton("Annulla", callback_data="receipt:cancel")],
+            ]
         )
 
     @staticmethod
