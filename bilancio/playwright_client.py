@@ -568,7 +568,6 @@ class PlaywrightBilancioClient:
             raise PortalOptionsUnavailable(
                 "The portal dropdown option list did not become visible"
             )
-        await self._require_one(option_list, "dropdown_option_list")
         return option_list
 
     def _dropdown_locator(

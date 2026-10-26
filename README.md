@@ -6,7 +6,7 @@ Progetto per un bot Telegram privato: riceve una foto o un PDF, corregge e anali
 
 Il bot, l'analisi locale, l'archivio, SQLite, la coda dei ritentativi e il client Playwright hanno test automatici. Il client segue l'ordine del portale: anno scout ricavato dalla data, Tesoriere di gruppo, Prima Nota, poi le scelte dinamiche per la spesa. Può salvare se `DRY_RUN=false` e verifica che la riga compaia nella Prima Nota; un salvataggio reale non è ancora stato provato dal bot.
 
-È disponibile anche `bilancio/csv_import.py` per preparare e simulare l'importazione di un CSV di spese con classificazioni AGESCI. La modalità predefinita non salva; l'importazione reale richiede `DRY_RUN=false`, il numero esatto di righe e una conferma digitata. La simulazione del CSV attuale si è fermata alla riga 8: il codice `A.2` corrisponde a quattro tipologie diverse nel portale. Nessuna spesa è stata salvata; prima di ripetere la simulazione serve scegliere la tipologia corretta.
+È disponibile anche `bilancio/csv_import.py` per preparare e simulare l'importazione di un CSV di spese con classificazioni AGESCI. La modalità predefinita non salva; l'importazione reale richiede `DRY_RUN=false`, il numero esatto di righe e una conferma digitata. Dopo aver chiarito la tipologia della riga 8, la simulazione ha trovato altre 35 righe in cui `A.2` non basta a distinguere la voce del portale. Nessuna spesa è stata salvata; il CSV non è ancora pronto per l'importazione.
 
 La modalità `DRY_RUN=true` è quella predefinita e non salva sul portale. Non impostare `DRY_RUN=false` finché non hai concordato una prova controllata: in quel modo il bot inserisce davvero la spesa. La ricevuta viene archiviata sul NAS e non viene allegata alla registrazione web.
 
