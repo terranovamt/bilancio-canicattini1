@@ -81,6 +81,8 @@ python -m bilancio.csv_import /data/pending/nomefile.csv
 
 L'importatore si ferma al primo errore. Prima di qualsiasi inserimento reale dovrai controllare il CSV e approvare separatamente il numero e i dati delle righe. Non aggiungere `--apply` e non cambiare `DRY_RUN` senza aver concordato quella prova.
 
+Se un'importazione reale si interrompe, non rilanciarla subito: alcune righe potrebbero essere già presenti nel portale. Controlla prima la Prima Nota e confrontala con il CSV; ripeti soltanto le righe che non risultano registrate, dopo aver ricevuto una nuova autorizzazione.
+
 ## 7. Aggiungi il modello visivo locale
 
 Fai questo passaggio solo dopo che il test senza foto è riuscito. Il DS1522+ è CPU-only e nel progetto risultano 8 GB di RAM: il modello piccolo è il punto di partenza, ma l'analisi può essere lenta. Il modello `qwen3-vl:2b` occupa circa 1,9 GB da scaricare. L'immagine Ollama già impostata nel progetto è la versione `0.40.11`, compatibile con Qwen3-VL, che richiede Ollama `0.12.7` o successivo. [Pagina ufficiale del modello](https://ollama.com/library/qwen3-vl).

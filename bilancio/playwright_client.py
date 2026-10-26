@@ -61,6 +61,70 @@ async def _wait_for_input_value(
         await asyncio.sleep(0.1)
 
 
+def _parse_ledger_page_range(value: str) -> tuple[int, int, int] | None:
+    match = re.fullmatch(r"(\d+)\s*-\s*(\d+)\s+di\s+(\d+)", " ".join(value.split()))
+    if match is None:
+        return None
+    first, last, total = (int(part) for part in match.groups())
+    if total == 0:
+        return (0, 0, 0) if first == 0 and last == 0 else None
+    if first < 1 or last < first or last > total:
+        return None
+    return first, last, total
+
+
+async def _wait_for_ledger_data(
+    loading_overlay: Locator,
+    page_indicator: Locator,
+    rows: Locator,
+    timeout_ms: int,
+) -> tuple[int, int, int]:
+    deadline = asyncio.get_running_loop().time() + timeout_ms / 1000
+    if not await _wait_for_visible_locator(page_indicator, timeout_ms):
+        raise PortalOptionsUnavailable("AGESCI ledger pagination did not load")
+
+    while True:
+        if await loading_overlay.count() and await loading_overlay.first.is_visible():
+            await asyncio.sleep(0.1)
+        else:
+            page_range = _parse_ledger_page_range(
+                await page_indicator.first.inner_text()
+            )
+            if page_range is not None:
+                first, last, total = page_range
+                expected_rows = max(0, last - first + 1)
+                if await rows.count() >= expected_rows + 2:
+                    return page_range
+            await asyncio.sleep(0.1)
+        if asyncio.get_running_loop().time() >= deadline:
+            raise PortalOptionsUnavailable("AGESCI ledger rows did not finish loading")
+
+
+async def _wait_for_stable_ledger_filter(
+    loading_overlay: Locator,
+    rows: Locator,
+    timeout_ms: int,
+) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout_ms / 1000
+    previous_count = await rows.count()
+    stable_observations = 0
+    while stable_observations < 3:
+        if await loading_overlay.count() and await loading_overlay.first.is_visible():
+            stable_observations = 0
+        else:
+            row_count = await rows.count()
+            if row_count == previous_count:
+                stable_observations += 1
+            else:
+                previous_count = row_count
+                stable_observations = 0
+        if asyncio.get_running_loop().time() >= deadline:
+            raise PortalOptionsUnavailable(
+                "AGESCI ledger search results did not finish updating"
+            )
+        await asyncio.sleep(0.1)
+
+
 def _normalize_amount_input(value: str) -> str:
     normalized = re.sub(r"[^\d,.-]", "", value)
     if "," not in normalized:
@@ -698,7 +762,24 @@ class PlaywrightBilancioClient:
         page: Page,
         expense: PortalExpense,
     ) -> int:
-        rows = page.get_by_role("row")
+        rows = self._locator(page, "ledger_rows")
+        loading_overlay = self._locator(page, "ledger_loading_overlay")
+        page_indicator = self._locator(page, "ledger_page_indicator")
+        await _wait_for_ledger_data(
+            loading_overlay,
+            page_indicator,
+            rows,
+            self._timeout_ms,
+        )
+        search = self._locator(page, "ledger_search")
+        await self._require_one(search, "ledger_search")
+        await search.fill(expense.description)
+        await _wait_for_stable_ledger_filter(
+            loading_overlay,
+            rows,
+            self._timeout_ms,
+        )
+
         if not await _wait_for_visible_locator(rows.nth(1), self._timeout_ms):
             raise PortalOptionsUnavailable("AGESCI account ledger rows were not found")
         header_row = rows.nth(1)
@@ -763,11 +844,23 @@ class PlaywrightBilancioClient:
         selector = self._selectors.get(key)
         if selector is None:
             raise BilancioClientError(f"AGESCI selector is missing: {key}")
+        css_selector = selector.get("selector")
+        if isinstance(css_selector, str):
+            return page.locator(css_selector)
         if "text" in selector:
             return page.get_by_text(str(selector["text"]))
         text_template = selector.get("text_template")
         if isinstance(text_template, str):
             return page.get_by_text(text_template.format(**values), exact=True)
+        text_pattern = selector.get("text_pattern")
+        if isinstance(text_pattern, str):
+            return page.get_by_text(re.compile(text_pattern), exact=True)
+        placeholder = selector.get("placeholder")
+        if isinstance(placeholder, str):
+            return page.get_by_placeholder(
+                placeholder,
+                exact=bool(selector.get("exact", False)),
+            )
         role = selector.get("role")
         if not isinstance(role, str):
             raise BilancioClientError(f"AGESCI selector role is invalid: {key}")

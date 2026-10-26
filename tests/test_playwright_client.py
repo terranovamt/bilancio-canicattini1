@@ -19,6 +19,7 @@ from bilancio.playwright_client import (
     PlaywrightBilancioClient,
     _normalize_amount_input,
     _normalize_ledger_header,
+    _parse_ledger_page_range,
     _wait_for_authentication_marker,
     _wait_for_input_value,
     _wait_for_visible_locator,
@@ -211,6 +212,11 @@ class PlaywrightBilancioClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_normalize_amount_input("1.234,56"), "1234.56")
         self.assertEqual(_normalize_amount_input("1,234.56"), "1234.56")
 
+    def test_parses_ledger_pagination_range(self) -> None:
+        self.assertEqual(_parse_ledger_page_range("1-10 di 44"), (1, 10, 44))
+        self.assertEqual(_parse_ledger_page_range("0-0 di 0"), (0, 0, 0))
+        self.assertIsNone(_parse_ledger_page_range("1-10 di 5"))
+
     def test_normalizes_sort_icons_from_ledger_headers(self) -> None:
         self.assertEqual(
             _normalize_ledger_header("arrow_upward Importo Entrata"),
@@ -274,6 +280,15 @@ class PlaywrightBilancioClientTests(unittest.IsolatedAsyncioTestCase):
             selectors["amount"]["name_pattern"],
             r"^Importo\b",
         )
+        self.assertEqual(
+            selectors["ledger_loading_overlay"]["selector"],
+            "#q-loading .q-loading__backdrop",
+        )
+        self.assertEqual(
+            selectors["ledger_page_indicator"]["text_pattern"],
+            r"^\d+\s*-\s*\d+\s+di\s+\d+$",
+        )
+        self.assertEqual(selectors["ledger_search"]["placeholder"], "Cerca")
         self.assertIn("Cassa", configuration["account_name_pattern"])
         self.assertIn("Conto", configuration["account_name_pattern"])
 

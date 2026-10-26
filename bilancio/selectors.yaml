@@ -89,3 +89,10 @@ selectors:
     exact: true
   ledger_rows:
     role: row
+  ledger_loading_overlay:
+    selector: '#q-loading .q-loading__backdrop'
+  ledger_page_indicator:
+    text_pattern: '^\d+\s*-\s*\d+\s+di\s+\d+$'
+  ledger_search:
+    placeholder: Cerca
+    exact: true
