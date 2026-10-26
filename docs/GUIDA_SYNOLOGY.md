@@ -1,73 +1,98 @@
 # Guida per il Synology DS1522+
 
-Questa guida descrive la preparazione del NAS con DSM 7.2 e Container Manager. Il client segue l'ordine del portale (anno scout, Tesoriere di gruppo, Prima Nota), calcola l'anno dal 1º ottobre e controlla che una spesa salvata compaia nella tabella. **Il salvataggio reale non è ancora stato collaudato dal bot.** Mantieni `DRY_RUN=true` fino a quando non avrai concordato una prova controllata: con `DRY_RUN=false` il bot inserisce davvero la spesa.
+Questa guida ti accompagna in due prove, senza fare subito registrazioni vere:
+
+1. avviare il bot e provare `/testspesa` senza scontrino e senza AI, con `DRY_RUN=true`;
+2. aggiungere il modello visivo locale e provare una foto, sempre con `DRY_RUN=true`.
+
+In entrambe le prove il bot non deve salvare spese nel portale. Non cambiare `DRY_RUN` in `false`: quello abilita inserimenti reali. L'analisi locale non invia la foto a un servizio AI online; Telegram riceve comunque la foto che gli invii.
 
 ## 1. Prepara la cartella del progetto
 
-1. In DSM apri **File Station**.
-2. Crea `docker/bilancio_canicattini1` nel volume di archiviazione che vuoi usare.
-3. Dentro crea le cartelle `data`, `scontrini` e `ollama-data`.
-4. Copia in `docker/bilancio_canicattini1` i file del progetto, compresi `Dockerfile` e `docker-compose.yml`.
-5. Non copiare `.env`, ricevute, database o registrazioni del portale da altri dispositivi. Crea un `.env` nuovo direttamente sul NAS, come spiegato più avanti.
+1. In **File Station**, crea una cartella condivisa chiamata `docker`, se non esiste già.
+2. Dentro `docker`, crea `bilancio_canicattini1`.
+3. Carica nella cartella l'archivio ZIP del progetto che accompagna questa guida.
+4. Estrai l'archivio. Controlla che `docker-compose.yml` e `Dockerfile` siano direttamente dentro `bilancio_canicattini1`, non in una sottocartella aggiuntiva.
+5. Crea dentro `bilancio_canicattini1` le cartelle `data`, `scontrini` e `ollama-data`.
 
-Le tre cartelle corrispondono ai volumi permanenti del database e dei dati del bot, delle ricevute e dei modelli locali. Non cancellarle durante gli aggiornamenti.
+Queste cartelle conservano database, ricevute e modello anche quando aggiorni o riavvii il container. Non cancellarle per risolvere un errore.
 
-## 2. Imposta i permessi delle cartelle
+## 2. Verifica i permessi
 
-Il container usa gli identificativi `PUID` e `PGID` impostati in `.env` per poter scrivere nei volumi. Devono corrispondere all'utente NAS proprietario delle cartelle.
+Il container usa `PUID` e `PGID` per poter scrivere nelle cartelle del NAS.
 
-1. Se sai già quali sono gli identificativi numerici del tuo utente NAS, annota `PUID` e `PGID`.
-2. Se non li conosci, chiedi aiuto prima di avviare il progetto. Non impostare valori casuali: senza i permessi corretti il bot non potrà archiviare i file.
-3. In File Station verifica che quell'utente possa leggere e scrivere nelle cartelle `data`, `scontrini` e `ollama-data`.
+1. Se conosci già gli identificativi numerici del tuo utente NAS, annota `PUID` e `PGID`.
+2. In File Station verifica che quell'utente possa leggere e scrivere in `data`, `scontrini` e `ollama-data`.
+3. Se non conosci gli identificativi o non sai controllare i permessi, chiedi aiuto prima di avviare il progetto. Non mettere numeri casuali.
 
-## 3. Crea il file delle impostazioni
+## 3. Crea le impostazioni private
 
-1. Duplica `.env.example` nella cartella del progetto sul NAS e rinomina la copia `.env`.
-2. Apri `.env` con l'editor di testo DSM.
-3. Inserisci `BOT_TOKEN`, `ALLOWED_USER_IDS` e `ADMIN_USER_ID` senza spazi superflui. Per più utenti, separa gli ID con una virgola.
-4. Lascia `LOCAL_VISION_MODEL` vuoto finché non avrai controllato la memoria del NAS e scelto un modello adatto.
-5. Lascia `DRY_RUN=true`.
-6. Inserisci `PUID` e `PGID` con i valori corretti dell'utente NAS.
-7. Lascia vuote le impostazioni AGESCI se non sono ancora state configurate.
-8. Salva il file e limita l'accesso alla cartella del progetto agli amministratori NAS.
+1. Duplica `.env.example` e rinomina la copia `.env`.
+2. Apri `.env` con l'editor di testo di DSM.
+3. Inserisci `BOT_TOKEN`, il tuo `ADMIN_USER_ID` e, per la prima prova, il tuo stesso ID Telegram in `ALLOWED_USER_IDS`. Così il bot risponde solo a te.
+4. Inserisci `BILANCIO_URL`, `BILANCIO_USER` e `BILANCIO_PASSWORD`: servono perché il bot legga le opzioni disponibili nel portale.
+5. Inserisci i valori corretti di `PUID` e `PGID`.
+6. Lascia `LOCAL_VISION_MODEL` vuoto per la prima prova senza foto.
+7. Lascia `ANTHROPIC_API_KEY` e `ANTHROPIC_MODEL` vuoti: non servono per l'analisi locale.
+8. Controlla che `DRY_RUN=true`.
+9. Salva `.env` e limita l'accesso alla cartella del progetto agli amministratori NAS.
 
-Non condividere il file `.env`, non inserirlo in GitHub e non inviare token o password in chat.
+Non inviare `.env`, token, password o codici di verifica in chat e non caricarlo su GitHub.
 
-## 4. Controlla la memoria prima del modello locale
+## 4. Avvia il progetto per la prova senza foto
 
-1. In DSM controlla la memoria installata e quella disponibile.
-2. Controlla anche lo spazio libero nel volume dove conserverai `ollama-data`.
-3. Comunica questi valori prima di scegliere o scaricare un modello visivo.
+1. Apri **Container Manager** e seleziona **Progetto**.
+2. Scegli **Crea** e seleziona come percorso `docker/bilancio_canicattini1`.
+3. Seleziona `docker-compose.yml` e avvia la creazione del progetto.
+4. Attendi che i servizi `ollama` e `bot` risultino avviati. Il modello AI non viene ancora scaricato; il servizio Ollama parte vuoto.
+5. Apri i registri del servizio `bot` e verifica che non ci siano errori di configurazione o connessione a Telegram.
 
-Non scaricare ancora un modello a caso: il DS1522+ non ha una scheda grafica dedicata e modello, memoria e tempi di risposta vanno valutati insieme.
+Il bot usa connessioni in uscita e non apre porte sul router. Se i registri mostrano errori di certificato HTTPS o di collegamento a Telegram, arresta il progetto e chiedi aiuto: non disattivare la verifica dei certificati. Sul PC la connessione a Telegram è già stata bloccata da un certificato non attendibile; il NAS potrebbe avere lo stesso problema di rete.
 
-## 5. Crea il progetto in Container Manager
+## 5. Prova Telegram senza scontrino e senza AI
 
-Esegui questi passaggi solo dopo aver verificato la memoria del NAS, scelto un modello locale e completato un controllo in modalità di prova:
+Questa prova usa le credenziali AGESCI per leggere le opzioni del portale, ma `DRY_RUN=true` impedisce di salvare la spesa.
 
-1. Apri **Container Manager** e vai in **Progetto**.
-2. Scegli **Crea**.
-3. Seleziona come percorso `docker/bilancio_canicattini1`.
-4. Seleziona il file `docker-compose.yml`.
-5. Avvia la creazione e attendi il download delle immagini e la costruzione del bot. La prima attesa può essere lunga.
-6. Avvia il progetto.
+1. Apri la chat privata con il bot dal tuo account Telegram autorizzato.
+2. Invia `/testspesa`.
+3. Quando il bot lo chiede, scrivi data, descrizione e importo separati dal simbolo `|`. Per esempio: `26/10/2026 | PROVA SIMULATA | 1,00`.
+4. Seleziona le opzioni che il bot mostra: cassa, entrata o uscita, voci, tipologia, unità e categoria.
+5. Controlla il riepilogo. Procedi solo se il bot indica chiaramente che la modalità è **SIMULATA**.
+6. Conferma la simulazione nel bot. Con `DRY_RUN=true` il client compila il modulo ma non preme il comando di salvataggio.
+7. Verifica che il bot confermi che la prova è terminata senza salvare la spesa. Se il portale richiede un accesso manuale o un codice di verifica, segui solo le istruzioni mostrate dal bot; non inviare il codice in chat.
 
-Compose avvia Ollama e il bot, non apre porte di rete in ingresso e mantiene i dati nelle cartelle create al punto 1. Chromium ha 1 GB di memoria condivisa. Il servizio bot riparte dopo un riavvio del NAS.
+Per interrompere prima della conferma, invia `/annulla`. Se il portale non si apre o le opzioni non compaiono, fermati e conserva i registri nel NAS; non provare a inserire la spesa manualmente.
 
-## 6. Controlla lo stato
+## 6. Aggiungi il modello visivo locale
 
-1. In Container Manager controlla che il progetto e i servizi risultino avviati.
-2. Apri i registri del servizio `bot` se qualcosa non parte. I registri sono in formato leggibile e salvati anche in `data/logs`, con rotazione automatica.
-3. Non copiare in chat registri che potrebbero contenere dati personali.
-4. Quando il modello locale sarà configurato, prova prima solo la ricezione e l'analisi della ricevuta.
-5. Mantieni `DRY_RUN=true`. Non cambiarlo per una prova reale senza aver concordato prima un’operazione di test con il tesoriere responsabile. In modalità reale il client preme Salva e verifica la nuova riga; non ripete automaticamente il clic se la verifica non riesce.
+Fai questo passaggio solo dopo che il test senza foto è riuscito. Il DS1522+ è CPU-only e nel progetto risultano 8 GB di RAM: il modello piccolo è il punto di partenza, ma l'analisi può essere lenta. Il modello `qwen3-vl:2b` occupa circa 1,9 GB da scaricare. L'immagine Ollama già impostata nel progetto è la versione `0.40.11`, compatibile con Qwen3-VL, che richiede Ollama `0.12.7` o successivo. [Pagina ufficiale del modello](https://ollama.com/library/qwen3-vl).
 
-## 7. Aggiornamenti e copie di sicurezza
+1. In **File Station**, riapri `.env`.
+2. Imposta `LOCAL_VISION_MODEL=qwen3-vl:2b`. Lascia invariati `LOCAL_VISION_URL` e `DRY_RUN=true`.
+3. In **Container Manager**, apri il container `ollama` e seleziona **Terminale**.
+4. Nel terminale esegui `ollama pull qwen3-vl:2b` e attendi che il download finisca. Non chiudere il terminale durante il download.
+5. Se il download termina con un errore di rete o certificato, fermati: non disattivare le protezioni e non sostituire il modello con un servizio online.
+6. Torna a **Progetto** e riavvia il servizio `bot` per fargli leggere il nuovo valore di `.env`.
+7. Controlla i registri del bot e verifica che si avvii senza errori.
+
+Il download del modello usa Internet; una volta installato, l'analisi delle immagini avviene sul NAS. Nessuna chiave Anthropic è necessaria.
+
+## 7. Prova una foto in modalità simulata
+
+1. Lascia `DRY_RUN=true`.
+2. Invia al bot una foto di prova come immagine, non come file PDF. Evita di condividere qui la foto o dati personali che contiene.
+3. Segui le domande del bot e controlla con attenzione i dati estratti. Correggi quelli sbagliati prima di procedere.
+4. Controlla che il riepilogo indichi la modalità **SIMULATA** e conferma la simulazione.
+5. Verifica la risposta finale del bot e che la foto sia stata archiviata nella cartella `scontrini`, organizzata per anno e mese.
+
+La ricevuta resta sul NAS; non viene allegata all'operazione del portale. Non cambiare `DRY_RUN` in `false` durante queste prove. Un'eventuale registrazione reale va concordata e verificata separatamente prima di abilitarla.
+
+## 8. Aggiornamenti e copie di sicurezza
 
 1. Prima di aggiornare, arresta il progetto da Container Manager.
-2. Conserva una copia delle cartelle `data` e `scontrini`; conserva anche `ollama-data` se non vuoi riscaricare il modello.
-3. Aggiorna solo i file del programma, senza sostituire `.env`.
-4. Ricrea/avvia il progetto e controlla i registri.
-5. Non cancellare il database per risolvere un problema: contiene gli stati e gli hash usati per evitare doppie registrazioni.
+2. Conserva una copia delle cartelle `data` e `scontrini`; conserva anche `ollama-data` per non dover riscaricare il modello.
+3. Aggiorna i file del programma senza sostituire `.env`.
+4. Ricrea o riavvia il progetto e controlla i registri.
+5. Non cancellare il database per risolvere un problema: contiene stati e hash usati per evitare doppie registrazioni.
 
-Per pubblicare il codice sul repository GitHub privato, segui le istruzioni nel `README.md` dal PC. Non caricare mai `.env`, dati o ricevute.
+Non caricare mai `.env`, database, ricevute o registrazioni non sanificate su GitHub.
