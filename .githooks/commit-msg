@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+message_file=$1
+if [ ! -f "$message_file" ]; then
+    echo "commit-msg: message file not found" >&2
+    exit 1
+fi
+
+temporary_file="${message_file}.tmp.$$"
+trap 'rm -f "$temporary_file"' EXIT HUP INT TERM
+
+sed '/^[[:space:]]*[Cc][Oo]-[Aa][Uu][Tt][Hh][Oo][Rr][Ee][Dd]-[Bb][Yy][[:space:]]*:/d' \
+    "$message_file" > "$temporary_file"
+mv "$temporary_file" "$message_file"
+
+if grep -iE '^[[:space:]]*Co-authored-by[[:space:]]*:' "$message_file" >/dev/null; then
+    echo "commit-msg: Co-authored-by lines are not allowed" >&2
+    exit 1
+fi

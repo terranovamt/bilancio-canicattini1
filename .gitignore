@@ -1,0 +1,7 @@
+.env
+LOCAL_NOTES.md
+.venv/
+/data
+__pycache__/
+debug/
+*.log

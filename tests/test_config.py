@@ -1,0 +1,93 @@
+import unittest
+
+from config import ConfigurationError, Settings
+
+
+class SettingsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.environ = {
+            "BOT_TOKEN": "test-token",
+            "ALLOWED_USER_IDS": "12345, 67890",
+            "ADMIN_USER_ID": "12345",
+        }
+
+    def test_loads_required_settings_and_defaults(self) -> None:
+        settings = Settings.from_env(self.environ)
+
+        self.assertEqual(settings.allowed_user_ids, frozenset({12345, 67890}))
+        self.assertEqual(settings.admin_user_id, 12345)
+        self.assertEqual(settings.storage_path, "/scontrini")
+        self.assertEqual(settings.timezone, "Europe/Rome")
+        self.assertTrue(settings.dry_run)
+        self.assertIsNone(settings.anthropic_api_key)
+        self.assertIsNone(settings.bilancio_url)
+
+    def test_rejects_missing_bot_token(self) -> None:
+        self.environ["BOT_TOKEN"] = ""
+
+        with self.assertRaisesRegex(ConfigurationError, "BOT_TOKEN"):
+            Settings.from_env(self.environ)
+
+    def test_rejects_invalid_user_id(self) -> None:
+        self.environ["ALLOWED_USER_IDS"] = "12345,abc"
+
+        with self.assertRaisesRegex(ConfigurationError, "ALLOWED_USER_IDS"):
+            Settings.from_env(self.environ)
+
+    def test_rejects_admin_not_in_allowed_users(self) -> None:
+        self.environ["ADMIN_USER_ID"] = "99999"
+
+        with self.assertRaisesRegex(ConfigurationError, "ADMIN_USER_ID"):
+            Settings.from_env(self.environ)
+
+    def test_rejects_empty_entry_in_user_id_list(self) -> None:
+        self.environ["ALLOWED_USER_IDS"] = "12345,"
+
+        with self.assertRaisesRegex(ConfigurationError, "ALLOWED_USER_IDS"):
+            Settings.from_env(self.environ)
+
+    def test_parses_dry_run_false(self) -> None:
+        self.environ["DRY_RUN"] = "false"
+
+        self.assertFalse(Settings.from_env(self.environ).dry_run)
+
+    def test_rejects_invalid_boolean(self) -> None:
+        self.environ["DRY_RUN"] = "sometimes"
+
+        with self.assertRaisesRegex(ConfigurationError, "DRY_RUN"):
+            Settings.from_env(self.environ)
+
+    def test_requires_anthropic_key_and_model_together(self) -> None:
+        self.environ["ANTHROPIC_API_KEY"] = "test-key"
+
+        with self.assertRaisesRegex(ConfigurationError, "ANTHROPIC_API_KEY"):
+            Settings.from_env(self.environ)
+
+    def test_requires_bilancio_settings_together(self) -> None:
+        self.environ["BILANCIO_URL"] = "https://example.invalid"
+
+        with self.assertRaisesRegex(ConfigurationError, "BILANCIO_URL"):
+            Settings.from_env(self.environ)
+
+    def test_secret_values_are_not_in_settings_repr(self) -> None:
+        self.environ.update(
+            {
+                "BOT_TOKEN": "secret-bot-token",
+                "ANTHROPIC_API_KEY": "secret-api-key",
+                "ANTHROPIC_MODEL": "test-model",
+                "BILANCIO_URL": "https://example.invalid",
+                "BILANCIO_USER": "secret-user",
+                "BILANCIO_PASSWORD": "secret-password",
+            }
+        )
+
+        settings_repr = repr(Settings.from_env(self.environ))
+
+        self.assertNotIn("secret-bot-token", settings_repr)
+        self.assertNotIn("secret-api-key", settings_repr)
+        self.assertNotIn("secret-user", settings_repr)
+        self.assertNotIn("secret-password", settings_repr)
+
+
+if __name__ == "__main__":
+    unittest.main()
