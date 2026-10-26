@@ -2,6 +2,7 @@
 LOCAL_NOTES.md
 .venv/
 /data
+/ollama-data
 __pycache__/
 debug/
 *.log

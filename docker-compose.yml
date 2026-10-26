@@ -1,0 +1,43 @@
+services:
+  ollama:
+    image: ollama/ollama:0.40.11
+    restart: unless-stopped
+    volumes:
+      - ./ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    user: "${PUID:-1000}:${PGID:-1000}"
+    shm_size: 1gb
+    env_file:
+      - .env
+    environment:
+      LOCAL_VISION_URL: http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ./data:/data
+      - ./scontrini:/scontrini
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sqlite3; db=sqlite3.connect('file:/data/bot.sqlite3?mode=ro', uri=True); assert db.execute(\"SELECT 1 FROM sqlite_master WHERE type='table' AND name='expenses'\").fetchone(); assert db.execute('PRAGMA quick_check').fetchone()[0] == 'ok'",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s

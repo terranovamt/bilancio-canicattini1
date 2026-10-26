@@ -1,0 +1,10 @@
+.env
+.git/
+.venv/
+LOCAL_NOTES.md
+data/
+scontrini/
+ollama-data/
+debug/
+**/__pycache__/
+*.log

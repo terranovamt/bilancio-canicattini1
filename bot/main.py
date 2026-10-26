@@ -1,19 +1,15 @@
 from __future__ import annotations
 
-import logging
-
 from bot.application import create_application
 from config import Settings
 from db.database import Database
+from logging_config import configure_logging
 from vision.ollama_client import OllamaReceiptAnalyzer
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
     settings = Settings.from_env()
+    configure_logging("/data/logs")
     database = Database("/data/bot.sqlite3")
     database.initialize()
     analyzer = (
