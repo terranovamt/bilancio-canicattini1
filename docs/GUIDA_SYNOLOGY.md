@@ -63,7 +63,25 @@ Questa prova usa le credenziali AGESCI per leggere le opzioni del portale, ma `D
 
 Per interrompere prima della conferma, invia `/annulla`. Se il portale non si apre o le opzioni non compaiono, fermati e conserva i registri nel NAS; non provare a inserire la spesa manualmente.
 
-## 6. Aggiungi il modello visivo locale
+## 6. Prova un CSV senza salvare
+
+L'importatore CSV usa le colonne compilate per la data, la descrizione, la direzione, l'importo, la cassa, la voce, la tipologia e l'unità. La categoria può restare vuota se il portale la accetta. Il programma cerca comunque le opzioni correnti nel portale e si ferma se non trova una corrispondenza univoca.
+
+1. Solo dopo che la prova `/testspesa` funziona, crea `data/pending` sul NAS.
+2. Copia il CSV compilato in `data/pending`. Non metterlo su GitHub e non inviarlo in chat.
+3. Controlla che `DRY_RUN=true`.
+4. In **Container Manager**, apri il terminale del container `bot`.
+5. Avvia la simulazione sostituendo il nome del file con quello che hai copiato:
+
+```text
+python -m bilancio.csv_import /data/pending/nomefile.csv
+```
+
+6. Controlla il risultato. La simulazione non salva le spese; se il portale non mostra l'anno scout, la cassa o una tipologia, fermati e non usare la modalità reale.
+
+L'importatore si ferma al primo errore. Prima di qualsiasi inserimento reale dovrai controllare il CSV e approvare separatamente il numero e i dati delle righe. Non aggiungere `--apply` e non cambiare `DRY_RUN` senza aver concordato quella prova.
+
+## 7. Aggiungi il modello visivo locale
 
 Fai questo passaggio solo dopo che il test senza foto è riuscito. Il DS1522+ è CPU-only e nel progetto risultano 8 GB di RAM: il modello piccolo è il punto di partenza, ma l'analisi può essere lenta. Il modello `qwen3-vl:2b` occupa circa 1,9 GB da scaricare. L'immagine Ollama già impostata nel progetto è la versione `0.40.11`, compatibile con Qwen3-VL, che richiede Ollama `0.12.7` o successivo. [Pagina ufficiale del modello](https://ollama.com/library/qwen3-vl).
 
@@ -77,7 +95,7 @@ Fai questo passaggio solo dopo che il test senza foto è riuscito. Il DS1522+ è
 
 Il download del modello usa Internet; una volta installato, l'analisi delle immagini avviene sul NAS. Nessuna chiave Anthropic è necessaria.
 
-## 7. Prova una foto in modalità simulata
+## 8. Prova una foto in modalità simulata
 
 1. Lascia `DRY_RUN=true`.
 2. Invia al bot una foto di prova come immagine, non come file PDF. Evita di condividere qui la foto o dati personali che contiene.
@@ -87,7 +105,7 @@ Il download del modello usa Internet; una volta installato, l'analisi delle imma
 
 La ricevuta resta sul NAS; non viene allegata all'operazione del portale. Non cambiare `DRY_RUN` in `false` durante queste prove. Un'eventuale registrazione reale va concordata e verificata separatamente prima di abilitarla.
 
-## 8. Aggiornamenti e copie di sicurezza
+## 9. Aggiornamenti e copie di sicurezza
 
 1. Prima di aggiornare, arresta il progetto da Container Manager.
 2. Conserva una copia delle cartelle `data` e `scontrini`; conserva anche `ollama-data` per non dover riscaricare il modello.
