@@ -77,7 +77,7 @@ L'importatore CSV usa le colonne compilate per la data, la descrizione, la direz
 python -m bilancio.csv_import /data/pending/nomefile.csv
 ```
 
-6. Controlla il risultato. La simulazione non salva le spese; se il portale non mostra l'anno scout, la cassa o una tipologia, fermati e non usare la modalità reale.
+6. Controlla il risultato. La simulazione non salva le spese; al termine deve comparire un riepilogo che conferma quante righe sono state compilate senza salvataggio e quante erano già presenti. Se il portale non mostra l'anno scout, la cassa o una tipologia, oppure la simulazione si interrompe, fermati e non usare la modalità reale.
 
 L'importatore si ferma al primo errore. Prima di qualsiasi inserimento reale dovrai controllare il CSV e approvare separatamente il numero e i dati delle righe. Non aggiungere `--apply` e non cambiare `DRY_RUN` senza aver concordato quella prova.
 

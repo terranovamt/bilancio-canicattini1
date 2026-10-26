@@ -45,6 +45,43 @@ async def _wait_for_visible_locator(locator: Locator, timeout_ms: int) -> bool:
     return True
 
 
+async def _wait_for_input_value(
+    locator: Locator,
+    expected: str,
+    timeout_ms: int,
+    normalize: Callable[[str], str] = lambda value: value,
+) -> bool:
+    deadline = asyncio.get_running_loop().time() + timeout_ms / 1000
+    normalized_expected = normalize(expected)
+    while True:
+        if normalize(await locator.input_value()) == normalized_expected:
+            return True
+        if asyncio.get_running_loop().time() >= deadline:
+            return False
+        await asyncio.sleep(0.1)
+
+
+def _normalize_amount_input(value: str) -> str:
+    normalized = re.sub(r"[^\d,.-]", "", value)
+    if "," not in normalized:
+        if re.fullmatch(r"-?\d+", normalized):
+            return f"{Decimal(normalized) / Decimal('100'):.2f}"
+        return normalized
+    if "." not in normalized:
+        return normalized.replace(",", ".")
+    if normalized.rfind(",") > normalized.rfind("."):
+        return normalized.replace(".", "").replace(",", ".")
+    return normalized.replace(",", "")
+
+
+def _normalize_ledger_header(value: str) -> str:
+    return " ".join(
+        value.replace("arrow_upward", "")
+        .replace("arrow_downward", "")
+        .split()
+    )
+
+
 async def _wait_for_authentication_marker(
     username: Locator,
     scout_year_switch: Locator,
@@ -392,6 +429,20 @@ class PlaywrightBilancioClient:
         await self._require_one(year_switch, "scout_year_switch")
         current_label = " ".join((await year_switch.first.inner_text()).split())
         if year_label in current_label:
+            if await year_switch.first.get_attribute("aria-expanded") == "true":
+                await year_switch.click()
+                selected_year = self._locator(
+                    page,
+                    "scout_year_selected",
+                    year_label=year_label,
+                )
+                if not await _wait_for_visible_locator(
+                    selected_year,
+                    self._timeout_ms,
+                ):
+                    raise PortalOptionsUnavailable(
+                        "Scout year menu did not close"
+                    )
             return
         if await year_switch.first.get_attribute("aria-expanded") != "true":
             await year_switch.click()
@@ -592,7 +643,8 @@ class PlaywrightBilancioClient:
         await self._require_one(amount_locator, "amount")
         await date_locator.fill(expense.transaction_date.strftime("%d/%m/%Y"))
         await description_locator.fill(expense.description)
-        await amount_locator.fill(f"{expense.amount:.2f}")
+        expected_amount = f"{expense.amount:.2f}"
+        await amount_locator.fill(expected_amount.replace(".", ","))
         notes = expense.notes
         if notes:
             notes_locator = self._locator(page, "notes")
@@ -600,10 +652,22 @@ class PlaywrightBilancioClient:
             await notes_locator.fill(notes)
 
         if (
-            await date_locator.input_value()
-            != expense.transaction_date.strftime("%d/%m/%Y")
-            or await description_locator.input_value() != expense.description
-            or await amount_locator.input_value() != f"{expense.amount:.2f}"
+            not await _wait_for_input_value(
+                date_locator,
+                expense.transaction_date.strftime("%d/%m/%Y"),
+                self._timeout_ms,
+            )
+            or not await _wait_for_input_value(
+                description_locator,
+                expense.description,
+                self._timeout_ms,
+            )
+            or not await _wait_for_input_value(
+                amount_locator,
+                expected_amount,
+                self._timeout_ms,
+                normalize=_normalize_amount_input,
+            )
         ):
             await self._save_diagnostics(page, "form-verification-failed")
             raise BilancioClientError(
@@ -635,12 +699,9 @@ class PlaywrightBilancioClient:
         expense: PortalExpense,
     ) -> int:
         rows = page.get_by_role("row")
-        if await rows.count() < 2:
+        if not await _wait_for_visible_locator(rows.nth(1), self._timeout_ms):
             raise PortalOptionsUnavailable("AGESCI account ledger rows were not found")
-        headers = [
-            " ".join(text.split())
-            for text in await rows.nth(1).get_by_role("columnheader").all_text_contents()
-        ]
+        header_row = rows.nth(1)
         required_headers = (
             "Data Operazione",
             "Unità",
@@ -648,6 +709,18 @@ class PlaywrightBilancioClient:
             "Importo Entrata" if expense.direction is TransactionDirection.INCOME else "Importo Uscita",
             "Tipologia Entrata" if expense.direction is TransactionDirection.INCOME else "Tipologia Uscita",
         )
+        for header in required_headers:
+            header_locator = header_row.get_by_role("columnheader").filter(
+                has_text=re.compile(re.escape(header), re.IGNORECASE)
+            )
+            if not await _wait_for_visible_locator(header_locator, self._timeout_ms):
+                raise PortalOptionsUnavailable(
+                    "AGESCI account ledger columns could not be verified"
+                )
+        headers = [
+            _normalize_ledger_header(text)
+            for text in await header_row.get_by_role("columnheader").all_text_contents()
+        ]
         if any(header not in headers for header in required_headers):
             raise PortalOptionsUnavailable(
                 "AGESCI account ledger columns could not be verified"

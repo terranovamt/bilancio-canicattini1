@@ -17,7 +17,10 @@ from bilancio.client import (
 )
 from bilancio.playwright_client import (
     PlaywrightBilancioClient,
+    _normalize_amount_input,
+    _normalize_ledger_header,
     _wait_for_authentication_marker,
+    _wait_for_input_value,
     _wait_for_visible_locator,
 )
 
@@ -37,6 +40,67 @@ class FakeVisibilityLocator:
         await asyncio.sleep(self.delay)
         if not self.visible:
             raise PlaywrightTimeoutError("Element did not become visible")
+
+
+class FakeDelayedInputLocator:
+    def __init__(self, *, value: str, delay: float) -> None:
+        self.value = value
+        self.delay = delay
+        self.started_at: float | None = None
+
+    async def input_value(self) -> str:
+        loop = asyncio.get_running_loop()
+        if self.started_at is None:
+            self.started_at = loop.time()
+        if loop.time() - self.started_at >= self.delay:
+            return self.value
+        return "pending"
+
+
+class FakeScoutYearSwitch:
+    def __init__(self) -> None:
+        self.expanded = "true"
+        self.click_count = 0
+
+    @property
+    def first(self) -> FakeScoutYearSwitch:
+        return self
+
+    async def inner_text(self) -> str:
+        return "26-27 arrow_drop_down"
+
+    async def get_attribute(self, name: str) -> str | None:
+        if name == "aria-expanded":
+            return self.expanded
+        return None
+
+    async def count(self) -> int:
+        return 1
+
+    def nth(self, index: int) -> FakeScoutYearSwitch:
+        if index != 0:
+            raise IndexError(index)
+        return self
+
+    async def is_visible(self) -> bool:
+        return True
+
+    async def click(self) -> None:
+        self.click_count += 1
+        self.expanded = "false"
+
+
+class FakeSelectedScoutYear:
+    def __init__(self, year_switch: FakeScoutYearSwitch) -> None:
+        self.year_switch = year_switch
+
+    @property
+    def first(self) -> FakeSelectedScoutYear:
+        return self
+
+    async def wait_for(self, *, state: str, timeout: int) -> None:
+        if state == "visible" and self.year_switch.expanded != "false":
+            raise PlaywrightTimeoutError("Scout year menu is still open")
 
 
 class PlaywrightBilancioClientTests(unittest.IsolatedAsyncioTestCase):
@@ -101,6 +165,61 @@ class PlaywrightBilancioClientTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(visible)
+
+    async def test_closes_selected_scout_year_menu_before_continuing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            client = self.make_client(Path(directory))
+            year_switch = FakeScoutYearSwitch()
+            selected_year = FakeSelectedScoutYear(year_switch)
+
+            def get_locator(_page: object, key: str, **_values: str) -> object:
+                if key == "scout_year_switch":
+                    return year_switch
+                if key == "scout_year_selected":
+                    return selected_year
+                raise AssertionError(f"Unexpected selector: {key}")
+
+            client._locator = get_locator
+
+            await client._select_scout_year(object(), "26-27")
+
+            self.assertEqual(year_switch.click_count, 1)
+            self.assertEqual(year_switch.expanded, "false")
+
+    async def test_waits_for_delayed_form_value(self) -> None:
+        matches = await _wait_for_input_value(
+            FakeDelayedInputLocator(value="1.00", delay=0.05),
+            expected="1.00",
+            timeout_ms=1000,
+        )
+
+        self.assertTrue(matches)
+
+    async def test_accepts_localized_amount_value(self) -> None:
+        matches = await _wait_for_input_value(
+            FakeDelayedInputLocator(value="123456", delay=0.01),
+            expected="1234.56",
+            timeout_ms=1000,
+            normalize=_normalize_amount_input,
+        )
+
+        self.assertTrue(matches)
+
+    def test_normalizes_localized_and_grouped_amount_values(self) -> None:
+        self.assertEqual(_normalize_amount_input("123456"), "1234.56")
+        self.assertEqual(_normalize_amount_input("1,00"), "1.00")
+        self.assertEqual(_normalize_amount_input("1.234,56"), "1234.56")
+        self.assertEqual(_normalize_amount_input("1,234.56"), "1234.56")
+
+    def test_normalizes_sort_icons_from_ledger_headers(self) -> None:
+        self.assertEqual(
+            _normalize_ledger_header("arrow_upward Importo Entrata"),
+            "Importo Entrata",
+        )
+        self.assertEqual(
+            _normalize_ledger_header("Tipologia Entrataarrow_downward"),
+            "Tipologia Entrata",
+        )
 
     async def test_returns_none_when_portal_shows_neither_marker(self) -> None:
         state = await _wait_for_authentication_marker(
