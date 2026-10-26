@@ -1,0 +1,401 @@
+from __future__ import annotations
+
+import json
+import re
+import sqlite3
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+_HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_EXPENSE_STATUSES = {
+    "received",
+    "confirmed",
+    "queued",
+    "submitted",
+    "failed",
+    "cancelled",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class StoredExpense:
+    expense_id: str
+    telegram_user_id: int
+    payload: dict[str, object]
+    status: str
+    archive_path: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class RetryEntry:
+    expense_id: str
+    attempts: int
+    next_attempt_at: str
+    last_error_code: str | None
+
+
+class Database:
+    def __init__(self, path: str | Path) -> None:
+        self._path = Path(path)
+
+    def initialize(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connection() as connection:
+            connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS expenses (
+                    expense_id TEXT PRIMARY KEY,
+                    telegram_user_id INTEGER NOT NULL CHECK (telegram_user_id > 0),
+                    payload_json TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK (
+                        status IN (
+                            'received', 'confirmed', 'queued',
+                            'submitted', 'failed', 'cancelled'
+                        )
+                    ),
+                    archive_path TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS file_hashes (
+                    sha256 TEXT PRIMARY KEY,
+                    expense_id TEXT NOT NULL UNIQUE
+                        REFERENCES expenses(expense_id) ON DELETE CASCADE,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS retry_queue (
+                    expense_id TEXT PRIMARY KEY
+                        REFERENCES expenses(expense_id) ON DELETE CASCADE,
+                    attempts INTEGER NOT NULL CHECK (attempts > 0),
+                    next_attempt_at TEXT NOT NULL,
+                    last_error_code TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS conversation_states (
+                    telegram_user_id INTEGER PRIMARY KEY
+                        CHECK (telegram_user_id > 0),
+                    state TEXT NOT NULL,
+                    data_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS retry_queue_due_idx
+                    ON retry_queue(next_attempt_at);
+                CREATE INDEX IF NOT EXISTS expenses_user_created_idx
+                    ON expenses(telegram_user_id, created_at DESC);
+                """
+            )
+
+    def contains_file_hash(self, sha256: str) -> bool:
+        self._validate_hash(sha256)
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM file_hashes WHERE sha256 = ?",
+                (sha256,),
+            ).fetchone()
+        return row is not None
+
+    def create_expense(
+        self,
+        *,
+        expense_id: str,
+        telegram_user_id: int,
+        sha256: str,
+        payload: Mapping[str, object],
+        archive_path: str | None = None,
+    ) -> bool:
+        if not expense_id.strip():
+            raise ValueError("expense_id must not be empty")
+        if telegram_user_id <= 0:
+            raise ValueError("telegram_user_id must be positive")
+        self._validate_hash(sha256)
+
+        now = self._now()
+        payload_json = json.dumps(dict(payload), ensure_ascii=False, sort_keys=True)
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            duplicate = connection.execute(
+                "SELECT 1 FROM file_hashes WHERE sha256 = ?",
+                (sha256,),
+            ).fetchone()
+            if duplicate is not None:
+                connection.rollback()
+                return False
+
+            connection.execute(
+                """
+                INSERT INTO expenses (
+                    expense_id, telegram_user_id, payload_json, status,
+                    archive_path, created_at, updated_at
+                ) VALUES (?, ?, ?, 'received', ?, ?, ?)
+                """,
+                (
+                    expense_id,
+                    telegram_user_id,
+                    payload_json,
+                    archive_path,
+                    now,
+                    now,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO file_hashes (sha256, expense_id, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (sha256, expense_id, now),
+            )
+        return True
+
+    def get_expense(self, expense_id: str) -> StoredExpense | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT expense_id, telegram_user_id, payload_json, status,
+                       archive_path, created_at, updated_at
+                FROM expenses
+                WHERE expense_id = ?
+                """,
+                (expense_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        payload = json.loads(row["payload_json"])
+        if not isinstance(payload, dict):
+            raise ValueError("Stored expense payload must be a JSON object")
+        return StoredExpense(
+            expense_id=row["expense_id"],
+            telegram_user_id=row["telegram_user_id"],
+            payload=payload,
+            status=row["status"],
+            archive_path=row["archive_path"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def list_recent_expenses(
+        self, telegram_user_id: int, limit: int = 10
+    ) -> list[StoredExpense]:
+        if telegram_user_id <= 0:
+            raise ValueError("telegram_user_id must be positive")
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT expense_id, telegram_user_id, payload_json, status,
+                       archive_path, created_at, updated_at
+                FROM expenses
+                WHERE telegram_user_id = ?
+                ORDER BY created_at DESC, expense_id DESC
+                LIMIT ?
+                """,
+                (telegram_user_id, limit),
+            ).fetchall()
+        return [self._stored_expense(row) for row in rows]
+
+    def update_expense_status(
+        self,
+        expense_id: str,
+        status: str,
+        archive_path: str | None = None,
+    ) -> None:
+        if status not in _EXPENSE_STATUSES:
+            raise ValueError("Unsupported expense status")
+        now = self._now()
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE expenses
+                SET status = ?,
+                    archive_path = COALESCE(?, archive_path),
+                    updated_at = ?
+                WHERE expense_id = ?
+                """,
+                (status, archive_path, now, expense_id),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"Expense not found: {expense_id}")
+
+    def enqueue_retry(
+        self,
+        expense_id: str,
+        *,
+        next_attempt_at: str,
+        error_code: str,
+    ) -> RetryEntry:
+        if not next_attempt_at.strip():
+            raise ValueError("next_attempt_at must not be empty")
+        if not error_code.strip():
+            raise ValueError("error_code must not be empty")
+        now = self._now()
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO retry_queue (
+                    expense_id, attempts, next_attempt_at, last_error_code,
+                    created_at, updated_at
+                ) VALUES (?, 1, ?, ?, ?, ?)
+                ON CONFLICT(expense_id) DO UPDATE SET
+                    attempts = retry_queue.attempts + 1,
+                    next_attempt_at = excluded.next_attempt_at,
+                    last_error_code = excluded.last_error_code,
+                    updated_at = excluded.updated_at
+                """,
+                (expense_id, next_attempt_at, error_code, now, now),
+            )
+            connection.execute(
+                """
+                UPDATE expenses
+                SET status = 'queued', updated_at = ?
+                WHERE expense_id = ?
+                """,
+                (now, expense_id),
+            )
+            row = connection.execute(
+                """
+                SELECT expense_id, attempts, next_attempt_at, last_error_code
+                FROM retry_queue
+                WHERE expense_id = ?
+                """,
+                (expense_id,),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("Retry queue entry was not persisted")
+        return RetryEntry(
+            expense_id=row["expense_id"],
+            attempts=row["attempts"],
+            next_attempt_at=row["next_attempt_at"],
+            last_error_code=row["last_error_code"],
+        )
+
+    def get_due_retries(self, before: str, limit: int = 20) -> list[RetryEntry]:
+        if not before.strip():
+            raise ValueError("before must not be empty")
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT expense_id, attempts, next_attempt_at, last_error_code
+                FROM retry_queue
+                WHERE next_attempt_at <= ?
+                ORDER BY next_attempt_at, expense_id
+                LIMIT ?
+                """,
+                (before, limit),
+            ).fetchall()
+        return [
+            RetryEntry(
+                expense_id=row["expense_id"],
+                attempts=row["attempts"],
+                next_attempt_at=row["next_attempt_at"],
+                last_error_code=row["last_error_code"],
+            )
+            for row in rows
+        ]
+
+    def remove_retry(self, expense_id: str) -> bool:
+        with self._connection() as connection:
+            cursor = connection.execute(
+                "DELETE FROM retry_queue WHERE expense_id = ?",
+                (expense_id,),
+            )
+        return cursor.rowcount > 0
+
+    def save_conversation_state(
+        self,
+        telegram_user_id: int,
+        state: str,
+        data: Mapping[str, object],
+    ) -> None:
+        if telegram_user_id <= 0:
+            raise ValueError("telegram_user_id must be positive")
+        if not state.strip():
+            raise ValueError("state must not be empty")
+        now = self._now()
+        data_json = json.dumps(dict(data), ensure_ascii=False, sort_keys=True)
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO conversation_states (
+                    telegram_user_id, state, data_json, updated_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(telegram_user_id) DO UPDATE SET
+                    state = excluded.state,
+                    data_json = excluded.data_json,
+                    updated_at = excluded.updated_at
+                """,
+                (telegram_user_id, state, data_json, now),
+            )
+
+    def get_conversation_state(
+        self, telegram_user_id: int
+    ) -> tuple[str, dict[str, object]] | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT state, data_json
+                FROM conversation_states
+                WHERE telegram_user_id = ?
+                """,
+                (telegram_user_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        data = json.loads(row["data_json"])
+        if not isinstance(data, dict):
+            raise ValueError("Stored conversation data must be a JSON object")
+        return row["state"], data
+
+    def delete_conversation_state(self, telegram_user_id: int) -> bool:
+        with self._connection() as connection:
+            cursor = connection.execute(
+                "DELETE FROM conversation_states WHERE telegram_user_id = ?",
+                (telegram_user_id,),
+            )
+        return cursor.rowcount > 0
+
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        connection = sqlite3.connect(self._path, timeout=10)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _validate_hash(sha256: str) -> None:
+        if not _HASH_PATTERN.fullmatch(sha256):
+            raise ValueError("sha256 must be a 64-character lowercase hexadecimal digest")
+
+    @staticmethod
+    def _now() -> str:
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    @staticmethod
+    def _stored_expense(row: sqlite3.Row) -> StoredExpense:
+        payload = json.loads(row["payload_json"])
+        if not isinstance(payload, dict):
+            raise ValueError("Stored expense payload must be a JSON object")
+        return StoredExpense(
+            expense_id=row["expense_id"],
+            telegram_user_id=row["telegram_user_id"],
+            payload=payload,
+            status=row["status"],
+            archive_path=row["archive_path"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
