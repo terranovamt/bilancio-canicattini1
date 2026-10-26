@@ -4,7 +4,7 @@ Progetto per un bot Telegram privato: riceve una foto o un PDF, corregge e anali
 
 ## Stato attuale
 
-Il bot, l'analisi locale, l'archivio, SQLite, la coda dei ritentativi e i file Docker sono in sviluppo e hanno test automatici. **Non usare ancora il bot per registrare spese reali:** il collegamento Playwright al portale e i relativi selettori non sono stati completati e verificati. Le registrazioni disponibili non descrivono ancora in modo affidabile tutte le operazioni di uscita.
+Il bot, l'analisi locale, l'archivio, SQLite, la coda dei ritentativi e il client Playwright hanno test automatici. Il client legge le opzioni mostrate dal portale e può compilare il modulo in modalità di prova. **Non usare ancora il bot per registrare spese reali:** l'invio è disabilitato finché non sarà verificato in modo sicuro come il portale conferma una registrazione.
 
 La modalità `DRY_RUN=true` è quella predefinita. Non modificarla per provare il portale: prima serve completare e verificare il client AGESCI. La ricevuta viene archiviata sul NAS e non viene allegata alla registrazione web.
 
@@ -16,7 +16,7 @@ L'analisi delle ricevute è prevista in locale con Ollama. Non è configurato l'
 - `vision/`: correzione locale dell'immagine, schema dei dati e client Ollama.
 - `storage/`: conservazione temporanea e archivio permanente delle ricevute.
 - `db/`: spese, stati, duplicati e coda SQLite.
-- `bilancio/`: interfaccia del portale; il client Playwright concreto è ancora da completare.
+- `bilancio/`: interfaccia e client Playwright; selettori osservati e opzioni lette dinamicamente dal portale.
 - `Dockerfile` e `docker-compose.yml`: esecuzione prevista su Synology.
 - `docs/GUIDA_SYNOLOGY.md`: istruzioni per preparare il NAS.
 - `docs/CONTESTO_PROGETTO.md`: decisioni e stato dettagliato del lavoro.

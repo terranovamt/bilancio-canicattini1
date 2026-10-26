@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Protocol
 
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from bilancio.client import (
@@ -128,6 +129,10 @@ class ReceiptWorkflow:
             receipt = await self._analyzer.analyze(file_bytes, file_name)
         except (LocalVisionError, ReceiptParseError) as error:
             logger.warning("Receipt analysis failed: %s", type(error).__name__)
+            await self._notify_admin(
+                context,
+                "L’analisi locale di una ricevuta non è riuscita.",
+            )
             await asyncio.to_thread(self._database.delete_expense, pending.receipt_id)
             await asyncio.to_thread(self._pending_store.delete, pending.path)
             await message.reply_text(
@@ -194,6 +199,7 @@ class ReceiptWorkflow:
         elif state == "awaiting_notes":
             await self._submit_expense(
                 update,
+                context,
                 user.id,
                 expense_id,
                 expense.payload,
@@ -288,6 +294,7 @@ class ReceiptWorkflow:
                 user.id,
                 expense_id,
                 query,
+                context,
             )
         elif value.startswith("direction:"):
             await self._select_direction(
@@ -297,6 +304,7 @@ class ReceiptWorkflow:
                 state_data,
                 value.split(":", 1)[1],
                 query,
+                context,
             )
         elif value.startswith("choose:"):
             await self._select_portal_option(
@@ -307,6 +315,7 @@ class ReceiptWorkflow:
                 state_data,
                 value.split(":", 1)[1],
                 query,
+                context,
             )
         elif value == "no_category":
             if state != "awaiting_category":
@@ -321,6 +330,7 @@ class ReceiptWorkflow:
         user_id: int,
         expense_id: str,
         query: CallbackQuery,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         if self._bilancio is None:
             raise RuntimeError("Bilancio client is not configured")
@@ -328,6 +338,12 @@ class ReceiptWorkflow:
             options = await self._bilancio.list_accounts()
         except BilancioClientError as error:
             logger.error("Could not load portal accounts: %s", type(error).__name__)
+            await self._notify_admin(
+                context,
+                "Non riesco a leggere le casse AGESCI. Controlla /data/debug "
+                "per eventuali schermate diagnostiche.",
+                error,
+            )
             await query.edit_message_text(
                 "Non riesco a leggere le casse dal portale. Riprova più tardi."
             )
@@ -356,6 +372,7 @@ class ReceiptWorkflow:
         state_data: dict[str, object],
         value: str,
         query: CallbackQuery,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         if (
             state != "awaiting_direction"
@@ -372,6 +389,12 @@ class ReceiptWorkflow:
             options = await self._bilancio.list_transaction_types(account, direction)
         except BilancioClientError as error:
             logger.error("Could not load portal transaction types: %s", type(error).__name__)
+            await self._notify_admin(
+                context,
+                "Non riesco a leggere le tipologie AGESCI. Controlla /data/debug "
+                "per eventuali schermate diagnostiche.",
+                error,
+            )
             await query.edit_message_text(
                 "Non riesco a leggere le tipologie dal portale. Riprova più tardi."
             )
@@ -400,6 +423,7 @@ class ReceiptWorkflow:
         state_data: dict[str, object],
         index_text: str,
         query: CallbackQuery,
+        context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         if self._bilancio is None or state_data.get("expense_id") != expense_id:
             return
@@ -484,6 +508,12 @@ class ReceiptWorkflow:
                 return
         except BilancioClientError as error:
             logger.error("Could not load portal options: %s", type(error).__name__)
+            await self._notify_admin(
+                context,
+                "Non riesco a leggere le opzioni AGESCI. Controlla /data/debug "
+                "per eventuali schermate diagnostiche.",
+                error,
+            )
             await query.edit_message_text(
                 "Non riesco a leggere le opzioni dal portale. Riprova più tardi."
             )
@@ -506,6 +536,7 @@ class ReceiptWorkflow:
     async def _submit_expense(
         self,
         update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
         user_id: int,
         expense_id: str,
         payload: dict[str, object],
@@ -607,6 +638,12 @@ class ReceiptWorkflow:
                 return
         except (BilancioClientError, OSError, ValueError, KeyError) as error:
             logger.error("Expense submission failed: %s", type(error).__name__)
+            await self._notify_admin(
+                context,
+                "Non ho potuto verificare una registrazione AGESCI. "
+                "Controlla /data/debug e /coda.",
+                error if isinstance(error, BilancioClientError) else None,
+            )
             next_attempt = (
                 datetime.now(timezone.utc) + timedelta(minutes=5)
             ).isoformat(timespec="seconds")
@@ -682,6 +719,23 @@ class ReceiptWorkflow:
         state_data: dict[str, object],
     ) -> None:
         await self._save_state(user_id, "awaiting_notes", state_data)
+
+    async def _notify_admin(
+        self,
+        context: ContextTypes.DEFAULT_TYPE,
+        message: str,
+        error: BilancioClientError | None = None,
+    ) -> None:
+        diagnostic_path = error.diagnostic_path if error is not None else None
+        if diagnostic_path:
+            message = f"{message} Diagnostica locale: {Path(diagnostic_path).name}."
+        try:
+            await context.bot.send_message(
+                chat_id=self._settings.admin_user_id,
+                text=message,
+            )
+        except TelegramError:
+            logger.error("Could not send Telegram admin portal notification")
 
     async def _save_state(
         self,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
+from pathlib import Path
 
 from telegram import Update
 from telegram.error import TelegramError
@@ -21,6 +22,7 @@ from bot.access import is_authorized_user
 from bot.receipt_workflow import ReceiptAnalyzer, ReceiptWorkflow
 from bot.retry_service import ExpenseRetryService
 from bilancio.client import BilancioClient, BilancioClientError
+from bilancio.playwright_client import ManualPortalLoginRequired
 from config import Settings
 from db.database import Database, StoredExpense
 from storage.archive import FileArchive
@@ -259,11 +261,19 @@ async def test_bilancio_command(
         return
     try:
         await client.health_check()
+    except ManualPortalLoginRequired as error:
+        logger.error("AGESCI manual login is required")
+        await update.message.reply_text(
+            "Il portale richiede una verifica manuale, per esempio un codice "
+            "aggiuntivo. Non ho inserito spese. La diagnostica, se presente, "
+            f"è in /data/debug ({Path(error.diagnostic_path).name if error.diagnostic_path else 'nessun file'})."
+        )
+        return
     except BilancioClientError as error:
         logger.error("AGESCI health check failed: %s", type(error).__name__)
         await update.message.reply_text(
             "Non riesco ad accedere al portale o ad aprire il modulo. "
-            "Non ho inserito spese."
+            "Non ho inserito spese. Controlla /data/debug per la diagnostica."
         )
         return
     await update.message.reply_text(

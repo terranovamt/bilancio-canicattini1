@@ -1,0 +1,71 @@
+login_url: https://bilancio.agesci.it/login
+account_name_pattern: '^(?:Cassa|Conto)\b'
+
+selectors:
+  cookie_accept:
+    role: button
+    name: OK
+    exact: true
+  username:
+    role: textbox
+    name: Username
+    exact: true
+  password:
+    role: textbox
+    name: Password
+    exact: true
+  login:
+    role: button
+    name: Entra
+    exact: true
+  role_switch:
+    role: button
+    name_pattern: '^Espandi "Capo unità -'
+  role_entry:
+    role: listitem
+    text_contains: Tesoriere di gruppo -
+  prima_nota:
+    role: link
+    name: Prima Nota
+    exact: true
+  account_links:
+    role: link
+  portal_option:
+    role: option
+  add_operation:
+    role: button
+    name: aggiungi operazione
+    exact: true
+  direction:
+    role: radio
+    name_template: '{direction_label}'
+    exact: true
+  date:
+    role: textbox
+    name: Data Operazione
+    exact: true
+  description:
+    role: textbox
+    name: Descrizione
+    exact: true
+  amount:
+    role: textbox
+    name_pattern: '^Importo\b'
+  transaction_type:
+    role: combobox
+    name_template: 'Tipologia {direction_label}'
+    exact: true
+  unit:
+    role: combobox
+    name: Unità
+    exact: true
+  category:
+    text: Categoria
+  notes:
+    role: textbox
+    name: Note
+    exact: true
+  save:
+    role: button
+    name: Salva
+    exact: true

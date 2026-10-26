@@ -16,6 +16,15 @@ class TransactionDirection(str, Enum):
 class BilancioClientError(RuntimeError):
     """Raised when the budget portal cannot complete an operation."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        diagnostic_path: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.diagnostic_path = diagnostic_path
+
 
 class PortalOptionsUnavailable(BilancioClientError):
     """Raised when the portal does not expose options for the current form."""

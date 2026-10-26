@@ -1,6 +1,6 @@
 # Guida per il Synology DS1522+
 
-Questa guida descrive la preparazione del NAS con DSM 7.2 e Container Manager. **Il bot non è ancora pronto per inserire spese reali:** manca il client Playwright AGESCI, che deve basarsi su selettori osservati nel portale. Non disattivare `DRY_RUN` e non provare il salvataggio di una spesa.
+Questa guida descrive la preparazione del NAS con DSM 7.2 e Container Manager. Il client Playwright è presente e legge le opzioni osservate nel portale, ma può soltanto compilare il modulo in modalità di prova. **Il bot non è ancora pronto per inserire spese reali:** il salvataggio resta disabilitato finché non sarà verificato come rileggere e riconoscere con certezza una registrazione completata. Non disattivare `DRY_RUN` e non provare il salvataggio di una spesa.
 
 ## 1. Prepara la cartella del progetto
 
@@ -43,7 +43,7 @@ Non scaricare ancora un modello a caso: il DS1522+ non ha una scheda grafica ded
 
 ## 5. Crea il progetto in Container Manager
 
-Esegui questi passaggi solo dopo aver completato il collegamento AGESCI e ricevuto istruzioni aggiornate:
+Esegui questi passaggi solo dopo aver verificato la memoria del NAS, scelto un modello locale e completato un controllo in modalità di prova:
 
 1. Apri **Container Manager** e vai in **Progetto**.
 2. Scegli **Crea**.
@@ -60,7 +60,7 @@ Compose avvia Ollama e il bot, non apre porte di rete in ingresso e mantiene i d
 2. Apri i registri del servizio `bot` se qualcosa non parte. I registri sono in formato leggibile e salvati anche in `data/logs`, con rotazione automatica.
 3. Non copiare in chat registri che potrebbero contenere dati personali.
 4. Quando il modello locale sarà configurato, prova prima solo la ricezione e l'analisi della ricevuta.
-5. Non fare prove di salvataggio sul portale finché l'amministratore non avrà verificato selettori, modalità di prova e procedura di controllo del risultato.
+5. Non fare prove di salvataggio sul portale: il client al momento non esegue il comando Salva. Prima occorre definire e provare la verifica del risultato con una procedura autorizzata.
 
 ## 7. Aggiornamenti e copie di sicurezza
 
