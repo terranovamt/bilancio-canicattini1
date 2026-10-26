@@ -6,6 +6,7 @@ from bilancio.client import (
     PortalExpense,
     PortalOption,
     TransactionDirection,
+    scout_year_label,
 )
 
 
@@ -62,6 +63,11 @@ class BilancioClientModelTests(unittest.TestCase):
                 category=None,
                 notes=None,
             )
+
+    def test_scout_year_changes_on_first_of_october(self) -> None:
+        self.assertEqual(scout_year_label(date(2026, 9, 30)), "25-26")
+        self.assertEqual(scout_year_label(date(2026, 10, 1)), "26-27")
+        self.assertEqual(scout_year_label(date(2027, 1, 10)), "26-27")
 
 
 if __name__ == "__main__":

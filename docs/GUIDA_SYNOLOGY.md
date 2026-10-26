@@ -1,6 +1,6 @@
 # Guida per il Synology DS1522+
 
-Questa guida descrive la preparazione del NAS con DSM 7.2 e Container Manager. Il client Playwright è presente e legge le opzioni osservate nel portale, ma può soltanto compilare il modulo in modalità di prova. **Il bot non è ancora pronto per inserire spese reali:** il salvataggio resta disabilitato finché non sarà verificato come rileggere e riconoscere con certezza una registrazione completata. Non disattivare `DRY_RUN` e non provare il salvataggio di una spesa.
+Questa guida descrive la preparazione del NAS con DSM 7.2 e Container Manager. Il client segue l'ordine del portale (anno scout, Tesoriere di gruppo, Prima Nota), calcola l'anno dal 1º ottobre e controlla che una spesa salvata compaia nella tabella. **Il salvataggio reale non è ancora stato collaudato dal bot.** Mantieni `DRY_RUN=true` fino a quando non avrai concordato una prova controllata: con `DRY_RUN=false` il bot inserisce davvero la spesa.
 
 ## 1. Prepara la cartella del progetto
 
@@ -60,7 +60,7 @@ Compose avvia Ollama e il bot, non apre porte di rete in ingresso e mantiene i d
 2. Apri i registri del servizio `bot` se qualcosa non parte. I registri sono in formato leggibile e salvati anche in `data/logs`, con rotazione automatica.
 3. Non copiare in chat registri che potrebbero contenere dati personali.
 4. Quando il modello locale sarà configurato, prova prima solo la ricezione e l'analisi della ricevuta.
-5. Non fare prove di salvataggio sul portale: il client al momento non esegue il comando Salva. Prima occorre definire e provare la verifica del risultato con una procedura autorizzata.
+5. Mantieni `DRY_RUN=true`. Non cambiarlo per una prova reale senza aver concordato prima un’operazione di test con il tesoriere responsabile. In modalità reale il client preme Salva e verifica la nuova riga; non ripete automaticamente il clic se la verifica non riesce.
 
 ## 7. Aggiornamenti e copie di sicurezza
 

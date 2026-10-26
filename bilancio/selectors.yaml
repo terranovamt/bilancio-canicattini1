@@ -18,9 +18,12 @@ selectors:
     role: button
     name: Entra
     exact: true
+  scout_year_switch:
+    role: button
+    name_pattern: '^Espandi "\d{2}-\d{2}"$'
   role_switch:
     role: button
-    name_pattern: '^Espandi "Capo unità -'
+    name_pattern: '^Espandi "(?:Capo unità|Tesoriere di gruppo) -'
   role_entry:
     role: listitem
     text_contains: Tesoriere di gruppo -
@@ -39,6 +42,10 @@ selectors:
   direction:
     role: radio
     name_template: '{direction_label}'
+    exact: true
+  accounting_voice:
+    role: radio
+    name_template: '{accounting_voice}'
     exact: true
   date:
     role: textbox
@@ -60,7 +67,9 @@ selectors:
     name: Unità
     exact: true
   category:
-    text: Categoria
+    role: combobox
+    name: Categoria
+    exact: true
   notes:
     role: textbox
     name: Note
@@ -69,3 +78,5 @@ selectors:
     role: button
     name: Salva
     exact: true
+  ledger_rows:
+    role: row

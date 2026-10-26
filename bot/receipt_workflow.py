@@ -293,11 +293,22 @@ class ReceiptWorkflow:
             await self._begin_portal_selection(
                 user.id,
                 expense_id,
+                expense.payload,
                 query,
                 context,
             )
         elif value.startswith("direction:"):
             await self._select_direction(
+                user.id,
+                expense_id,
+                state,
+                state_data,
+                value.split(":", 1)[1],
+                query,
+                context,
+            )
+        elif value.startswith("voice:"):
+            await self._select_accounting_voice(
                 user.id,
                 expense_id,
                 state,
@@ -329,13 +340,17 @@ class ReceiptWorkflow:
         self,
         user_id: int,
         expense_id: str,
+        payload: dict[str, object],
         query: CallbackQuery,
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         if self._bilancio is None:
             raise RuntimeError("Bilancio client is not configured")
+        transaction_date = self._payload_date(payload)
         try:
-            options = await self._bilancio.list_accounts()
+            options = await self._bilancio.list_accounts(
+                transaction_date=transaction_date
+            )
         except BilancioClientError as error:
             logger.error("Could not load portal accounts: %s", type(error).__name__)
             debug_path = Path(self._settings.data_path) / "debug"
@@ -357,6 +372,7 @@ class ReceiptWorkflow:
             return
         data: dict[str, object] = {
             "expense_id": expense_id,
+            "transaction_date": transaction_date.isoformat(),
             "options": self._serialize_options(options),
         }
         await self._save_state(user_id, "awaiting_account", data)
@@ -384,10 +400,61 @@ class ReceiptWorkflow:
         if value not in {direction.value for direction in TransactionDirection}:
             await query.edit_message_text("Direzione non valida.")
             return
+        state_data["direction"] = value
+        await self._save_state(user_id, "awaiting_accounting_voice", state_data)
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "Voci Scout",
+                        callback_data="receipt:voice:Voci Scout",
+                    ),
+                    InlineKeyboardButton(
+                        "Voci Ministero",
+                        callback_data="receipt:voice:Voci Ministero",
+                    ),
+                ]
+            ]
+        )
+        await query.edit_message_text(
+            "Scegli il tipo di voce:",
+            reply_markup=keyboard,
+        )
+
+    async def _select_accounting_voice(
+        self,
+        user_id: int,
+        expense_id: str,
+        state: str,
+        state_data: dict[str, object],
+        accounting_voice: str,
+        query: CallbackQuery,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        if (
+            state != "awaiting_accounting_voice"
+            or state_data.get("expense_id") != expense_id
+            or self._bilancio is None
+        ):
+            await query.edit_message_text("Questa scelta non è più disponibile.")
+            return
+        if accounting_voice not in {"Voci Scout", "Voci Ministero"}:
+            await query.edit_message_text("Questa scelta non è valida.")
+            return
+        direction_value = state_data.get("direction")
+        if not isinstance(direction_value, str):
+            await query.edit_message_text("Prima scegli entrata o uscita.")
+            return
         account = self._option_from(state_data, "account")
-        direction = TransactionDirection(value)
+        direction = TransactionDirection(direction_value)
+        transaction_date = self._state_date(state_data)
         try:
-            options = await self._bilancio.list_transaction_types(account, direction)
+            options = await self._bilancio.list_transaction_types(
+                account,
+                direction,
+                transaction_date=transaction_date,
+                accounting_voice=accounting_voice,
+            )
         except BilancioClientError as error:
             logger.error("Could not load portal transaction types: %s", type(error).__name__)
             debug_path = Path(self._settings.data_path) / "debug"
@@ -407,7 +474,7 @@ class ReceiptWorkflow:
             )
             return
         state_data.update(
-            direction=direction.value,
+            accounting_voice=accounting_voice,
             options=self._serialize_options(options),
         )
         await self._save_state(user_id, "awaiting_transaction_type", state_data)
@@ -445,6 +512,8 @@ class ReceiptWorkflow:
             if isinstance(direction_value, str)
             else None
         )
+        transaction_date = self._state_date(state_data)
+        accounting_voice = str(state_data.get("accounting_voice", "Voci Scout"))
 
         try:
             if state == "awaiting_account":
@@ -477,6 +546,8 @@ class ReceiptWorkflow:
                     account,
                     direction,
                     selected,
+                    transaction_date=transaction_date,
+                    accounting_voice=accounting_voice,
                 )
                 next_state = "awaiting_unit"
                 prompt = "Scegli l’unità:"
@@ -487,6 +558,8 @@ class ReceiptWorkflow:
                     direction,
                     transaction_type,
                     selected,
+                    transaction_date=transaction_date,
+                    accounting_voice=accounting_voice,
                 )
                 if not next_options:
                     state_data.update(category=None)
@@ -602,6 +675,7 @@ class ReceiptWorkflow:
                 unit=unit,
                 category=category,
                 notes=None if notes_text == "-" else notes_text,
+                accounting_voice=str(state_data.get("accounting_voice", "Voci Scout")),
             )
             payload.update(
                 account=self._serialize_option(account),
@@ -613,6 +687,7 @@ class ReceiptWorkflow:
                     if category is not None
                     else None
                 ),
+                accounting_voice=portal_expense.accounting_voice,
                 portal_notes=portal_expense.notes,
             )
             await asyncio.to_thread(
@@ -913,6 +988,20 @@ class ReceiptWorkflow:
         if not isinstance(value, dict):
             raise ValueError(f"Portal selection is missing: {key}")
         return PortalOption(**value)
+
+    @staticmethod
+    def _payload_date(payload: dict[str, object]) -> date:
+        value = payload.get("date")
+        if not isinstance(value, str):
+            raise ValueError("Expense payload has no transaction date")
+        return date.fromisoformat(value)
+
+    @classmethod
+    def _state_date(cls, state_data: dict[str, object]) -> date:
+        value = state_data.get("transaction_date")
+        if not isinstance(value, str):
+            raise ValueError("Conversation state has no transaction date")
+        return date.fromisoformat(value)
 
     @staticmethod
     def _next_missing_field(payload: dict[str, object]) -> str:

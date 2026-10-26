@@ -287,6 +287,9 @@ class ExpenseRetryService:
             unit=unit,
             category=category,
             notes=notes if isinstance(notes, str) else None,
+            accounting_voice=str(
+                payload.get("accounting_voice", "Voci Scout")
+            ),
         )
 
     @staticmethod

@@ -6,7 +6,7 @@ import re
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -23,11 +23,13 @@ from playwright.async_api import (
 
 from bilancio.client import (
     BilancioClientError,
+    ACCOUNTING_VOICE_OPTIONS,
     PortalExpense,
     PortalOption,
     PortalOptionsUnavailable,
     PortalSubmissionResult,
     TransactionDirection,
+    scout_year_label,
 )
 
 logger = logging.getLogger(__name__)
@@ -88,30 +90,45 @@ class PlaywrightBilancioClient:
                 TransactionDirection.EXPENSE,
             )
 
-        await self._with_page(check)
+        await self._with_page(check, transaction_date=date.today())
 
-    async def list_accounts(self) -> Sequence[PortalOption]:
-        return await self._with_page(self._read_accounts)
+    async def list_accounts(
+        self,
+        *,
+        transaction_date: date | None = None,
+    ) -> Sequence[PortalOption]:
+        return await self._with_page(
+            self._read_accounts,
+            transaction_date=transaction_date or date.today(),
+        )
 
     async def list_transaction_types(
         self,
         account: PortalOption,
         direction: TransactionDirection,
+        *,
+        transaction_date: date | None = None,
+        accounting_voice: str = "Voci Scout",
     ) -> Sequence[PortalOption]:
         async def read(page: Page) -> Sequence[PortalOption]:
             await self._open_account_form(page, account, direction)
+            await self._select_accounting_voice(page, accounting_voice)
             return await self._read_dropdown(page, "transaction_type", direction)
 
-        return await self._with_page(read)
+        return await self._with_page(read, transaction_date=transaction_date)
 
     async def list_units(
         self,
         account: PortalOption,
         direction: TransactionDirection,
         transaction_type: PortalOption,
+        *,
+        transaction_date: date | None = None,
+        accounting_voice: str = "Voci Scout",
     ) -> Sequence[PortalOption]:
         async def read(page: Page) -> Sequence[PortalOption]:
             await self._open_account_form(page, account, direction)
+            await self._select_accounting_voice(page, accounting_voice)
             await self._select_dropdown(
                 page,
                 "transaction_type",
@@ -120,7 +137,7 @@ class PlaywrightBilancioClient:
             )
             return await self._read_dropdown(page, "unit")
 
-        return await self._with_page(read)
+        return await self._with_page(read, transaction_date=transaction_date)
 
     async def list_categories(
         self,
@@ -128,9 +145,13 @@ class PlaywrightBilancioClient:
         direction: TransactionDirection,
         transaction_type: PortalOption,
         unit: PortalOption,
+        *,
+        transaction_date: date | None = None,
+        accounting_voice: str = "Voci Scout",
     ) -> Sequence[PortalOption]:
         async def read(page: Page) -> Sequence[PortalOption]:
             await self._open_account_form(page, account, direction)
+            await self._select_accounting_voice(page, accounting_voice)
             await self._select_dropdown(
                 page,
                 "transaction_type",
@@ -140,7 +161,7 @@ class PlaywrightBilancioClient:
             await self._select_dropdown(page, "unit", unit)
             return await self._read_dropdown(page, "category")
 
-        return await self._with_page(read)
+        return await self._with_page(read, transaction_date=transaction_date)
 
     async def create_expense(
         self,
@@ -148,17 +169,17 @@ class PlaywrightBilancioClient:
         *,
         dry_run: bool,
     ) -> PortalSubmissionResult:
-        if not dry_run:
-            raise BilancioClientError(
-                "Live AGESCI saving remains disabled until result verification is confirmed"
-            )
-
         async def fill_form(page: Page) -> PortalSubmissionResult:
-            await self._open_account_form(
-                page,
-                expense.account,
-                expense.direction,
-            )
+            await self._open_account_ledger(page, expense.account)
+            existing = await self._find_matching_expense(page, expense)
+            if existing:
+                return PortalSubmissionResult(
+                    verified=True,
+                    confirmation_id="existing-entry",
+                    dry_run=dry_run,
+                )
+            await self._open_operation_form(page, expense.direction)
+            await self._select_accounting_voice(page, expense.accounting_voice)
             await self._select_dropdown(
                 page,
                 "transaction_type",
@@ -169,21 +190,40 @@ class PlaywrightBilancioClient:
             if expense.category is not None:
                 await self._select_dropdown(page, "category", expense.category)
             await self._fill_form(page, expense)
-            return PortalSubmissionResult(verified=True, dry_run=True)
+            if dry_run:
+                return PortalSubmissionResult(verified=True, dry_run=True)
+            await self._locator(page, "save").click()
+            if not await self._wait_for_matching_expense(page, expense):
+                await self._save_diagnostics(page, "submission-verification-failed")
+                raise BilancioClientError(
+                    "AGESCI did not show the submitted expense in the account ledger"
+                )
+            return PortalSubmissionResult(verified=True, dry_run=False)
 
-        return await self._with_page(fill_form)
+        return await self._with_page(
+            fill_form,
+            transaction_date=expense.transaction_date,
+            max_attempts=1,
+        )
 
     async def _with_page[T](
         self,
         operation: Callable[[Page], Awaitable[T]],
+        *,
+        transaction_date: date | None = None,
+        max_attempts: int = _MAX_ATTEMPTS,
     ) -> T:
         async with self._lock:
             last_error: Exception | None = None
             last_diagnostic_path: str | None = None
-            for attempt in range(_MAX_ATTEMPTS):
+            for attempt in range(max_attempts):
                 async with self._page_context() as (page, context):
                     try:
-                        await self._ensure_authenticated(page, context)
+                        await self._ensure_authenticated(
+                            page,
+                            context,
+                            transaction_date or date.today(),
+                        )
                         return await operation(page)
                     except PortalOptionsUnavailable as error:
                         error.diagnostic_path = str(
@@ -200,7 +240,7 @@ class PlaywrightBilancioClient:
                         raise
                     except (PlaywrightError, BilancioClientError) as error:
                         last_error = error
-                        if attempt == _MAX_ATTEMPTS - 1:
+                        if attempt == max_attempts - 1:
                             last_diagnostic_path = str(
                                 await self._save_diagnostics(page, "portal-error")
                             )
@@ -209,7 +249,7 @@ class PlaywrightBilancioClient:
                             break
                 await asyncio.sleep(2**attempt)
             raise BilancioClientError(
-                "AGESCI portal operation failed after three attempts",
+                f"AGESCI portal operation failed after {max_attempts} attempts",
                 diagnostic_path=last_diagnostic_path,
             ) from last_error
 
@@ -239,6 +279,7 @@ class PlaywrightBilancioClient:
         self,
         page: Page,
         context: BrowserContext,
+        transaction_date: date,
     ) -> None:
         await page.goto(self._login_url, wait_until="domcontentloaded")
         cookie_button = self._locator(page, "cookie_accept")
@@ -262,6 +303,7 @@ class PlaywrightBilancioClient:
                     "AGESCI login did not complete; manual verification may be required"
                 )
 
+        await self._select_scout_year(page, scout_year_label(transaction_date))
         await self._select_role(page)
         self._session_state_path.parent.mkdir(parents=True, exist_ok=True)
         await context.storage_state(path=str(self._session_state_path))
@@ -275,6 +317,17 @@ class PlaywrightBilancioClient:
         role_entry = self._locator(page, "role_entry")
         await self._require_one(role_entry, "role_entry")
         await role_entry.click()
+
+    async def _select_scout_year(self, page: Page, year_label: str) -> None:
+        year_switch = self._locator(page, "scout_year_switch")
+        await self._require_one(year_switch, "scout_year_switch")
+        current_label = " ".join((await year_switch.first.inner_text()).split())
+        if year_label in current_label:
+            return
+        await year_switch.click()
+        year_entry = page.get_by_role("listitem", name=year_label, exact=True)
+        await self._require_one(year_entry, "scout_year_option")
+        await year_entry.click()
 
     async def _read_accounts(self, page: Page) -> Sequence[PortalOption]:
         await self._locator(page, "prima_nota").click()
@@ -303,10 +356,24 @@ class PlaywrightBilancioClient:
         account: PortalOption,
         direction: TransactionDirection,
     ) -> None:
+        await self._open_account_ledger(page, account)
+        await self._open_operation_form(page, direction)
+
+    async def _open_account_ledger(
+        self,
+        page: Page,
+        account: PortalOption,
+    ) -> None:
         await self._locator(page, "prima_nota").click()
         account_link = page.get_by_role("link", name=account.label, exact=True)
         await self._require_one(account_link, "account_link")
         await account_link.click()
+
+    async def _open_operation_form(
+        self,
+        page: Page,
+        direction: TransactionDirection,
+    ) -> None:
         await self._locator(page, "add_operation").click()
         direction_label = self._direction_label(direction)
         direction_locator = self._locator(
@@ -316,6 +383,22 @@ class PlaywrightBilancioClient:
         )
         await self._require_one(direction_locator, "direction")
         await direction_locator.check()
+
+    async def _select_accounting_voice(
+        self,
+        page: Page,
+        accounting_voice: str,
+    ) -> None:
+        if accounting_voice not in ACCOUNTING_VOICE_OPTIONS:
+            raise ValueError("Unsupported AGESCI accounting voice")
+        voice = self._locator(
+            page,
+            "accounting_voice",
+            accounting_voice=accounting_voice,
+        )
+        await self._require_one(voice, "accounting_voice")
+        if not await voice.is_checked():
+            await voice.check(force=True)
 
     async def _read_dropdown(
         self,
@@ -402,6 +485,82 @@ class PlaywrightBilancioClient:
             raise BilancioClientError(
                 "AGESCI form values did not match the requested expense"
             )
+
+    async def _find_matching_expense(
+        self,
+        page: Page,
+        expense: PortalExpense,
+    ) -> bool:
+        return await self._matching_expense_count(page, expense) > 0
+
+    async def _wait_for_matching_expense(
+        self,
+        page: Page,
+        expense: PortalExpense,
+    ) -> bool:
+        deadline = asyncio.get_running_loop().time() + 15
+        while asyncio.get_running_loop().time() < deadline:
+            if await self._find_matching_expense(page, expense):
+                return True
+            await asyncio.sleep(0.25)
+        return False
+
+    async def _matching_expense_count(
+        self,
+        page: Page,
+        expense: PortalExpense,
+    ) -> int:
+        rows = page.get_by_role("row")
+        if await rows.count() < 2:
+            raise PortalOptionsUnavailable("AGESCI account ledger rows were not found")
+        headers = [
+            " ".join(text.split())
+            for text in await rows.nth(1).get_by_role("columnheader").all_text_contents()
+        ]
+        required_headers = (
+            "Data Operazione",
+            "Unità",
+            "Descrizione Operazione",
+            "Importo Entrata" if expense.direction is TransactionDirection.INCOME else "Importo Uscita",
+            "Tipologia Entrata" if expense.direction is TransactionDirection.INCOME else "Tipologia Uscita",
+        )
+        if any(header not in headers for header in required_headers):
+            raise PortalOptionsUnavailable(
+                "AGESCI account ledger columns could not be verified"
+            )
+        indices = {header: headers.index(header) for header in headers}
+        expected = {
+            "Data Operazione": expense.transaction_date.strftime("%d/%m/%Y"),
+            "Unità": expense.unit.label,
+            "Descrizione Operazione": expense.description,
+            required_headers[3]: f"{expense.amount:.2f}",
+            required_headers[4]: expense.transaction_type.label,
+        }
+        if expense.category is not None:
+            if "Categoria" not in indices:
+                raise PortalOptionsUnavailable(
+                    "AGESCI category column could not be verified"
+                )
+            expected["Categoria"] = expense.category.label
+
+        matches = 0
+        for index in range(2, await rows.count()):
+            cells = await rows.nth(index).get_by_role("cell").all_text_contents()
+            if len(cells) < len(headers):
+                continue
+            values = {
+                header: " ".join(cells[column].split())
+                for header, column in indices.items()
+                if column < len(cells)
+            }
+            amount = values.get(required_headers[3], "")
+            normalized_amount = re.sub(r"[^\d,.-]", "", amount)
+            if "," in normalized_amount:
+                normalized_amount = normalized_amount.replace(".", "").replace(",", ".")
+            values[required_headers[3]] = normalized_amount
+            if all(values.get(key) == value for key, value in expected.items()):
+                matches += 1
+        return matches
 
     def _locator(self, page: Page, key: str, **values: str) -> Locator:
         selector = self._selectors.get(key)

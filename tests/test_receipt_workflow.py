@@ -28,15 +28,21 @@ class FakeAnalyzer:
 class FakeBilancioClient:
     def __init__(self) -> None:
         self.submitted = []
+        self.requested_dates = []
 
-    async def list_accounts(self):
+    async def list_accounts(self, *, transaction_date=None):
+        self.requested_dates.append(transaction_date)
         return [PortalOption("account-1", "Cassa dinamica")]
 
     async def list_transaction_types(
         self,
         account: PortalOption,
         direction: TransactionDirection,
+        *,
+        transaction_date=None,
+        accounting_voice="Voci Scout",
     ):
+        self.requested_dates.append(transaction_date)
         return [PortalOption("type-1", f"Tipo {direction.value}")]
 
     async def list_units(
@@ -44,7 +50,11 @@ class FakeBilancioClient:
         account: PortalOption,
         direction: TransactionDirection,
         transaction_type: PortalOption,
+        *,
+        transaction_date=None,
+        accounting_voice="Voci Scout",
     ):
+        self.requested_dates.append(transaction_date)
         return [PortalOption("unit-1", "Unità visibile")]
 
     async def list_categories(
@@ -53,7 +63,11 @@ class FakeBilancioClient:
         direction: TransactionDirection,
         transaction_type: PortalOption,
         unit: PortalOption,
+        *,
+        transaction_date=None,
+        accounting_voice="Voci Scout",
     ):
+        self.requested_dates.append(transaction_date)
         return [PortalOption("category-1", "Categoria visibile")]
 
     async def create_expense(
@@ -155,13 +169,14 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_portal_choices_are_loaded_dynamically(self) -> None:
+        portal = FakeBilancioClient()
         workflow = ReceiptWorkflow(
             settings=make_settings(),
             database=self.database,
             analyzer=self.analyzer,
             pending_store=PendingReceiptStore(self.root / "pending"),
             archive=FileArchive(self.root / "archive"),
-            bilancio_client=FakeBilancioClient(),
+            bilancio_client=portal,
         )
         _, receipt_update, receipt_context = self.make_photo_update(b"receipt")
         await workflow.receive_receipt(receipt_update, receipt_context)
@@ -196,8 +211,26 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(),
         )
 
-        type_markup = direction_query.edit_message_text.await_args.kwargs["reply_markup"]
+        voice_markup = direction_query.edit_message_text.await_args.kwargs["reply_markup"]
+        self.assertEqual(voice_markup.inline_keyboard[0][0].text, "Voci Scout")
+        self.assertEqual(
+            self.database.get_conversation_state(12345)[0],
+            "awaiting_accounting_voice",
+        )
+
+        voice_query = self.make_query("receipt:voice:Voci Scout")
+        await workflow.handle_callback(
+            SimpleNamespace(
+                callback_query=voice_query,
+                effective_user=SimpleNamespace(id=12345),
+            ),
+            SimpleNamespace(),
+        )
+
+        type_markup = voice_query.edit_message_text.await_args.kwargs["reply_markup"]
         self.assertEqual(type_markup.inline_keyboard[0][0].text, "Tipo uscita")
+        self.assertEqual(portal.requested_dates[0], date(2026, 10, 26))
+        self.assertEqual(portal.requested_dates[1], date(2026, 10, 26))
         self.assertEqual(
             self.database.get_conversation_state(12345)[0],
             "awaiting_transaction_type",
@@ -219,6 +252,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             "receipt:confirm",
             "receipt:choose:0",
             "receipt:direction:uscita",
+            "receipt:voice:Voci Scout",
             "receipt:choose:0",
             "receipt:choose:0",
             "receipt:choose:0",

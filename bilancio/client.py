@@ -13,6 +13,14 @@ class TransactionDirection(str, Enum):
     EXPENSE = "uscita"
 
 
+ACCOUNTING_VOICE_OPTIONS = ("Voci Scout", "Voci Ministero")
+
+
+def scout_year_label(transaction_date: date) -> str:
+    start_year = transaction_date.year if transaction_date.month >= 10 else transaction_date.year - 1
+    return f"{start_year % 100:02d}-{(start_year + 1) % 100:02d}"
+
+
 class BilancioClientError(RuntimeError):
     """Raised when the budget portal cannot complete an operation."""
 
@@ -51,12 +59,15 @@ class PortalExpense:
     unit: PortalOption
     category: PortalOption | None
     notes: str | None
+    accounting_voice: str = "Voci Scout"
 
     def __post_init__(self) -> None:
         if not self.description.strip():
             raise ValueError("description must not be empty")
         if not self.amount.is_finite() or self.amount <= 0:
             raise ValueError("amount must be a finite positive value")
+        if self.accounting_voice not in ACCOUNTING_VOICE_OPTIONS:
+            raise ValueError("accounting_voice must be a supported AGESCI voice")
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,13 +81,20 @@ class BilancioClient(Protocol):
     async def health_check(self) -> None:
         """Log in if needed and open the form without saving an expense."""
 
-    async def list_accounts(self) -> Sequence[PortalOption]:
+    async def list_accounts(
+        self,
+        *,
+        transaction_date: date | None = None,
+    ) -> Sequence[PortalOption]:
         """Return account choices currently available to the logged-in user."""
 
     async def list_transaction_types(
         self,
         account: PortalOption,
         direction: TransactionDirection,
+        *,
+        transaction_date: date | None = None,
+        accounting_voice: str = "Voci Scout",
     ) -> Sequence[PortalOption]:
         """Return types available for the selected account and direction."""
 
@@ -85,6 +103,9 @@ class BilancioClient(Protocol):
         account: PortalOption,
         direction: TransactionDirection,
         transaction_type: PortalOption,
+        *,
+        transaction_date: date | None = None,
+        accounting_voice: str = "Voci Scout",
     ) -> Sequence[PortalOption]:
         """Return units available for the current form selections."""
 
@@ -94,6 +115,9 @@ class BilancioClient(Protocol):
         direction: TransactionDirection,
         transaction_type: PortalOption,
         unit: PortalOption,
+        *,
+        transaction_date: date | None = None,
+        accounting_voice: str = "Voci Scout",
     ) -> Sequence[PortalOption]:
         """Return categories available for the current form selections."""
 
