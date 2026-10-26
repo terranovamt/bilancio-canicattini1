@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Sequence
 
@@ -18,11 +19,12 @@ from telegram.ext import (
 
 from bot.access import is_authorized_user
 from bot.receipt_workflow import ReceiptAnalyzer, ReceiptWorkflow
+from bot.retry_service import ExpenseRetryService
+from bilancio.client import BilancioClient, BilancioClientError
 from config import Settings
 from db.database import Database, StoredExpense
 from storage.archive import FileArchive
 from storage.pending import PendingReceiptStore
-from bilancio.client import BilancioClient
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +33,10 @@ HELP_TEXT = (
     "/start - inizia a usare il bot\n"
     "/help - mostra questo aiuto\n"
     "/ultime - mostra le ultime 10 spese\n"
-    "/annulla - annulla l’operazione in corso"
+    "/annulla - annulla l’operazione in corso\n"
+    "/coda - mostra le spese in attesa o da verificare\n"
+    "/riprova - ritenta le spese in coda\n"
+    "/testbilancio - controlla il portale (solo amministratore)"
 )
 
 
@@ -54,11 +59,33 @@ def create_application(
     application.bot_data["settings"] = settings
     application.bot_data["database"] = database
     application.bot_data["receipt_workflow"] = workflow
+    application.bot_data["bilancio_client"] = bilancio_client
+    application.bot_data["retry_service"] = None
+    if bilancio_client is not None:
+        retry_service = ExpenseRetryService(
+            settings=settings,
+            database=database,
+            bilancio_client=bilancio_client,
+            archive=FileArchive(settings.storage_path),
+            pending_store=PendingReceiptStore("/data/pending"),
+        )
+        application.bot_data["retry_service"] = retry_service
+        if application.job_queue is None:
+            raise RuntimeError("python-telegram-bot job queue is not available")
+        application.job_queue.run_repeating(
+            retry_queue_job,
+            interval=300,
+            first=30,
+            name="expense-retry-queue",
+        )
     application.add_handler(TypeHandler(Update, authorize_update), group=-1)
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("annulla", cancel_command))
     application.add_handler(CommandHandler("ultime", latest_expenses_command))
+    application.add_handler(CommandHandler("coda", queue_command))
+    application.add_handler(CommandHandler("riprova", retry_command))
+    application.add_handler(CommandHandler("testbilancio", test_bilancio_command))
     application.add_handler(
         MessageHandler(
             filters.PHOTO | filters.Document.PDF,
@@ -71,6 +98,7 @@ def create_application(
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, receipt_text)
     )
+    application.add_error_handler(telegram_error_handler)
     return application
 
 
@@ -156,6 +184,112 @@ async def latest_expenses_command(
         await update.message.reply_text("Non ci sono ancora spese registrate.")
         return
     await update.message.reply_text(_format_recent_expenses(expenses))
+
+
+async def queue_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None or update.effective_user is None:
+        return
+    database: Database = context.application.bot_data["database"]
+    expenses = await asyncio.to_thread(
+        database.list_retryable_expenses,
+        update.effective_user.id,
+    )
+    if not expenses:
+        await update.message.reply_text("Non ci sono spese in coda.")
+        return
+    lines = ["Spese da ritentare o verificare:"]
+    for expense in expenses:
+        lines.append(
+            f"{_safe_field(expense.payload.get('date'))} · "
+            f"{_safe_field(expense.payload.get('merchant'))} · "
+            f"{_safe_field(expense.payload.get('total_amount'))} · "
+            f"{'in coda' if expense.status == 'queued' else 'da verificare'}"
+        )
+    await update.message.reply_text("\n".join(lines))
+
+
+async def retry_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None or update.effective_user is None:
+        return
+    service: ExpenseRetryService | None = context.application.bot_data["retry_service"]
+    if service is None:
+        await update.message.reply_text(
+            "Il collegamento al portale non è ancora configurato."
+        )
+        return
+    database: Database = context.application.bot_data["database"]
+    requested = await asyncio.to_thread(
+        database.request_retry_for_user,
+        update.effective_user.id,
+    )
+    if requested == 0:
+        await update.message.reply_text("Non ci sono spese da ritentare.")
+        return
+    summary = await service.process_due(
+        context.bot,
+        telegram_user_id=update.effective_user.id,
+    )
+    await update.message.reply_text(
+        f"Tentativo completato: {summary.succeeded} riuscite, "
+        f"{summary.pending} ancora in attesa, {summary.failed} da verificare."
+    )
+
+
+async def test_bilancio_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None or update.effective_user is None:
+        return
+    settings: Settings = context.application.bot_data["settings"]
+    if update.effective_user.id != settings.admin_user_id:
+        await update.message.reply_text("Comando riservato all’amministratore.")
+        return
+    client: BilancioClient | None = context.application.bot_data["bilancio_client"]
+    if client is None:
+        await update.message.reply_text(
+            "Il collegamento al portale non è ancora configurato."
+        )
+        return
+    try:
+        await client.health_check()
+    except BilancioClientError as error:
+        logger.error("AGESCI health check failed: %s", type(error).__name__)
+        await update.message.reply_text(
+            "Non riesco ad accedere al portale o ad aprire il modulo. "
+            "Non ho inserito spese."
+        )
+        return
+    await update.message.reply_text(
+        "Controllo completato: accesso e modulo disponibili. Non ho inserito spese."
+    )
+
+
+async def retry_queue_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    service: ExpenseRetryService | None = context.application.bot_data["retry_service"]
+    if service is not None:
+        await service.process_due(context.bot)
+
+
+async def telegram_error_handler(
+    update: object,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    error = context.error
+    if error is not None:
+        logger.error("Unhandled Telegram update error: %s", type(error).__name__)
+    settings: Settings = context.application.bot_data["settings"]
+    await notify_admin(
+        context,
+        settings,
+        "Si è verificato un errore durante l’elaborazione di un messaggio.",
+    )
 
 
 def _format_recent_expenses(expenses: Sequence[StoredExpense]) -> str:

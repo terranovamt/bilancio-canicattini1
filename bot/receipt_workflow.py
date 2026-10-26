@@ -569,6 +569,23 @@ class ReceiptWorkflow:
                 category=category,
                 notes=None if notes_text == "-" else notes_text,
             )
+            payload.update(
+                account=self._serialize_option(account),
+                direction=direction.value,
+                transaction_type=self._serialize_option(transaction_type),
+                unit=self._serialize_option(unit),
+                category=(
+                    self._serialize_option(category)
+                    if category is not None
+                    else None
+                ),
+                portal_notes=portal_expense.notes,
+            )
+            await asyncio.to_thread(
+                self._database.update_expense_payload,
+                expense_id,
+                payload,
+            )
             result = await self._bilancio.create_expense(
                 portal_expense,
                 dry_run=self._settings.dry_run,

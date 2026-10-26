@@ -143,6 +143,36 @@ class DatabaseTests(unittest.TestCase):
 
         self.assertFalse(self.database.delete_expense("expense-1"))
 
+    def test_lists_only_user_retryable_expenses(self) -> None:
+        self.create_expense(expense_id="expense-a", sha256="a" * 64, user_id=12345)
+        self.create_expense(expense_id="expense-b", sha256="b" * 64, user_id=67890)
+        self.database.update_expense_status("expense-a", "queued")
+        self.database.update_expense_status("expense-b", "failed")
+
+        retryable = self.database.list_retryable_expenses(12345)
+
+        self.assertEqual([item.expense_id for item in retryable], ["expense-a"])
+
+    def test_manual_retry_resets_attempt_count_and_makes_expense_due(self) -> None:
+        self.create_expense()
+        self.database.enqueue_retry(
+            "expense-1",
+            next_attempt_at="2099-01-01T00:00:00+00:00",
+            error_code="portal_timeout",
+        )
+        self.database.enqueue_retry(
+            "expense-1",
+            next_attempt_at="2099-01-01T00:00:00+00:00",
+            error_code="portal_timeout",
+        )
+
+        requested = self.database.request_retry_for_user(12345)
+        state = self.database.get_due_retries("2999-01-01T00:00:00+00:00")
+
+        self.assertEqual(requested, 1)
+        self.assertEqual(state[0].attempts, 1)
+        self.assertEqual(state[0].last_error_code, "manual_retry")
+
     def test_accepts_dry_run_status(self) -> None:
         self.create_expense()
 

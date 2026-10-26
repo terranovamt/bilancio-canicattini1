@@ -204,6 +204,69 @@ class Database:
             ).fetchall()
         return [self._stored_expense(row) for row in rows]
 
+    def list_retryable_expenses(
+        self,
+        telegram_user_id: int,
+        limit: int = 20,
+    ) -> list[StoredExpense]:
+        if telegram_user_id <= 0:
+            raise ValueError("telegram_user_id must be positive")
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT expense_id, telegram_user_id, payload_json, status,
+                       archive_path, created_at, updated_at
+                FROM expenses
+                WHERE telegram_user_id = ? AND status IN ('queued', 'failed')
+                ORDER BY updated_at DESC, expense_id DESC
+                LIMIT ?
+                """,
+                (telegram_user_id, limit),
+            ).fetchall()
+        return [self._stored_expense(row) for row in rows]
+
+    def request_retry_for_user(self, telegram_user_id: int) -> int:
+        if telegram_user_id <= 0:
+            raise ValueError("telegram_user_id must be positive")
+        now = self._now()
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                """
+                SELECT expense_id
+                FROM expenses
+                WHERE telegram_user_id = ? AND status IN ('queued', 'failed')
+                """,
+                (telegram_user_id,),
+            ).fetchall()
+            for row in rows:
+                expense_id = row["expense_id"]
+                connection.execute(
+                    """
+                    INSERT INTO retry_queue (
+                        expense_id, attempts, next_attempt_at, last_error_code,
+                        created_at, updated_at
+                    ) VALUES (?, 1, ?, 'manual_retry', ?, ?)
+                    ON CONFLICT(expense_id) DO UPDATE SET
+                        attempts = 1,
+                        next_attempt_at = excluded.next_attempt_at,
+                        last_error_code = excluded.last_error_code,
+                        updated_at = excluded.updated_at
+                    """,
+                    (expense_id, now, now, now),
+                )
+                connection.execute(
+                    """
+                    UPDATE expenses
+                    SET status = 'queued', updated_at = ?
+                    WHERE expense_id = ?
+                    """,
+                    (now, expense_id),
+                )
+        return len(rows)
+
     def update_expense_status(
         self,
         expense_id: str,
@@ -309,21 +372,32 @@ class Database:
             last_error_code=row["last_error_code"],
         )
 
-    def get_due_retries(self, before: str, limit: int = 20) -> list[RetryEntry]:
+    def get_due_retries(
+        self,
+        before: str,
+        limit: int = 20,
+        *,
+        telegram_user_id: int | None = None,
+    ) -> list[RetryEntry]:
         if not before.strip():
             raise ValueError("before must not be empty")
         if limit <= 0:
             raise ValueError("limit must be positive")
+        if telegram_user_id is not None and telegram_user_id <= 0:
+            raise ValueError("telegram_user_id must be positive")
         with self._connection() as connection:
             rows = connection.execute(
                 """
-                SELECT expense_id, attempts, next_attempt_at, last_error_code
-                FROM retry_queue
-                WHERE next_attempt_at <= ?
-                ORDER BY next_attempt_at, expense_id
+                SELECT r.expense_id, r.attempts, r.next_attempt_at,
+                       r.last_error_code
+                FROM retry_queue AS r
+                JOIN expenses AS e ON e.expense_id = r.expense_id
+                WHERE r.next_attempt_at <= ?
+                  AND (? IS NULL OR e.telegram_user_id = ?)
+                ORDER BY r.next_attempt_at, r.expense_id
                 LIMIT ?
                 """,
-                (before, limit),
+                (before, telegram_user_id, telegram_user_id, limit),
             ).fetchall()
         return [
             RetryEntry(

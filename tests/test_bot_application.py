@@ -1,6 +1,8 @@
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
+from pathlib import Path
 
 from telegram.ext import ApplicationHandlerStop
 
@@ -10,10 +12,12 @@ from bot.application import (
     authorize_update,
     cancel_command,
     help_command,
+    queue_command,
     start_command,
+    test_bilancio_command,
 )
 from config import Settings
-from db.database import StoredExpense
+from db.database import Database, StoredExpense
 
 
 def make_settings() -> Settings:
@@ -75,6 +79,39 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
             message.reply_text.await_args.args[0],
             "Operazione annullata.",
         )
+
+    async def test_portal_health_check_is_admin_only(self) -> None:
+        message = SimpleNamespace(reply_text=AsyncMock())
+        update = SimpleNamespace(
+            message=message,
+            effective_user=SimpleNamespace(id=67890),
+        )
+        context = self.make_context(settings=make_settings())
+
+        await test_bilancio_command(update, context)
+
+        self.assertEqual(
+            message.reply_text.await_args.args[0],
+            "Comando riservato all’amministratore.",
+        )
+
+    async def test_queue_command_reports_empty_queue(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "bot.sqlite3")
+            database.initialize()
+            message = SimpleNamespace(reply_text=AsyncMock())
+            update = SimpleNamespace(
+                message=message,
+                effective_user=SimpleNamespace(id=12345),
+            )
+            context = self.make_context(database=database)
+
+            await queue_command(update, context)
+
+            self.assertEqual(
+                message.reply_text.await_args.args[0],
+                "Non ci sono spese in coda.",
+            )
 
     def test_recent_expense_format_does_not_include_newlines_from_fields(self) -> None:
         expense = StoredExpense(
