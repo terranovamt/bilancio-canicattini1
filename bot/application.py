@@ -54,7 +54,7 @@ def create_application(
         settings=settings,
         database=database,
         analyzer=analyzer,
-        pending_store=PendingReceiptStore("/data/pending"),
+        pending_store=PendingReceiptStore(Path(settings.data_path) / "pending"),
         archive=FileArchive(settings.storage_path),
         bilancio_client=bilancio_client,
     )
@@ -69,7 +69,7 @@ def create_application(
             database=database,
             bilancio_client=bilancio_client,
             archive=FileArchive(settings.storage_path),
-            pending_store=PendingReceiptStore("/data/pending"),
+            pending_store=PendingReceiptStore(Path(settings.data_path) / "pending"),
         )
         application.bot_data["retry_service"] = retry_service
         if application.job_queue is None:
@@ -263,17 +263,19 @@ async def test_bilancio_command(
         await client.health_check()
     except ManualPortalLoginRequired as error:
         logger.error("AGESCI manual login is required")
+        debug_path = Path(settings.data_path) / "debug"
         await update.message.reply_text(
             "Il portale richiede una verifica manuale, per esempio un codice "
             "aggiuntivo. Non ho inserito spese. La diagnostica, se presente, "
-            f"è in /data/debug ({Path(error.diagnostic_path).name if error.diagnostic_path else 'nessun file'})."
+            f"è in {debug_path} ({Path(error.diagnostic_path).name if error.diagnostic_path else 'nessun file'})."
         )
         return
     except BilancioClientError as error:
         logger.error("AGESCI health check failed: %s", type(error).__name__)
+        debug_path = Path(settings.data_path) / "debug"
         await update.message.reply_text(
             "Non riesco ad accedere al portale o ad aprire il modulo. "
-            "Non ho inserito spese. Controlla /data/debug per la diagnostica."
+            f"Non ho inserito spese. Controlla {debug_path} per la diagnostica."
         )
         return
     await update.message.reply_text(

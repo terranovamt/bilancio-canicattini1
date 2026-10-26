@@ -338,9 +338,10 @@ class ReceiptWorkflow:
             options = await self._bilancio.list_accounts()
         except BilancioClientError as error:
             logger.error("Could not load portal accounts: %s", type(error).__name__)
+            debug_path = Path(self._settings.data_path) / "debug"
             await self._notify_admin(
                 context,
-                "Non riesco a leggere le casse AGESCI. Controlla /data/debug "
+                f"Non riesco a leggere le casse AGESCI. Controlla {debug_path} "
                 "per eventuali schermate diagnostiche.",
                 error,
             )
@@ -389,9 +390,10 @@ class ReceiptWorkflow:
             options = await self._bilancio.list_transaction_types(account, direction)
         except BilancioClientError as error:
             logger.error("Could not load portal transaction types: %s", type(error).__name__)
+            debug_path = Path(self._settings.data_path) / "debug"
             await self._notify_admin(
                 context,
-                "Non riesco a leggere le tipologie AGESCI. Controlla /data/debug "
+                f"Non riesco a leggere le tipologie AGESCI. Controlla {debug_path} "
                 "per eventuali schermate diagnostiche.",
                 error,
             )
@@ -508,9 +510,10 @@ class ReceiptWorkflow:
                 return
         except BilancioClientError as error:
             logger.error("Could not load portal options: %s", type(error).__name__)
+            debug_path = Path(self._settings.data_path) / "debug"
             await self._notify_admin(
                 context,
-                "Non riesco a leggere le opzioni AGESCI. Controlla /data/debug "
+                f"Non riesco a leggere le opzioni AGESCI. Controlla {debug_path} "
                 "per eventuali schermate diagnostiche.",
                 error,
             )
@@ -638,10 +641,11 @@ class ReceiptWorkflow:
                 return
         except (BilancioClientError, OSError, ValueError, KeyError) as error:
             logger.error("Expense submission failed: %s", type(error).__name__)
+            debug_path = Path(self._settings.data_path) / "debug"
             await self._notify_admin(
                 context,
                 "Non ho potuto verificare una registrazione AGESCI. "
-                "Controlla /data/debug e /coda.",
+                f"Controlla {debug_path} e /coda.",
                 error if isinstance(error, BilancioClientError) else None,
             )
             next_attempt = (

@@ -104,6 +104,7 @@ class Settings:
     bilancio_password: str | None = field(repr=False)
     local_vision_url: str
     local_vision_model: str | None
+    data_path: str
     storage_path: str
     timezone: str
     dry_run: bool
@@ -157,6 +158,7 @@ class Settings:
                 "http://ollama:11434",
             ),
             local_vision_model=_optional_text(source, "LOCAL_VISION_MODEL"),
+            data_path=_optional_text(source, "DATA_PATH") or "/data",
             storage_path=_optional_text(source, "STORAGE_PATH") or "/scontrini",
             timezone=_optional_text(source, "TZ") or "Europe/Rome",
             dry_run=_parse_boolean(source.get("DRY_RUN", ""), "DRY_RUN", True),

@@ -30,7 +30,33 @@ L'analisi delle ricevute è prevista in locale con Ollama. Non è configurato l'
 
 Il file `.env`, le ricevute, il database e i modelli locali sono esclusi sia da Git sia dal contesto di creazione dell'immagine Docker.
 
-## Verifiche sul PC
+## Prova locale sul PC
+
+Per usare lo stesso modello locale previsto per il NAS:
+
+1. Installa Ollama per Windows dal sito ufficiale e avvialo.
+2. Apri PowerShell nella cartella del progetto e scarica il modello con `ollama pull qwen3-vl:2b`.
+3. Crea l'ambiente Python e installa i pacchetti, se non l'hai già fatto:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+4. Avvia il bot dalla stessa finestra di PowerShell. Questi valori valgono solo per questa prova e non modificano `.env`:
+
+```powershell
+$env:LOCAL_VISION_URL = "http://127.0.0.1:11434"
+$env:LOCAL_VISION_MODEL = "qwen3-vl:2b"
+$env:DATA_PATH = "$PWD\data-local"
+$env:STORAGE_PATH = "$PWD\scontrini-local"
+$env:DRY_RUN = "true"
+.\.venv\Scripts\python.exe -m bot.main
+```
+
+Il bot legge token e ID dal file `.env`; non inviare quel file o le sue credenziali in chat. La prova salva database, registri e diagnostica in `data-local`, e le ricevute in `scontrini-local`, cartelle escluse da Git. Per fermare il bot, torna alla finestra PowerShell e premi `Ctrl+C`.
+
+## Verifiche automatiche sul PC
 
 Con Python installato, dalla cartella del progetto:
 

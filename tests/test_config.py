@@ -16,6 +16,7 @@ class SettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.allowed_user_ids, frozenset({12345, 67890}))
         self.assertEqual(settings.admin_user_id, 12345)
+        self.assertEqual(settings.data_path, "/data")
         self.assertEqual(settings.storage_path, "/scontrini")
         self.assertEqual(settings.timezone, "Europe/Rome")
         self.assertTrue(settings.dry_run)
@@ -23,6 +24,14 @@ class SettingsTests(unittest.TestCase):
         self.assertIsNone(settings.local_vision_model)
         self.assertIsNone(settings.anthropic_api_key)
         self.assertIsNone(settings.bilancio_url)
+
+    def test_loads_custom_data_path(self) -> None:
+        self.environ["DATA_PATH"] = "C:\\project\\local-data"
+
+        self.assertEqual(
+            Settings.from_env(self.environ).data_path,
+            "C:\\project\\local-data",
+        )
 
     def test_rejects_missing_bot_token(self) -> None:
         self.environ["BOT_TOKEN"] = ""

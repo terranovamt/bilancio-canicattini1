@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from bot.application import create_application
 from config import Settings
 from db.database import Database
@@ -11,9 +13,11 @@ from vision.ollama_client import OllamaReceiptAnalyzer
 
 
 def main() -> None:
+    load_dotenv()
     settings = Settings.from_env()
-    configure_logging("/data/logs")
-    database = Database("/data/bot.sqlite3")
+    data_path = Path(settings.data_path)
+    configure_logging(data_path / "logs")
+    database = Database(data_path / "bot.sqlite3")
     database.initialize()
     analyzer = (
         OllamaReceiptAnalyzer(
@@ -38,8 +42,8 @@ def main() -> None:
                 / "bilancio"
                 / "selectors.yaml"
             ),
-            session_state_path="/data/bilancio-session.json",
-            debug_path="/data/debug",
+            session_state_path=data_path / "bilancio-session.json",
+            debug_path=data_path / "debug",
         )
     application = create_application(
         settings,

@@ -3,7 +3,9 @@
 .venv/
 LOCAL_NOTES.md
 data/
+data-local/
 scontrini/
+scontrini-local/
 ollama-data/
 debug/
 **/__pycache__/
