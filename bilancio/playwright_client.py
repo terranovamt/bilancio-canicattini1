@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import uuid
@@ -34,6 +35,41 @@ from bilancio.client import (
 
 logger = logging.getLogger(__name__)
 _MAX_ATTEMPTS = 3
+
+
+async def _wait_for_visible_locator(locator: Locator, timeout_ms: int) -> bool:
+    try:
+        await locator.first.wait_for(state="visible", timeout=timeout_ms)
+    except PlaywrightTimeoutError:
+        return False
+    return True
+
+
+async def _wait_for_authentication_marker(
+    username: Locator,
+    scout_year_switch: Locator,
+    timeout_ms: int,
+) -> bool | None:
+    tasks = {
+        asyncio.create_task(_wait_for_visible_locator(username, timeout_ms)): True,
+        asyncio.create_task(
+            _wait_for_visible_locator(scout_year_switch, timeout_ms)
+        ): False,
+    }
+    pending = set(tasks)
+    while pending:
+        completed, pending = await asyncio.wait(
+            pending,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in completed:
+            if task.result():
+                for waiting_task in pending:
+                    waiting_task.cancel()
+                if pending:
+                    await asyncio.gather(*pending, return_exceptions=True)
+                return tasks[task]
+    return None
 
 
 class ManualPortalLoginRequired(BilancioClientError):
@@ -292,7 +328,20 @@ class PlaywrightBilancioClient:
             await cookie_button.first.click()
 
         username = self._locator(page, "username")
-        if await username.count() and await username.first.is_visible():
+        scout_year_switch = self._locator(page, "scout_year_switch")
+        login_visible = await _wait_for_authentication_marker(
+            username,
+            scout_year_switch,
+            self._timeout_ms,
+        )
+        if login_visible is None:
+            raise ManualPortalLoginRequired(
+                "AGESCI showed neither the login form nor the scout-year menu"
+            )
+        if await cookie_button.count() and await cookie_button.first.is_visible():
+            await cookie_button.first.click()
+
+        if login_visible:
             await self._require_one(username, "username")
             password = self._locator(page, "password")
             await self._require_one(password, "password")
@@ -300,13 +349,18 @@ class PlaywrightBilancioClient:
             await password.fill(self._password)
             await self._locator(page, "login").click()
             try:
-                await page.wait_for_load_state("networkidle", timeout=10_000)
+                await username.first.wait_for(
+                    state="hidden",
+                    timeout=self._timeout_ms,
+                )
+                await scout_year_switch.first.wait_for(
+                    state="visible",
+                    timeout=self._timeout_ms,
+                )
             except PlaywrightTimeoutError:
-                pass
-            if await username.count() and await username.first.is_visible():
                 raise ManualPortalLoginRequired(
                     "AGESCI login did not complete; manual verification may be required"
-                )
+                ) from None
 
         await self._select_scout_year(page, scout_year_label(transaction_date))
         await self._select_role(page)
@@ -318,10 +372,20 @@ class PlaywrightBilancioClient:
         if not await role_switch.count() or not await role_switch.first.is_visible():
             return
         await self._require_one(role_switch, "role_switch")
-        await role_switch.click()
+        if await role_switch.first.get_attribute("aria-expanded") != "true":
+            await role_switch.click()
         role_entry = self._locator(page, "role_entry")
+        if not await _wait_for_visible_locator(role_entry, self._timeout_ms):
+            raise PortalOptionsUnavailable(
+                "Treasurer role option did not become visible"
+            )
         await self._require_one(role_entry, "role_entry")
         await role_entry.click()
+        selected_role = self._locator(page, "treasurer_role_selected")
+        if not await _wait_for_visible_locator(selected_role, self._timeout_ms):
+            raise PortalOptionsUnavailable(
+                "Treasurer role did not become active"
+            )
 
     async def _select_scout_year(self, page: Page, year_label: str) -> None:
         year_switch = self._locator(page, "scout_year_switch")
@@ -329,30 +393,45 @@ class PlaywrightBilancioClient:
         current_label = " ".join((await year_switch.first.inner_text()).split())
         if year_label in current_label:
             return
-        await year_switch.click()
-        year_entry = page.get_by_role("listitem", name=year_label, exact=True)
+        if await year_switch.first.get_attribute("aria-expanded") != "true":
+            await year_switch.click()
+        year_entry = self._locator(
+            page,
+            "scout_year_option",
+            year_label=year_label,
+        )
+        if not await _wait_for_visible_locator(year_entry, self._timeout_ms):
+            raise PortalOptionsUnavailable(
+                f"Scout year option did not become visible: {year_label}"
+            )
         await self._require_one(year_entry, "scout_year_option")
         await year_entry.click()
+        selected_year = self._locator(
+            page,
+            "scout_year_selected",
+            year_label=year_label,
+        )
+        if not await _wait_for_visible_locator(selected_year, self._timeout_ms):
+            raise PortalOptionsUnavailable(
+                f"Scout year did not become active: {year_label}"
+            )
 
     async def _read_accounts(self, page: Page) -> Sequence[PortalOption]:
         await self._locator(page, "prima_nota").click()
         links = self._locator(page, "account_links")
-        options: list[PortalOption] = []
-        for index in range(await links.count()):
-            link = links.nth(index)
-            if not await link.is_visible():
-                continue
-            label = " ".join((await link.inner_text()).split())
-            if (
-                label
-                and self._account_pattern.search(label)
-                and not any(option.label == label for option in options)
-            ):
-                options.append(PortalOption(value=label, label=label))
-        if not options:
+        matching_links = links.filter(has_text=self._account_pattern)
+        if not await _wait_for_visible_locator(matching_links, self._timeout_ms):
             raise PortalOptionsUnavailable(
                 "The portal did not expose any matching account links"
             )
+        options: list[PortalOption] = []
+        for index in range(await matching_links.count()):
+            link = matching_links.nth(index)
+            if not await link.is_visible():
+                continue
+            label = " ".join((await link.inner_text()).split())
+            if label and not any(option.label == label for option in options):
+                options.append(PortalOption(value=label, label=label))
         return options
 
     async def _open_account_form(
@@ -371,6 +450,10 @@ class PlaywrightBilancioClient:
     ) -> None:
         await self._locator(page, "prima_nota").click()
         account_link = page.get_by_role("link", name=account.label, exact=True)
+        if not await _wait_for_visible_locator(account_link, self._timeout_ms):
+            raise PortalOptionsUnavailable(
+                f"AGESCI account link did not become visible: {account.label}"
+            )
         await self._require_one(account_link, "account_link")
         await account_link.click()
 
@@ -386,6 +469,10 @@ class PlaywrightBilancioClient:
             "direction",
             direction_label=direction_label,
         )
+        if not await _wait_for_visible_locator(direction_locator, self._timeout_ms):
+            raise PortalOptionsUnavailable(
+                "The transaction direction control did not become visible"
+            )
         await self._require_one(direction_locator, "direction")
         await direction_locator.check()
 
@@ -414,7 +501,16 @@ class PlaywrightBilancioClient:
         locator = self._dropdown_locator(page, selector_key, direction)
         await self._require_one(locator, selector_key)
         await locator.click()
-        options_locator = self._locator(page, "portal_option")
+        option_list = await self._dropdown_option_list_locator(page, locator)
+        option_config = self._selectors.get("portal_option", {})
+        option_role = option_config.get("role")
+        if not isinstance(option_role, str):
+            raise BilancioClientError("AGESCI option selector role is invalid")
+        options_locator = option_list.get_by_role(option_role)
+        if not await _wait_for_visible_locator(options_locator, self._timeout_ms):
+            raise PortalOptionsUnavailable(
+                f"The portal returned no options for {selector_key}"
+            )
         options: list[PortalOption] = []
         for index in range(await options_locator.count()):
             option = options_locator.nth(index)
@@ -439,17 +535,41 @@ class PlaywrightBilancioClient:
         locator = self._dropdown_locator(page, selector_key, direction)
         await self._require_one(locator, selector_key)
         await locator.click()
+        option_list = await self._dropdown_option_list_locator(page, locator)
         option_config = self._selectors.get("portal_option", {})
         option_role = option_config.get("role")
         if not isinstance(option_role, str):
             raise BilancioClientError("AGESCI option selector role is invalid")
-        option_locator = page.get_by_role(
+        option_locator = option_list.get_by_role(
             option_role,
             name=option.label,
             exact=True,
         )
+        if not await _wait_for_visible_locator(option_locator, self._timeout_ms):
+            raise PortalOptionsUnavailable(
+                f"The portal option did not become visible: {selector_key}"
+            )
         await self._require_one(option_locator, f"{selector_key}_option")
         await option_locator.click()
+
+    async def _dropdown_option_list_locator(
+        self,
+        page: Page,
+        dropdown: Locator,
+    ) -> Locator:
+        controls = await dropdown.get_attribute("aria-controls")
+        controlled_ids = controls.split() if controls else []
+        if len(controlled_ids) != 1:
+            raise PortalOptionsUnavailable(
+                "The portal dropdown did not expose one option list"
+            )
+        option_list = page.locator(f"[id={json.dumps(controlled_ids[0])}]")
+        if not await _wait_for_visible_locator(option_list, self._timeout_ms):
+            raise PortalOptionsUnavailable(
+                "The portal dropdown option list did not become visible"
+            )
+        await self._require_one(option_list, "dropdown_option_list")
+        return option_list
 
     def _dropdown_locator(
         self,
@@ -573,6 +693,9 @@ class PlaywrightBilancioClient:
             raise BilancioClientError(f"AGESCI selector is missing: {key}")
         if "text" in selector:
             return page.get_by_text(str(selector["text"]))
+        text_template = selector.get("text_template")
+        if isinstance(text_template, str):
+            return page.get_by_text(text_template.format(**values), exact=True)
         role = selector.get("role")
         if not isinstance(role, str):
             raise BilancioClientError(f"AGESCI selector role is invalid: {key}")

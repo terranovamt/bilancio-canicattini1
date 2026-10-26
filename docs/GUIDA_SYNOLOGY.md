@@ -65,7 +65,7 @@ Per interrompere prima della conferma, invia `/annulla`. Se il portale non si ap
 
 ## 6. Prova un CSV senza salvare
 
-L'importatore CSV usa le colonne compilate per la data, la descrizione, la direzione, l'importo, la cassa, la voce, la tipologia e l'unità. La categoria può restare vuota se il portale la accetta. Il programma cerca comunque le opzioni correnti nel portale e si ferma se non trova una corrispondenza univoca.
+L'importatore CSV usa le colonne compilate per la data, la descrizione, la direzione, l'importo, la cassa, la voce, la tipologia e l'unità. La categoria può restare vuota se il portale la accetta. Il programma cerca le opzioni correnti nel portale e si ferma se non trova una corrispondenza univoca. Se un codice identifica più tipologie, aggiungi anche la descrizione completa mostrata dal portale nella colonna `tipologia`.
 
 1. Solo dopo che la prova `/testspesa` funziona, crea `data/pending` sul NAS.
 2. Copia il CSV compilato in `data/pending`. Non metterlo su GitHub e non inviarlo in chat.

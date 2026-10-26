@@ -252,6 +252,26 @@ def resolve_portal_option(
         raise CsvImportError(
             f"La riga {row_number} ha un codice ambiguo per {field_name}."
         )
+
+    code_match = re.match(
+        r"^([a-z](?:\.\d+)+)(?=$|[\s\t\-:–—(])",
+        normalized_reference,
+        re.IGNORECASE,
+    )
+    if code_match:
+        code_reference = code_match.group(1)
+        code_matches = [
+            option
+            for option in options
+            if _has_code_prefix(option.label, code_reference)
+            or _has_code_prefix(option.value, code_reference)
+        ]
+        if len(code_matches) == 1:
+            return code_matches[0]
+        if len(code_matches) > 1:
+            raise CsvImportError(
+                f"La riga {row_number} ha un codice ambiguo per {field_name}."
+            )
     raise CsvImportError(
         f"Il valore di {field_name} della riga {row_number} "
         "non corrisponde a un'opzione disponibile nel portale."

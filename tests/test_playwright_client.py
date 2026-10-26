@@ -1,3 +1,4 @@
+import asyncio
 import tempfile
 import unittest
 from datetime import date
@@ -6,6 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import yaml
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from bilancio.client import (
     PortalExpense,
@@ -13,9 +15,28 @@ from bilancio.client import (
     PortalSubmissionResult,
     TransactionDirection,
 )
-from bilancio.playwright_client import PlaywrightBilancioClient
+from bilancio.playwright_client import (
+    PlaywrightBilancioClient,
+    _wait_for_authentication_marker,
+    _wait_for_visible_locator,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+class FakeVisibilityLocator:
+    def __init__(self, *, visible: bool, delay: float = 0.01) -> None:
+        self.visible = visible
+        self.delay = delay
+
+    @property
+    def first(self) -> FakeVisibilityLocator:
+        return self
+
+    async def wait_for(self, *, state: str, timeout: int) -> None:
+        await asyncio.sleep(self.delay)
+        if not self.visible:
+            raise PlaywrightTimeoutError("Element did not become visible")
 
 
 class PlaywrightBilancioClientTests(unittest.IsolatedAsyncioTestCase):
@@ -58,6 +79,38 @@ class PlaywrightBilancioClientTests(unittest.IsolatedAsyncioTestCase):
                 1,
             )
 
+    async def test_waits_for_delayed_login_form_or_scout_year_menu(self) -> None:
+        login_state = await _wait_for_authentication_marker(
+            FakeVisibilityLocator(visible=True, delay=0.01),
+            FakeVisibilityLocator(visible=False, delay=0.2),
+            timeout_ms=1000,
+        )
+        authenticated_state = await _wait_for_authentication_marker(
+            FakeVisibilityLocator(visible=False, delay=0.2),
+            FakeVisibilityLocator(visible=True, delay=0.01),
+            timeout_ms=1000,
+        )
+
+        self.assertIs(login_state, True)
+        self.assertIs(authenticated_state, False)
+
+    async def test_waits_for_delayed_scout_year_option(self) -> None:
+        visible = await _wait_for_visible_locator(
+            FakeVisibilityLocator(visible=True, delay=0.05),
+            timeout_ms=1000,
+        )
+
+        self.assertTrue(visible)
+
+    async def test_returns_none_when_portal_shows_neither_marker(self) -> None:
+        state = await _wait_for_authentication_marker(
+            FakeVisibilityLocator(visible=False),
+            FakeVisibilityLocator(visible=False),
+            timeout_ms=1000,
+        )
+
+        self.assertIsNone(state)
+
     def test_selector_file_uses_observed_fields_and_dynamic_options(self) -> None:
         configuration = yaml.safe_load(
             (PROJECT_ROOT / "bilancio" / "selectors.yaml").read_text(
@@ -69,7 +122,25 @@ class PlaywrightBilancioClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(selectors["date"]["name"], "Data Operazione")
         self.assertEqual(
             selectors["scout_year_switch"]["name_pattern"],
-            r'^Espandi "\d{2}-\d{2}"$',
+            r'^(?:Espandi|Comprimi) "\d{2}-\d{2}"$',
+        )
+        self.assertEqual(
+            selectors["scout_year_option"]["text_template"],
+            "{year_label}",
+        )
+        self.assertEqual(
+            selectors["scout_year_selected"]["name_template"],
+            'Espandi "{year_label}"',
+        )
+        self.assertTrue(
+            selectors["role_switch"]["name_pattern"].startswith(
+                "^(?:Espandi|Comprimi)"
+            )
+        )
+        self.assertTrue(
+            selectors["treasurer_role_selected"]["name_pattern"].startswith(
+                '^Espandi "Tesoriere di gruppo -'
+            )
         )
         self.assertEqual(
             selectors["accounting_voice"]["name_template"],

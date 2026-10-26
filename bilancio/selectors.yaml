@@ -20,10 +20,19 @@ selectors:
     exact: true
   scout_year_switch:
     role: button
-    name_pattern: '^Espandi "\d{2}-\d{2}"$'
+    name_pattern: '^(?:Espandi|Comprimi) "\d{2}-\d{2}"$'
+  scout_year_option:
+    text_template: '{year_label}'
+  scout_year_selected:
+    role: button
+    name_template: 'Espandi "{year_label}"'
+    exact: true
   role_switch:
     role: button
-    name_pattern: '^Espandi "(?:Capo unità|Tesoriere di gruppo) -'
+    name_pattern: '^(?:Espandi|Comprimi) "(?:Capo unità|Tesoriere di gruppo) -'
+  treasurer_role_selected:
+    role: button
+    name_pattern: '^Espandi "Tesoriere di gruppo -'
   role_entry:
     role: listitem
     text_contains: Tesoriere di gruppo -

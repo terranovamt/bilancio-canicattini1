@@ -103,10 +103,23 @@ class CsvExpenseParsingTests(unittest.TestCase):
 
         self.assertEqual(selected.label, "A.1 Quota")
 
+    def test_resolves_unique_code_with_a_description_suffix(self) -> None:
+        selected = resolve_portal_option(
+            "A.2 Quota attività",
+            [
+                PortalOption("a2", "A.2 Quote per attività scout"),
+                PortalOption("a10", "A.10 Materiale"),
+            ],
+            field_name="tipologia",
+            row_number=2,
+        )
+
+        self.assertEqual(selected.label, "A.2 Quote per attività scout")
+
     def test_rejects_ambiguous_type_code_prefix(self) -> None:
         with self.assertRaisesRegex(CsvImportError, "codice ambiguo"):
             resolve_portal_option(
-                "A.1",
+                "A.1 Quota",
                 [
                     PortalOption("a1-1", "A.1 Quota ordinaria"),
                     PortalOption("a1-2", "A.1 Quota straordinaria"),
