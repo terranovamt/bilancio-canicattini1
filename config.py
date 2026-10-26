@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 
 class ConfigurationError(ValueError):
@@ -64,6 +65,33 @@ def _parse_boolean(value: str, name: str, default: bool) -> bool:
     raise ConfigurationError(f"Setting {name} must be true or false")
 
 
+def _local_service_url(
+    environ: Mapping[str, str],
+    name: str,
+    default: str,
+) -> str:
+    value = _optional_text(environ, name) or default
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError as error:
+        raise ConfigurationError(f"Setting {name} must be a valid local URL") from error
+    local_hosts = {"ollama", "localhost", "127.0.0.1", "::1"}
+    if (
+        parsed.scheme != "http"
+        or hostname is None
+        or hostname.casefold() not in local_hosts
+        or parsed.path not in {"", "/"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ConfigurationError(f"Setting {name} must point to a local HTTP service")
+    return value.rstrip("/")
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     bot_token: str = field(repr=False)
@@ -74,6 +102,8 @@ class Settings:
     bilancio_url: str | None
     bilancio_user: str | None = field(repr=False)
     bilancio_password: str | None = field(repr=False)
+    local_vision_url: str
+    local_vision_model: str | None
     storage_path: str
     timezone: str
     dry_run: bool
@@ -121,6 +151,12 @@ class Settings:
             bilancio_url=bilancio_url,
             bilancio_user=bilancio_user,
             bilancio_password=bilancio_password,
+            local_vision_url=_local_service_url(
+                source,
+                "LOCAL_VISION_URL",
+                "http://ollama:11434",
+            ),
+            local_vision_model=_optional_text(source, "LOCAL_VISION_MODEL"),
             storage_path=_optional_text(source, "STORAGE_PATH") or "/scontrini",
             timezone=_optional_text(source, "TZ") or "Europe/Rome",
             dry_run=_parse_boolean(source.get("DRY_RUN", ""), "DRY_RUN", True),

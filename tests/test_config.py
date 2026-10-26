@@ -19,6 +19,8 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.storage_path, "/scontrini")
         self.assertEqual(settings.timezone, "Europe/Rome")
         self.assertTrue(settings.dry_run)
+        self.assertEqual(settings.local_vision_url, "http://ollama:11434")
+        self.assertIsNone(settings.local_vision_model)
         self.assertIsNone(settings.anthropic_api_key)
         self.assertIsNone(settings.bilancio_url)
 
@@ -67,6 +69,27 @@ class SettingsTests(unittest.TestCase):
         self.environ["BILANCIO_URL"] = "https://example.invalid"
 
         with self.assertRaisesRegex(ConfigurationError, "BILANCIO_URL"):
+            Settings.from_env(self.environ)
+
+    def test_accepts_local_ollama_service_url(self) -> None:
+        self.environ["LOCAL_VISION_URL"] = "http://ollama:11434/"
+        self.environ["LOCAL_VISION_MODEL"] = "local-test-model"
+
+        settings = Settings.from_env(self.environ)
+
+        self.assertEqual(settings.local_vision_url, "http://ollama:11434")
+        self.assertEqual(settings.local_vision_model, "local-test-model")
+
+    def test_rejects_remote_vision_service_url(self) -> None:
+        self.environ["LOCAL_VISION_URL"] = "https://vision.example.com"
+
+        with self.assertRaisesRegex(ConfigurationError, "local HTTP service"):
+            Settings.from_env(self.environ)
+
+    def test_rejects_non_root_local_vision_url_path(self) -> None:
+        self.environ["LOCAL_VISION_URL"] = "http://ollama:11434/remote-proxy"
+
+        with self.assertRaisesRegex(ConfigurationError, "local HTTP service"):
             Settings.from_env(self.environ)
 
     def test_secret_values_are_not_in_settings_repr(self) -> None:
