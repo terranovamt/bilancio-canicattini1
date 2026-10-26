@@ -59,18 +59,18 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/ultime", HELP_TEXT)
 
     async def test_cancel_command_clears_saved_state(self) -> None:
-        database = Mock()
-        database.delete_conversation_state.return_value = True
+        workflow = Mock()
+        workflow.cancel_current = AsyncMock(return_value=True)
         message = SimpleNamespace(reply_text=AsyncMock())
         update = SimpleNamespace(
             message=message,
             effective_user=SimpleNamespace(id=12345),
         )
-        context = self.make_context(database=database)
+        context = self.make_context(receipt_workflow=workflow)
 
         await cancel_command(update, context)
 
-        database.delete_conversation_state.assert_called_once_with(12345)
+        workflow.cancel_current.assert_awaited_once_with(12345)
         self.assertEqual(
             message.reply_text.await_args.args[0],
             "Operazione annullata.",

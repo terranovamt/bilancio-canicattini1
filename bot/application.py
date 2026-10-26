@@ -8,14 +8,21 @@ from telegram.error import TelegramError
 from telegram.ext import (
     Application,
     ApplicationHandlerStop,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    MessageHandler,
     TypeHandler,
+    filters,
 )
 
 from bot.access import is_authorized_user
+from bot.receipt_workflow import ReceiptAnalyzer, ReceiptWorkflow
 from config import Settings
 from db.database import Database, StoredExpense
+from storage.archive import FileArchive
+from storage.pending import PendingReceiptStore
+from bilancio.client import BilancioClient
 
 logger = logging.getLogger(__name__)
 
@@ -28,15 +35,42 @@ HELP_TEXT = (
 )
 
 
-def create_application(settings: Settings, database: Database) -> Application:
+def create_application(
+    settings: Settings,
+    database: Database,
+    *,
+    analyzer: ReceiptAnalyzer | None = None,
+    bilancio_client: BilancioClient | None = None,
+) -> Application:
     application = Application.builder().token(settings.bot_token).build()
+    workflow = ReceiptWorkflow(
+        settings=settings,
+        database=database,
+        analyzer=analyzer,
+        pending_store=PendingReceiptStore("/data/pending"),
+        archive=FileArchive(settings.storage_path),
+        bilancio_client=bilancio_client,
+    )
     application.bot_data["settings"] = settings
     application.bot_data["database"] = database
+    application.bot_data["receipt_workflow"] = workflow
     application.add_handler(TypeHandler(Update, authorize_update), group=-1)
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("annulla", cancel_command))
     application.add_handler(CommandHandler("ultime", latest_expenses_command))
+    application.add_handler(
+        MessageHandler(
+            filters.PHOTO | filters.Document.PDF,
+            receive_receipt,
+        )
+    )
+    application.add_handler(
+        CallbackQueryHandler(receipt_callback, pattern=r"^receipt:")
+    )
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, receipt_text)
+    )
     return application
 
 
@@ -78,12 +112,36 @@ async def cancel_command(
 ) -> None:
     if update.message is None or update.effective_user is None:
         return
-    database: Database = context.application.bot_data["database"]
-    was_cancelled = database.delete_conversation_state(update.effective_user.id)
+    workflow: ReceiptWorkflow = context.application.bot_data["receipt_workflow"]
+    was_cancelled = await workflow.cancel_current(update.effective_user.id)
     if was_cancelled:
         await update.message.reply_text("Operazione annullata.")
     else:
         await update.message.reply_text("Non c’è un’operazione in corso da annullare.")
+
+
+async def receive_receipt(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    workflow: ReceiptWorkflow = context.application.bot_data["receipt_workflow"]
+    await workflow.receive_receipt(update, context)
+
+
+async def receipt_text(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    workflow: ReceiptWorkflow = context.application.bot_data["receipt_workflow"]
+    await workflow.handle_text(update, context)
+
+
+async def receipt_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    workflow: ReceiptWorkflow = context.application.bot_data["receipt_workflow"]
+    await workflow.handle_callback(update, context)
 
 
 async def latest_expenses_command(

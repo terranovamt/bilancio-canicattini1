@@ -54,6 +54,7 @@ class PortalExpense:
 class PortalSubmissionResult:
     verified: bool
     confirmation_id: str | None = None
+    dry_run: bool = False
 
 
 class BilancioClient(Protocol):
@@ -90,5 +91,7 @@ class BilancioClient(Protocol):
     async def create_expense(
         self,
         expense: PortalExpense,
+        *,
+        dry_run: bool,
     ) -> PortalSubmissionResult:
-        """Save and verify an expense without uploading the receipt file."""
+        """Submit and verify an expense; never save when dry_run is true."""

@@ -5,6 +5,7 @@ import logging
 from bot.application import create_application
 from config import Settings
 from db.database import Database
+from vision.ollama_client import OllamaReceiptAnalyzer
 
 
 def main() -> None:
@@ -15,7 +16,19 @@ def main() -> None:
     settings = Settings.from_env()
     database = Database("/data/bot.sqlite3")
     database.initialize()
-    application = create_application(settings, database)
+    analyzer = (
+        OllamaReceiptAnalyzer(
+            base_url=settings.local_vision_url,
+            model=settings.local_vision_model,
+        )
+        if settings.local_vision_model
+        else None
+    )
+    application = create_application(
+        settings,
+        database,
+        analyzer=analyzer,
+    )
     application.run_polling(allowed_updates=None)
 
 
