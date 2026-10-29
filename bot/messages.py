@@ -16,11 +16,11 @@ USER_START = (
     "• /help – tutti i comandi"
 )
 ADMIN_START = (
-    '👋 Ciao! Sei collegato come amministratore.\n\n📷 Mandami uno scontrino per registrare una spesa.\n✍️ /testspesa – inserisci una spesa a mano\n📊 /riepilogo – saldi delle casse\n\n{mode}\n\n{version}\n\nAltri strumenti: /help'
+    '👋 Ciao! Sei collegato come amministratore.\n\n📷 Mandami uno scontrino per registrare una spesa.\n✍️ /entrata – inserisci un’entrata senza ricevuta\n📊 /riepilogo – saldi delle casse\n\n{mode}\n\n{version}\n\nAltri strumenti: /help'
 )
 MODE_TRIAL = "🧪 Modalità PROVA: non viene salvato nulla nel portale."
 MODE_REAL = "⚠️ Modalità REALE: le spese confermate vengono salvate nel portale."
-MANUAL_MODE_NOTICE = "/testspesa salva davvero, anche in modalità prova, dopo la tua conferma."
+MANUAL_MODE_NOTICE = "/entrata e /testspesa salvano davvero, anche in modalità prova, dopo la tua conferma. Le uscite richiedono una ricevuta."
 USER_HELP = (
     "📋 Cosa posso fare per te\n\n"
     "📷 Scontrino – mandami una foto o un PDF\n"
@@ -31,7 +31,7 @@ USER_HELP = (
     "/annulla – interrompo quello che stiamo facendo"
 )
 ADMIN_HELP = (
-    '{user_help}\n\n🔧 Solo amministratore\n/testspesa – inserisci una spesa a mano\n/testbilancio – verifico il collegamento al portale\n    /aggiornaopzioni – aggiorno casse e tipologie\n/aggiorna – installo l\'ultima versione del bot\n/pulisci – svuoto coda, ultime spese e registri'
+    '{user_help}\n\n🔧 Solo amministratore\n/entrata – inserisci un’entrata senza ricevuta\n/testspesa – alias di /entrata\n/testbilancio – verifico il collegamento al portale\n    /aggiornaopzioni – aggiorno casse e tipologie\n/aggiorna – installo l\'ultima versione del bot\n/pulisci – svuoto coda, ultime spese e registri'
 )
 COMMAND_START = "Apri il menu del bot"
 COMMAND_HELP = "Guida e comandi"
@@ -40,7 +40,8 @@ COMMAND_SUMMARY = "Saldi e andamento delle casse"
 COMMAND_CANCEL = "Interrompi quello che stiamo facendo"
 COMMAND_QUEUE = "Spese in attesa o da controllare"
 COMMAND_RETRY = "Riprova le spese in attesa"
-COMMAND_MANUAL = "Inserisci davvero una spesa a mano"
+COMMAND_MANUAL = "Alias di entrata: inserimento manuale reale"
+COMMAND_INCOME = "Inserisci davvero un'entrata senza ricevuta"
 COMMAND_HEALTH = "Verifica il collegamento al portale"
 COMMAND_REFRESH = "Aggiorna casse e tipologie"
 COMMAND_CLEAN = "Svuota spese e registri del bot"
@@ -96,7 +97,7 @@ UPDATE_NOT_CONFIGURED = (
 )
 UPDATE_REQUEST_FAILED = "❌ Non riesco a registrare la richiesta. Riprova più tardi."
 USER_KEYBOARD = (("/ultime", "/riepilogo"), ("/coda", "/help"), ("/annulla",))
-ADMIN_KEYBOARD = (("/testspesa", "/testbilancio"), *USER_KEYBOARD)
+ADMIN_KEYBOARD = (("/entrata", "/testbilancio"), *USER_KEYBOARD)
 
 SAVED_ICON = "✅"
 TRIAL_ICON = "🧪"
@@ -130,9 +131,14 @@ MANUAL_MERCHANT = "✏️ Come descrivo la spesa?"
 MANUAL_AMOUNT = "💶 Qual è l'importo? (es. 12,50)"
 MANUAL_DESCRIPTION = "Prova Telegram"
 MANUAL_CONFIRMATION = (
-    "✍️ Spesa a mano\n\n{details}\n\n"
+    "✍️ Entrata a mano, senza ricevuta\n\n{details}\n\n"
     "Va bene così o vuoi cambiare qualcosa?\n"
     "⚠️ Verrà salvata davvero nel portale: prima ti chiedo un'ultima conferma."
+)
+INCOME_START = (
+    "✍️ Inseriamo un’entrata senza ricevuta: data, descrizione e importo, "
+    "poi cassa e tipologia. Dopo la conferma finale sarà salvata davvero "
+    "nel portale, anche in modalità prova. Puoi interrompere con /annulla.\n\n{prompt}"
 )
 MANUAL_FINAL = (
     'Ultimo controllo prima di salvare:\n\n{details}\n\n⚠️ Se confermi, la spesa viene salvata DAVVERO nel portale.'
@@ -146,7 +152,13 @@ MANUAL_FORMAT = (
     "per esempio: 26/10/2026 | Pranzo | 12,50"
 )
 ACCOUNTS_PROGRESS = "⏳ Cerco le casse…"
-ACCOUNT_PROMPT = "🏦 Da quale cassa è uscita la spesa? (1 di 3)"
+ACCOUNT_PROMPT = "🏦 Quale cassa vuoi usare? (1 di 3)"
+INCOME_ONLY_PROMPT = "➕ Senza ricevuta puoi registrare solo un’entrata. Premi Entrata per continuare."
+EXPENSE_RECEIPT_REQUIRED = (
+    "⚠️ Per registrare un’uscita serve una ricevuta allegata. "
+    "Non ho registrato nulla. Usa /annulla e invia una foto o un PDF: "
+    "se non riesco a leggerlo, puoi compilare i dati a mano."
+)
 DIRECTION_PROMPT = "↔️ È un'entrata o un'uscita? (2 di 3)"
 TYPE_PROGRESS = (
     "⏳ Carico le tipologie, può servire fino a un minuto. "
@@ -248,12 +260,48 @@ FILE_UNREADABLE = (
 )
 RECEIPT_DUPLICATE = "Questo scontrino l'ho già ricevuto, non lo rielaboro."
 ANALYSIS_FAILED = (
-    "Non sono riuscito a leggere lo scontrino. Prova con una foto più nitida, "
-    "oppure inserisci i dati a mano."
+    "⚠️ Non sono riuscito a leggere lo scontrino con l’AI locale. "
+    "Ho conservato il file temporaneo, senza inviarlo a servizi AI online. "
+    "Inseriamo i dati a mano: data, descrizione e importo, poi cassa e tipologia. "
+    "La ricevuta sarà archiviata quando confermi l’operazione; /annulla elimina "
+    "la copia temporanea.\n\n{prompt}"
 )
 ADMIN_ANALYSIS_FAILED = (
     "L'analisi locale di una ricevuta non è riuscita. Il file non è stato inviato a servizi online."
 )
+AI_FAILURE_REASONS = {
+    "timeout": "Ollama non ha risposto entro il tempo configurato. La causa può essere il caricamento iniziale o l'elaborazione lenta sulla CPU; non è una prova di memoria insufficiente.",
+    "connection": "Il bot non riesce a comunicare con Ollama. Verifica che il servizio sia avviato e raggiungibile nella rete Docker.",
+    "model_not_found": "Ollama non trova il modello richiesto. Confronta LOCAL_VISION_MODEL con l'elenco di ollama list.",
+    "memory": "Ollama ha segnalato memoria insufficiente. Controlla la RAM libera del NAS e gli altri servizi in esecuzione.",
+    "unsupported_model": "Ollama ha segnalato un modello o una funzione non supportati. Verifica versione del servizio e supporto delle immagini.",
+    "service_error": "Ollama ha restituito un errore non classificato. Il corpo grezzo non viene mostrato: può contenere dati privati.",
+    "invalid_response": "Il servizio non ha restituito una risposta JSON valida nel formato atteso.",
+    "incomplete_response": "Ollama ha restituito una risposta incompleta o interrotta per limite di generazione. I dati non vengono accettati.",
+    "empty_result": "La risposta di Ollama non contiene un risultato utilizzabile per la ricevuta.",
+    "invalid_receipt": "Il risultato del modello non rispetta lo schema dei dati: JSON non valido o valori non ammessi. Nessun dato viene inventato.",
+    "not_configured": "Il modello non è configurato nel bot. Imposta LOCAL_VISION_MODEL e ricrea il container bot.",
+    "preprocessing": "Il file non può essere preparato per l'analisi: formato, immagine o PDF non supportati o non leggibili.",
+}
+AI_ADMIN_DIAGNOSTIC = (
+    "🔧 Diagnosi AI — solo amministratore\n"
+    "Codice: {code}{status}\n"
+    "Timeout configurato: {timeout} secondi.\n{reason}"
+)
+AI_HTTP_STATUS = " — HTTP {status}"
+AI_FAILURE_WITH_DIAGNOSTIC = "{message}\n\n{diagnostic}"
+
+
+def ai_admin_diagnostic(code: str, status: int | None, timeout: int) -> str:
+    if code not in AI_FAILURE_REASONS:
+        code = "service_error"
+    return AI_ADMIN_DIAGNOSTIC.format(
+        code=code,
+        status=AI_HTTP_STATUS.format(status=status) if status is not None else "",
+        timeout=timeout,
+        reason=AI_FAILURE_REASONS[code],
+    )
+
 STALE_BUTTON = (
     "Questo pulsante non è più attivo. Se vuoi, mandami di nuovo lo scontrino."
 )

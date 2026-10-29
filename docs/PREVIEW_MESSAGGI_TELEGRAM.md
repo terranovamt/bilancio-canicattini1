@@ -33,11 +33,11 @@ Cosa puoi fare:
 👋 Ciao! Sei collegato come amministratore.
 
 📷 Mandami uno scontrino per registrare una spesa.
-✍️ /testspesa – inserisci una spesa a mano
+✍️ /entrata – inserisci un’entrata senza ricevuta
 📊 /riepilogo – saldi delle casse
 
 🧪 Modalità PROVA: non viene salvato nulla nel portale.
-/testspesa salva davvero, anche in modalità prova, dopo la tua conferma.
+/entrata e /testspesa salvano davvero, anche in modalità prova, dopo la tua conferma. Le uscite richiedono una ricevuta.
 
 🔖 Versione attiva: a1b2c3d del 29/10/2026 13:00 – Titolo del commit
 🆕 Nuova versione disponibile: e4f5a6b - Nuovo titolo (29/10/2026 14:00)
@@ -64,7 +64,7 @@ In modalità reale la riga della modalità diventa:
 ```
 
 ```text
-[/testspesa] [/testbilancio]
+[/entrata] [/testbilancio]
 [/ultime] [/riepilogo]
 [/coda] [/help]
 [/annulla]
@@ -89,7 +89,8 @@ Per l'amministratore si aggiunge:
 
 ```text
 🔧 Solo amministratore
-/testspesa – inserisci una spesa a mano
+/entrata – inserisci un’entrata senza ricevuta
+/testspesa – alias di /entrata
 /testbilancio – verifico il collegamento al portale
 /aggiornaopzioni – aggiorno casse e tipologie
 /aggiorna – installo l'ultima versione del bot
@@ -267,10 +268,20 @@ I campi vuoti non compaiono. La riga 👥 manca anche quando il portale non offr
 
 ## C. Inserimento manuale
 
-### 13 · `/testspesa`
+### 13 · Entrate manuali: `/entrata` e `/testspesa`
+
+`/entrata` chiede tutti i dati, senza precompilare importi o descrizioni:
 
 ```text
-✍️ Spesa a mano
+✍️ Inseriamo un’entrata senza ricevuta: data, descrizione e importo, poi cassa e tipologia. Dopo la conferma finale sarà salvata davvero nel portale, anche in modalità prova. Puoi interrompere con /annulla.
+
+📅 Qual è la data? (es. 29/10/2026)
+```
+
+`/testspesa` mantiene i valori iniziali modificabili. Entrambi permettono solo entrate senza ricevuta:
+
+```text
+✍️ Entrata a mano, senza ricevuta
 
 📅 29/10/2026
 📝 Prova Telegram
@@ -589,10 +600,6 @@ Usa i pulsanti qui sopra, oppure scrivi /annulla.
 ### 24 · File e analisi
 
 ```text
-Al momento non riesco a leggere gli scontrini. Riprova più tardi.
-```
-
-```text
 Mandami una foto o un PDF dello scontrino 📷
 ```
 
@@ -609,13 +616,28 @@ Questo scontrino l'ho già ricevuto, non lo rielaboro.
 ```
 
 ```text
-Non sono riuscito a leggere lo scontrino. Prova con una foto più nitida, oppure inserisci i dati a mano.
+⚠️ Non sono riuscito a leggere lo scontrino con l’AI locale. Ho conservato il file temporaneo, senza inviarlo a servizi AI online. Inseriamo i dati a mano: data, descrizione e importo, poi cassa e tipologia. La ricevuta sarà archiviata quando confermi l’operazione; /annulla elimina la copia temporanea.
+
+Non sono riuscito a leggere la data. Me la scrivi? (es. 29/10/2026)
 ```
 
-Solo all'amministratore, se la lettura fallisce:
+Questo è un unico messaggio al mittente, anche se è l'amministratore. Non viene inviata una seconda notifica per lo stesso errore AI. Il file resta disponibile per la compilazione manuale anche se il modello non è configurato.
+
+Solo se il mittente è amministratore, lo stesso messaggio aggiunge una diagnosi senza dati della ricevuta, per esempio:
 
 ```text
-L'analisi locale di una ricevuta non è riuscita. Il file non è stato inviato a servizi online.
+🔧 Diagnosi AI — solo amministratore
+Codice: memory — HTTP 500
+Timeout configurato: 180 secondi.
+Ollama ha segnalato memoria insufficiente. Controlla la RAM libera del NAS e gli altri servizi in esecuzione.
+```
+
+Se il mittente è un altro utente autorizzato, non vede questa parte: il bot la invia solo all'amministratore, senza contenuti, nomi di file o identificativi della ricevuta. I motivi sono frasi controllate dal programma, non risposte grezze del modello.
+
+Per un'uscita senza ricevuta, anche da un vecchio pulsante o dalla coda:
+
+```text
+⚠️ Per registrare un’uscita serve una ricevuta allegata. Non ho registrato nulla. Usa /annulla e invia una foto o un PDF: se non riesco a leggerlo, puoi compilare i dati a mano.
 ```
 
 ### 25 · Pulsanti non più validi e formato manuale

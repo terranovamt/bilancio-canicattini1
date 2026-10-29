@@ -397,24 +397,26 @@ Con la versione aggiornata, `/start` mostra anche una tastiera con scorciatoie e
 
 Un container acceso non basta: la risposta Telegram conferma anche che il bot riesce a collegarsi e che il tuo ID è autorizzato. Il controllo di salute del container `bot` verifica il database, non l'accesso a Telegram o ad AGESCI.
 
-## 12. Su Telegram: inserisci una spesa a mano (solo amministratore)
+## 12. Su Telegram: inserisci un'entrata a mano (solo amministratore)
 
-`/testspesa` è il modo per l'amministratore di inserire a mano una spesa, senza foto e senza AI. **Salva davvero nel portale**, anche se `DRY_RUN=true`: quell'impostazione vale solo per gli scontrini. Prima del salvataggio il bot chiede sempre un'ultima conferma.
+`/entrata` permette all'amministratore di inserire un'entrata senza foto e senza AI. **Salva davvero nel portale**, anche se `DRY_RUN=true`: quell'impostazione vale solo per gli scontrini. Prima del salvataggio il bot chiede sempre un'ultima conferma. Non usarlo per una prova simulata.
 
-1. Invia `/testspesa`.
-2. Leggi il riepilogo proposto dal bot: data di oggi, descrizione «Prova Telegram» e importo 0,10 €.
-3. Cambia i valori con **📅 Data**, **💶 Importo** o **✏️ Descrizione** e invia il nuovo valore.
-4. Premi **✅ Conferma**.
+1. Invia `/entrata`.
+2. Scrivi data, descrizione e importo quando il bot li chiede.
+3. Controlla il riepilogo e, se serve, cambia i valori con **📅 Data**, **💶 Importo** o **✏️ Descrizione**.
+4. Premi **✅ Va bene**.
 5. Scegli la cassa.
-6. Scegli entrata o uscita.
+6. Premi **Entrata**: senza allegato non è disponibile Uscita.
 7. Scegli la tipologia: compaiono prima le più usate; premi **➕ Altre tipologie** se quella giusta non c'è. Unità e categoria vengono impostate dal bot.
 8. Leggi il riepilogo completo e verifica data, anno scout, descrizione, importo, cassa e tipologia.
-9. Premi **✅ CONFERMA INSERIMENTO REALE** solo se tutto è corretto; altrimenti premi **Annulla**.
+9. Premi **✅ Salva davvero** solo se tutto è corretto; altrimenti premi **Annulla**.
 10. Attendi l'esito: il messaggio «⏳ Registro l'operazione nel portale…» viene sostituito da «✅ Operazione registrata e verificata», con il riepilogo di tutti i dati inseriti (data, descrizione, importo, cassa, operazione, tipologia, unità e categoria).
 
 Se compare «❌ Non sono riuscito a registrare e verificare la spesa manuale», il bot non riprova da solo: apri il portale e controlla se la spesa c'è. Ripeti `/testspesa` solo se non compare, per evitare doppioni.
 
 Puoi interrompere prima della conferma finale con `/annulla`.
+
+Il vecchio `/testspesa` resta disponibile con i valori iniziali «Prova Telegram» e 0,10 €, modificabili. Anche questo comando permette solo entrate senza ricevuta e salva davvero dopo conferma. Per un'uscita invia prima una ricevuta: se l'AI non la legge, il bot conserva il file temporaneo e ti chiede di compilare i dati a mano. Il file entra nell'archivio `scontrini` quando confermi l'operazione; prima rimane in attesa. `/annulla` elimina la copia temporanea. La compilazione manuale di uno scontrino rispetta `DRY_RUN`.
 
 ### Tempi dei menu e aggiornamento delle opzioni
 
@@ -466,6 +468,37 @@ Il download usa Internet, ma il modello analizza poi le immagini sul NAS. Non se
 
 ## 14. Su Telegram: prova una foto
 
+### Diagnosi dell'AI riservata all'amministratore
+
+Se la lettura locale fallisce, il mittente può compilare i dati a mano conservando il file temporaneo. Solo l'amministratore riceve anche il codice tecnico e un'indicazione pratica. Se è lui a inviare il documento, la diagnosi è inclusa nello stesso avviso; altrimenti viene mandata separatamente alla sua chat, senza dati o identificativi della ricevuta.
+
+| Codice | Significato e controllo |
+| --- | --- |
+| `timeout` | Ollama non ha risposto entro l'attesa configurata. Non dimostra memoria insufficiente. Controlla se il NAS sta ancora lavorando. |
+| `connection` | Collegamento locale non riuscito: verifica che il servizio Ollama sia avviato. |
+| `model_not_found` | Il servizio segnala che manca il modello: confronta `LOCAL_VISION_MODEL` con `sudo docker compose exec ollama ollama list`. |
+| `memory` | Il servizio segnala memoria insufficiente: verifica la RAM libera nel Monitoraggio risorse DSM. |
+| `unsupported_model` | Il servizio segnala modello, immagini o versione non supportati. |
+| `invalid_response`, `empty_result`, `invalid_receipt` | Risposta mancante o non valida; il bot non inventa i dati. |
+| `incomplete_response` | Risposta interrotta o limitata: i dati vengono rifiutati anche se sembrano JSON valido. |
+| `not_configured` | Il bot non ha un modello configurato: verifica la configurazione privata e ricrea il container. |
+| `preprocessing` | Il file non può essere preparato per l'analisi. |
+| `service_error` | Altro errore Ollama; viene mostrato lo stato HTTP, quando disponibile, ma non il corpo grezzo. |
+
+Il bot non chiede al modello di spiegare il proprio guasto: usa il tipo di eccezione e classifica gli errori noti restituiti dal servizio. Risposte grezze, ragionamento del modello, nomi di file, URL e dati della ricevuta non vengono inclusi nella diagnosi. Puoi condividere codice e stato HTTP, non i registri completi.
+
+Il client chiede `think=false` per evitare ragionamento non necessario dove supportato, mantiene l'output JSON strutturato e rifiuta risposte incomplete. Questo non garantisce tempi o qualità del modello sul NAS.
+
+Solo se la diagnosi è `timeout` e il NAS ha memoria sufficiente, puoi aumentare l'attesa aggiungendo alla configurazione privata:
+
+```dotenv
+LOCAL_VISION_TIMEOUT_SECONDS=600
+```
+
+Il valore predefinito resta 180 secondi. Dopo la modifica, dalla cartella attiva ricrea soltanto il bot con `sudo docker compose up -d --force-recreate bot`. L'impostazione regola i timeout HTTP di Ollama, non quelli del download Telegram, e non è una garanzia sulla durata totale dell'analisi.
+
+### Trasferimento Telegram e prova
+
 Se compare «Non sono riuscito a completare il trasferimento», l'analisi AI non è iniziata e non è stata registrata alcuna spesa. Attendi un momento e invia di nuovo il file. Se il problema si ripete, dalla cartella del progetto nel terminale SSH esegui:
 
 ```sh
@@ -485,7 +518,7 @@ Condividi soltanto la riga trovata: contiene il passaggio (`get_file`, `download
 9. Conferma soltanto la simulazione.
 10. Dopo la risposta finale, apri `scontrini` in File Station e cerca il documento nella sottocartella dell'anno e del mese.
 
-La ricevuta resta nell'archivio NAS e non viene allegata all'operazione AGESCI. Se il modello va in errore o il NAS diventa troppo lento, fermati: non sostituirlo con un servizio online senza una decisione esplicita.
+La ricevuta viene archiviata quando confermi i dati e completi le scelte contabili, e non viene allegata all'operazione AGESCI. Se l'analisi fallisce, un unico avviso spiega che il file è conservato temporaneamente: puoi inserire data, descrizione e importo a mano e continuare, sempre in modalità prova per gli scontrini se `DRY_RUN=true`. Se il NAS diventa troppo lento, fermati: non sostituire il modello con un servizio online senza una decisione esplicita.
 
 ## 15. Come fermare, riavviare e aggiornare
 

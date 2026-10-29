@@ -2,7 +2,6 @@
 name: "Automazione portale AGESCI"
 description: "Use when implementing, debugging, or testing AGESCI portal automation: BilancioClient, Playwright, observed selectors, dynamic options, CSV imports, duplicate detection, or verification after saving."
 tools: [read, edit, search, execute]
-model: "Auto (copilot)"
 agents: []
 user-invocable: false
 disable-model-invocation: false

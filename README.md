@@ -8,7 +8,7 @@ Il bot, l'analisi locale, l'archivio, SQLite, la coda dei ritentativi e il clien
 
 È disponibile anche `bilancio/csv_import.py` per importare CSV con classificazioni AGESCI. L'import completato comprendeva 112 movimenti: 80 entrate e 32 uscite. Due uscite già presenti sono state escluse dal nuovo invio; le altre 110 sono state elaborate e verificate nel registro. Due timeout di autenticazione hanno interrotto i primi blocchi, poi ripresi senza reinviare le righe già verificate. Il verificatore riconosce l'unità `Gruppo G1` anche quando il registro la mostra come `G1`.
 
-La modalità `DRY_RUN=true` è quella predefinita e non salva sul portale. Per ogni nuova registrazione reale, usa `DRY_RUN=false` solo per il processo autorizzato e dopo aver controllato i dati e il numero di righe. La ricevuta viene archiviata sul NAS e non viene allegata alla registrazione web.
+La modalità `DRY_RUN=true` è quella predefinita e non salva gli scontrini sul portale. Eccezione: i comandi amministratore `/entrata` e `/testspesa` inseriscono entrate manuali reali, dopo conferma finale, anche in modalità prova. Le uscite dal bot richiedono sempre una ricevuta allegata. Per ogni nuova registrazione reale da scontrino o CSV, usa `DRY_RUN=false` solo per il processo autorizzato e dopo aver controllato i dati e il numero di righe. La ricevuta viene archiviata sul NAS e non viene allegata alla registrazione web.
 
 L'analisi delle ricevute è prevista in locale con Ollama. Non è configurato l'invio delle immagini a un servizio AI online. Il modello locale va scelto dopo aver verificato la memoria e le prestazioni disponibili sul NAS.
 
@@ -45,7 +45,16 @@ Sul PC, in VS Code:
 3. Scrivi la richiesta normalmente: il Manager usa gli specialisti quando servono e raccoglie i risultati nella stessa conversazione.
 4. Per un controllo di manutenzione, chiedi per esempio: «Fai controllare al Doctor gli agenti e la documentazione: correggi i riferimenti errati e segnalami duplicazioni e incongruenze».
 
-Tutti gli agenti usano il modello **Auto**, che lascia scegliere a Copilot il modello adatto alla richiesta. Gli specialisti sono configurati come sottoagenti e non compaiono nel selettore principale. Non occorre passare manualmente da uno all'altro. La scelta iniziale del Manager va fatta in VS Code: questi file non cambiano automaticamente l'agente di una chat gia aperta. La delega richiede che la versione e la modalita di chat in uso supportino i sottoagenti personalizzati; se non sono disponibili, il Manager deve dichiararlo e svolgere direttamente il lavoro.
+Gli agenti non fissano un modello nel proprio file: usano la scelta predefinita risolta da Copilot. Il precedente valore letterale `Auto (copilot)` veniva rifiutato dal runtime di questa chat. Gli specialisti sono configurati come sottoagenti e non compaiono nel selettore principale. Non occorre passare manualmente da uno all'altro. La scelta iniziale del Manager va fatta in VS Code: questi file non cambiano automaticamente l'agente di una chat gia aperta. La delega richiede che la versione e la modalita di chat in uso supportino i sottoagenti personalizzati.
+
+Se compare ancora `Model 'Auto (copilot)' is not available` dopo la correzione:
+
+1. Salva i file del progetto.
+2. Premi `Ctrl+Shift+P` in VS Code e scegli **Developer: Reload Window**.
+3. Apri una nuova chat del progetto, seleziona **Manager** e un modello effettivamente disponibile nel selettore di Copilot.
+4. Prova a chiedere una risposta breve allo specialista Ollama, senza avviare il bot. La validazione dei file non basta a confermare che il sottoagente sia partito.
+
+Se la delega fallisce, il Manager deve spiegare una sola volta la causa osservata e il rimedio, poi continuare direttamente senza ripetere lo stesso avviso a ogni incarico.
 
 Il Doctor lavora su richiesta o quando il Manager rileva incoerenze rilevanti: non e un controllo periodico in sottofondo. Corregge gli errori documentali sicuri nel perimetro richiesto, ma prima di cancellare file o sezioni sostanziali, rimuovere agenti o cambiare responsabilita presenta una proposta e richiede conferma. Non pulisce ricevute, database, log, diagnostica o backup. Le regole comuni restano nelle [istruzioni condivise](.github/copilot-instructions.md); decisioni e stato verificato restano nel [contesto del progetto](docs/CONTESTO_PROGETTO.md).
 
@@ -85,7 +94,20 @@ $env:DRY_RUN = "true"
 
 Il bot legge token e ID dal file `.env`; non inviare quel file o le sue credenziali in chat. La prova salva database, registri e diagnostica in `data-local`, e le ricevute in `scontrini-local`, cartelle escluse da Git. Per fermare il bot, torna alla finestra PowerShell e premi `Ctrl+C`.
 
-### Prova manuale AGESCI senza ricevuta
+### Entrate manuali e scontrini non leggibili
+
+Per un'entrata senza ricevuta, l'amministratore può usare `/entrata`:
+
+1. Inserisci data, descrizione e importo quando richiesti.
+2. Controlla il riepilogo; puoi correggere i dati prima di continuare.
+3. Scegli cassa, Entrata e tipologia.
+4. Verifica tutti i dati e premi **✅ Salva davvero** solo se vuoi registrare l'entrata reale. Questo comando ignora `DRY_RUN`.
+
+Per un'uscita devi prima inviare una foto o un PDF della ricevuta. Se l'AI locale non riesce a leggerla, ricevi un solo avviso di errore e puoi compilare data, descrizione e importo a mano, poi scegliere cassa, direzione e tipologia. Il file resta temporaneamente sul NAS: compare nell'archivio `scontrini` solo quando confermi l'operazione e il bot lo archivia con i dati e la cassa scelti. `/annulla` elimina la copia temporanea, non le ricevute già archiviate. La compilazione a mano di una ricevuta non cambia `DRY_RUN`: resta una prova se la modalità prova è attiva. Questo percorso è disponibile agli stessi utenti autorizzati che possono inviare scontrini, anche se il modello non è configurato.
+
+Le uscite senza ricevuta sono bloccate anche nei vecchi pulsanti e nei ritentativi della coda. Non usare l'inserimento manuale per aggirare un allegato mancante.
+
+### Comando precedente `/testspesa`
 
 All'avvio il bot registra il menu dei comandi Telegram: scrivendo `/` compaiono i suggerimenti. Invia `/start` per visualizzare la tastiera rapida. Gli altri utenti vedono solo i comandi di uso quotidiano; l'amministratore riceve anche i comandi riservati e l'indicazione della modalità, simulata o reale. Anche `/help` mostra i comandi riservati solo all'amministratore.
 
@@ -93,7 +115,7 @@ Le casse e le tipologie `Voci Scout` vengono lette dal portale in sottofondo cir
 
 Nel passaggio delle tipologie il bot mostra prima le 6 più usate per quella cassa e direzione; in fondo c'è il pulsante **➕ Mostra altre** con quelle mancanti. All'inizio, quando non ci sono ancora spese registrate, mostra le prime 6 nell'ordine del portale.
 
-L’amministratore può usare `/testspesa` per inserire a mano una spesa reale, senza scontrino e senza AI. Il bot propone subito valori predefiniti: data di oggi, descrizione «Prova Telegram» e importo 0,10 €. Puoi cambiarli con i pulsanti **📅 Data**, **💶 Importo** e **✏️ Descrizione**, poi premi **✅ Va bene**. Il bot chiede cassa e direzione, usa `Voci Scout` e mostra le tipologie disponibili per quella scelta. Imposta l’unità predefinita associata alla cassa; se per quell'anno scout il portale non offre alcuna unità («No results»), lascia l'unità vuota e non la mostra nel riepilogo. Lascia la categoria vuota. Prima del salvataggio mostra un riepilogo e chiede un'ultima conferma con **✅ Salva davvero**.
+`/testspesa` resta disponibile per l'amministratore come inserimento manuale di un'entrata, non di un'uscita senza ricevuta. Il bot propone subito valori predefiniti: data di oggi, descrizione «Prova Telegram» e importo 0,10 €. Puoi cambiarli con i pulsanti **📅 Data**, **💶 Importo** e **✏️ Descrizione**, poi premi **✅ Va bene**. Il bot chiede cassa e direzione, usa `Voci Scout` e mostra le tipologie disponibili per quella scelta. Imposta l’unità predefinita associata alla cassa; se per quell'anno scout il portale non offre alcuna unità («No results»), lascia l'unità vuota e non la mostra nel riepilogo. Lascia la categoria vuota. Prima del salvataggio mostra un riepilogo e chiede un'ultima conferma con **✅ Salva davvero**.
 
 - `/testspesa` salva **sempre davvero** nel portale, anche con `DRY_RUN=true`: quell'impostazione vale solo per gli scontrini.
 - Usa `/annulla` o il pulsante **Annulla** per interrompere prima della conferma finale.

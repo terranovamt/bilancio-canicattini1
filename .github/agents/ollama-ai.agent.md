@@ -2,7 +2,6 @@
 name: "AI locale Ollama"
 description: "Use when implementing, debugging, or testing local Ollama receipt AI: vision models, prompts, structured JSON, receipt schema, image/PDF preprocessing, timeouts, memory, CPU performance, or Ollama configuration on Windows and Synology."
 tools: [read, edit, search, execute]
-model: "Auto (copilot)"
 agents: []
 user-invocable: false
 disable-model-invocation: false

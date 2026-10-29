@@ -2,7 +2,6 @@
 name: "Sviluppo bot e archivio"
 description: "Use when implementing or testing Python Telegram conversations, access control, receipt intake, SQLite persistence, file archiving, retry queues, application integration, general Docker runtime, or Synology deployment."
 tools: [read, edit, search, execute]
-model: "Auto (copilot)"
 agents: []
 user-invocable: false
 disable-model-invocation: false

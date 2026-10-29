@@ -75,6 +75,7 @@ USER_COMMANDS = (
 )
 ADMIN_COMMANDS = (
     *USER_COMMANDS,
+    BotCommand("entrata", texts.COMMAND_INCOME),
     BotCommand("testspesa", texts.COMMAND_MANUAL),
     BotCommand("testbilancio", texts.COMMAND_HEALTH),
     BotCommand("aggiornaopzioni", texts.COMMAND_REFRESH),
@@ -164,6 +165,7 @@ def create_application(
     )
     application.add_handler(CommandHandler("coda", queue_command))
     application.add_handler(CommandHandler("riprova", retry_command))
+    application.add_handler(CommandHandler("entrata", manual_income_command))
     application.add_handler(CommandHandler("testspesa", manual_expense_command))
     application.add_handler(CommandHandler("testbilancio", test_bilancio_command))
     application.add_handler(CommandHandler("aggiornaopzioni", refresh_options_command))
@@ -478,6 +480,14 @@ async def manual_expense_command(
 ) -> None:
     workflow: ReceiptWorkflow = context.application.bot_data["receipt_workflow"]
     await workflow.start_manual_expense(update, context)
+
+
+async def manual_income_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    workflow: ReceiptWorkflow = context.application.bot_data["receipt_workflow"]
+    await workflow.start_manual_expense(update, context, collect_data=True)
 
 
 async def refresh_options_command(

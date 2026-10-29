@@ -23,6 +23,7 @@ def main() -> None:
         OllamaReceiptAnalyzer(
             base_url=settings.local_vision_url,
             model=settings.local_vision_model,
+            timeout_seconds=settings.local_vision_timeout_seconds,
         )
         if settings.local_vision_model
         else None

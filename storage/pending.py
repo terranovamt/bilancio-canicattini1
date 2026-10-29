@@ -2,11 +2,19 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 MAX_PENDING_RECEIPT_BYTES = 20 * 1024 * 1024
 _ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".pdf"}
+
+
+def has_receipt_file(payload: Mapping[str, object], archive_path: str | None) -> bool:
+    return any(
+        isinstance(path, str) and bool(path) and Path(path).is_file()
+        for path in (archive_path, payload.get("pending_path"))
+    )
 
 
 @dataclass(frozen=True, slots=True)

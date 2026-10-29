@@ -20,6 +20,7 @@ from bot.application import (
     configure_bot_menu,
     help_command,
     latest_expenses_command,
+    manual_income_command,
     ledger_summary_job,
     preload_options_job,
     preload_portal_options,
@@ -61,6 +62,17 @@ def make_settings() -> Settings:
 
 
 class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_income_command_collects_all_fields_and_is_admin_menu_only(self) -> None:
+        workflow = SimpleNamespace(start_manual_expense=AsyncMock())
+        context = self.make_context(receipt_workflow=workflow)
+        update = SimpleNamespace()
+        await manual_income_command(update, context)
+        workflow.start_manual_expense.assert_awaited_once_with(
+            update, context, collect_data=True
+        )
+        self.assertIn("entrata", {command.command for command in ADMIN_COMMANDS})
+        self.assertNotIn("entrata", {command.command for command in USER_COMMANDS})
+
     def make_context(self, **bot_data: object):
         return SimpleNamespace(application=SimpleNamespace(bot_data=bot_data))
 
@@ -89,7 +101,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("scontrino", text)
         self.assertIn("PROVA", text)
         keyboard = message.reply_text.await_args.kwargs["reply_markup"]
-        self.assertEqual(keyboard.keyboard[0][0].text, "/testspesa")
+        self.assertEqual(keyboard.keyboard[0][0].text, "/entrata")
         for rare_command in ("/aggiornaopzioni", "/pulisci"):
             self.assertNotIn(
                 rare_command, [button.text for row in keyboard.keyboard for button in row]

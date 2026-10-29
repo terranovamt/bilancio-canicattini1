@@ -25,8 +25,9 @@ from bot import messages as texts
 from config import Settings
 from db.database import Database
 from storage.archive import FileArchive
-from storage.pending import MAX_PENDING_RECEIPT_BYTES, PendingReceiptStore
-from vision.ollama_client import LocalVisionError
+from storage.pending import MAX_PENDING_RECEIPT_BYTES, PendingReceiptStore, has_receipt_file
+from vision.ollama_client import LocalVisionError, VisionFailureCode
+from vision.preprocess import ImagePreprocessingError
 from vision.receipt_schema import (
     ReceiptData,
     ReceiptParseError,
@@ -104,6 +105,8 @@ class ReceiptWorkflow:
         self,
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
+        *,
+        collect_data: bool = False,
     ) -> None:
         message = update.message
         user = update.effective_user
@@ -142,6 +145,8 @@ class ReceiptWorkflow:
             "currency": "EUR",
             "confidence": 1.0,
         }
+        if collect_data:
+            payload.update(date=None, merchant=None, total_amount=None)
         await asyncio.to_thread(
             self._database.create_manual_expense,
             expense_id=expense_id,
@@ -150,9 +155,12 @@ class ReceiptWorkflow:
         )
         await self._save_state(
             user.id,
-            "awaiting_confirmation",
+            "awaiting_receipt_data" if collect_data else "awaiting_confirmation",
             {"expense_id": expense_id},
         )
+        if collect_data:
+            await message.reply_text(texts.INCOME_START.format(prompt=_MANUAL_EDIT_PROMPTS["date"]))
+            return
         await message.reply_text(
             self._manual_confirmation_text(payload),
             reply_markup=self._manual_confirmation_keyboard(),
@@ -166,11 +174,6 @@ class ReceiptWorkflow:
         message = update.message
         user = update.effective_user
         if message is None or user is None:
-            return
-        if self._analyzer is None:
-            await message.reply_text(
-                texts.ANALYZER_UNAVAILABLE
-            )
             return
         if await asyncio.to_thread(
             self._database.get_conversation_state, user.id
@@ -246,18 +249,45 @@ class ReceiptWorkflow:
             return
 
         try:
+            if self._analyzer is None:
+                raise LocalVisionError(
+                    "Receipt analyzer is not configured",
+                    code=VisionFailureCode.NOT_CONFIGURED,
+                )
             receipt = await self._analyzer.analyze(file_bytes, file_name)
-        except (LocalVisionError, ReceiptParseError) as error:
-            logger.warning("Receipt analysis failed: %s", type(error).__name__)
-            await self._notify_admin(
-                context,
-                texts.ADMIN_ANALYSIS_FAILED,
+        except (LocalVisionError, ReceiptParseError, ImagePreprocessingError) as error:
+            code = (
+                error.code if isinstance(error, LocalVisionError)
+                else VisionFailureCode.PREPROCESSING
+                if isinstance(error, ImagePreprocessingError)
+                else VisionFailureCode.INVALID_RECEIPT
             )
-            await asyncio.to_thread(self._database.delete_expense, pending.receipt_id)
-            await asyncio.to_thread(self._pending_store.delete, pending.path)
-            await message.reply_text(
-                texts.ANALYSIS_FAILED
+            status = error.status_code if isinstance(error, LocalVisionError) else None
+            logger.warning(
+                "Receipt analysis failed: code=%s status=%s", code.value, status
             )
+            data = {
+                **ReceiptData(confidence=0).model_dump(mode="json"),
+                "pending_path": str(pending.path),
+                "source_name": file_name,
+            }
+            await asyncio.to_thread(
+                self._database.update_expense_payload, pending.receipt_id, data
+            )
+            await self._save_state(
+                user.id, "awaiting_receipt_data", {"expense_id": pending.receipt_id}
+            )
+            reply = texts.ANALYSIS_FAILED.format(prompt=_FIELD_PROMPTS["date"])
+            diagnostic = texts.ai_admin_diagnostic(
+                code.value, status, self._settings.local_vision_timeout_seconds
+            )
+            if user.id == self._settings.admin_user_id:
+                reply = texts.AI_FAILURE_WITH_DIAGNOSTIC.format(
+                    message=reply, diagnostic=diagnostic
+                )
+            await message.reply_text(reply)
+            if user.id != self._settings.admin_user_id:
+                await self._notify_admin(context, diagnostic)
             return
 
         data = {
@@ -387,7 +417,11 @@ class ReceiptWorkflow:
         missing = missing_required_fields(receipt)
         if missing:
             await self._save_state(user.id, "awaiting_receipt_data", state_data)
-            await message.reply_text(_FIELD_PROMPTS[missing[0]])
+            await message.reply_text(
+                _MANUAL_EDIT_PROMPTS[missing[0]]
+                if updated.get("manual_entry") is True
+                else _FIELD_PROMPTS[missing[0]]
+            )
             return
         await self._save_state(user.id, "awaiting_confirmation", state_data)
         if updated.get("manual_entry") is True:
@@ -595,7 +629,7 @@ class ReceiptWorkflow:
         query: CallbackQuery,
         subject: str,
     ) -> None:
-        if payload.get("manual_entry") is True:
+        if payload.get("manual_entry") is True and not isinstance(payload.get("pending_path"), str):
             await self._cancel_pending(user_id, expense_id, payload)
             await query.edit_message_text(
                 texts.PORTAL_MANUAL_READ_FAILED.format(subject=subject)
@@ -682,6 +716,20 @@ class ReceiptWorkflow:
             return
         if value not in {direction.value for direction in TransactionDirection}:
             await query.edit_message_text(texts.CHOOSE_DIRECTION)
+            return
+        stored = await asyncio.to_thread(self._database.get_expense, expense_id)
+        if value == TransactionDirection.EXPENSE.value and (
+            stored is None
+            or not await asyncio.to_thread(has_receipt_file, payload, stored.archive_path)
+        ):
+            logger.warning("Expense direction rejected: receipt file is missing")
+            await query.edit_message_text(
+                texts.EXPENSE_RECEIPT_REQUIRED,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton(texts.INCOME, callback_data="receipt:direction:entrata")],
+                    [InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")],
+                ]),
+            )
             return
         state_data["direction"] = value
         await self._save_state(user_id, "awaiting_accounting_voice", state_data)
@@ -875,20 +923,22 @@ class ReceiptWorkflow:
         if state == "awaiting_account":
             state_data.update(account=self._serialize_option(selected))
             await self._save_state(user_id, "awaiting_direction", state_data)
+            stored = await asyncio.to_thread(self._database.get_expense, expense_id)
+            has_receipt = stored is not None and await asyncio.to_thread(
+                has_receipt_file, payload, stored.archive_path
+            )
+            directions = [
+                InlineKeyboardButton(texts.INCOME, callback_data="receipt:direction:entrata")
+            ]
+            if has_receipt:
+                directions.append(
+                    InlineKeyboardButton(texts.EXPENSE, callback_data="receipt:direction:uscita")
+                )
             keyboard = InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton(
-                            texts.INCOME, callback_data="receipt:direction:entrata"
-                        ),
-                        InlineKeyboardButton(
-                            texts.EXPENSE, callback_data="receipt:direction:uscita"
-                        ),
-                    ]
-                ]
+                [directions, [InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")]]
             )
             await query.edit_message_text(
-                texts.DIRECTION_PROMPT,
+                texts.DIRECTION_PROMPT if has_receipt else texts.INCOME_ONLY_PROMPT,
                 reply_markup=keyboard,
             )
             return
@@ -1023,7 +1073,21 @@ class ReceiptWorkflow:
             expense = await asyncio.to_thread(self._database.get_expense, expense_id)
             if expense is None:
                 raise KeyError("Expense no longer exists")
-            if payload.get("manual_entry") is True:
+            if payload.get("manual_entry") is True and user_id != self._settings.admin_user_id:
+                logger.warning("Manual submission rejected: administrator required")
+                await send(texts.ADMIN_ONLY)
+                return
+            if direction == TransactionDirection.EXPENSE and not await asyncio.to_thread(
+                has_receipt_file, payload, expense.archive_path
+            ):
+                logger.warning("Expense submission rejected: receipt file is missing")
+                await asyncio.to_thread(
+                    self._database.update_expense_status, expense_id, "failed"
+                )
+                await self._clear_state(user_id)
+                await send(texts.EXPENSE_RECEIPT_REQUIRED)
+                return
+            if payload.get("manual_entry") is True and not isinstance(payload.get("pending_path"), str):
                 await asyncio.to_thread(
                     self._database.update_expense_status,
                     expense_id,

@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+from enum import Enum
 
 import httpx
 
 from vision.preprocess import preprocess_receipt
-from vision.receipt_schema import ReceiptData, parse_receipt_json
+from vision.receipt_schema import ReceiptData, ReceiptParseError, parse_receipt_json
 
 _SYSTEM_PROMPT = """
 You analyze receipt images. Return only one JSON object that follows the supplied
@@ -20,8 +21,59 @@ and suggested category from the receipt.
 """.strip()
 
 
+class VisionFailureCode(str, Enum):
+    TIMEOUT = "timeout"
+    CONNECTION = "connection"
+    MODEL_NOT_FOUND = "model_not_found"
+    MEMORY = "memory"
+    UNSUPPORTED_MODEL = "unsupported_model"
+    SERVICE_ERROR = "service_error"
+    INVALID_RESPONSE = "invalid_response"
+    INCOMPLETE_RESPONSE = "incomplete_response"
+    EMPTY_RESULT = "empty_result"
+    INVALID_RECEIPT = "invalid_receipt"
+    NOT_CONFIGURED = "not_configured"
+    PREPROCESSING = "preprocessing"
+
+
 class LocalVisionError(RuntimeError):
     """Raised when the local vision service cannot return valid receipt data."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: VisionFailureCode = VisionFailureCode.SERVICE_ERROR,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
+
+
+def _service_error_code(response: httpx.Response) -> VisionFailureCode:
+    try:
+        body = response.json()
+    except json.JSONDecodeError:
+        return VisionFailureCode.SERVICE_ERROR
+    detail = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(detail, str):
+        return VisionFailureCode.SERVICE_ERROR
+    detail = detail.casefold()
+    # Classify known service failures; never expose or log the response body.
+    if any(fragment in detail for fragment in (
+        "out of memory", "not enough memory", "requires more system memory",
+        "unable to allocate", "failed to allocate",
+    )):
+        return VisionFailureCode.MEMORY
+    if response.status_code == 404 and "model" in detail and "not found" in detail:
+        return VisionFailureCode.MODEL_NOT_FOUND
+    if any(fragment in detail for fragment in (
+        "does not support images", "does not support vision", "unsupported architecture",
+        "requires a newer version",
+    )):
+        return VisionFailureCode.UNSUPPORTED_MODEL
+    return VisionFailureCode.SERVICE_ERROR
 
 
 class OllamaReceiptAnalyzer:
@@ -62,6 +114,7 @@ class OllamaReceiptAnalyzer:
                 },
             ],
             "stream": False,
+            "think": False,
             "format": ReceiptData.model_json_schema(),
             "options": {"temperature": 0},
         }
@@ -75,26 +128,61 @@ class OllamaReceiptAnalyzer:
                 response.raise_for_status()
         except httpx.HTTPStatusError as error:
             raise LocalVisionError(
-                "The local vision service returned an error"
+                "The local vision service returned an error",
+                code=_service_error_code(error.response),
+                status_code=error.response.status_code,
+            ) from error
+        except httpx.TimeoutException as error:
+            raise LocalVisionError(
+                "The local vision service timed out",
+                code=VisionFailureCode.TIMEOUT,
             ) from error
         except httpx.RequestError as error:
             raise LocalVisionError(
-                "The local vision service is unavailable or timed out"
+                "The local vision service is unavailable",
+                code=VisionFailureCode.CONNECTION,
             ) from error
 
         try:
             response_data = response.json()
         except json.JSONDecodeError as error:
             raise LocalVisionError(
-                "The local vision service returned an invalid response"
+                "The local vision service returned an invalid response",
+                code=VisionFailureCode.INVALID_RESPONSE,
             ) from error
         if not isinstance(response_data, dict):
-            raise LocalVisionError("The local vision service returned an invalid response")
+            raise LocalVisionError(
+                "The local vision service returned an invalid response",
+                code=VisionFailureCode.INVALID_RESPONSE,
+            )
+        service_error = response_data.get("error")
+        if isinstance(service_error, str) and service_error:
+            raise LocalVisionError(
+                "The local vision service reported an error",
+                code=_service_error_code(response),
+            )
+        if response_data.get("done") is False or response_data.get("done_reason") == "length":
+            raise LocalVisionError(
+                "The local vision service returned an incomplete response",
+                code=VisionFailureCode.INCOMPLETE_RESPONSE,
+            )
 
         message = response_data.get("message")
         if not isinstance(message, dict):
-            raise LocalVisionError("The local vision service returned no receipt result")
+            raise LocalVisionError(
+                "The local vision service returned no receipt result",
+                code=VisionFailureCode.EMPTY_RESULT,
+            )
         content = message.get("content")
-        if not isinstance(content, str):
-            raise LocalVisionError("The local vision service returned no receipt result")
-        return parse_receipt_json(content)
+        if not isinstance(content, str) or not content.strip():
+            raise LocalVisionError(
+                "The local vision service returned no receipt result",
+                code=VisionFailureCode.EMPTY_RESULT,
+            )
+        try:
+            return parse_receipt_json(content)
+        except ReceiptParseError as error:
+            raise LocalVisionError(
+                "The local vision result failed validation",
+                code=VisionFailureCode.INVALID_RECEIPT,
+            ) from error

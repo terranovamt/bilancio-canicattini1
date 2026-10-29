@@ -2,7 +2,6 @@
 name: "Doctor agenti"
 description: "Use when auditing or maintaining AI agent health: agent definitions, instructions, skills, prompts, documentation drift, duplicate rules, conflicting responsibilities, broken links, stale references, or safe cleanup of agent customizations."
 tools: [read, edit, search, execute]
-model: "Auto (copilot)"
 agents: []
 user-invocable: false
 disable-model-invocation: false

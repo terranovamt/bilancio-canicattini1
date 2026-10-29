@@ -22,7 +22,7 @@ from bot import messages as texts
 from config import Settings
 from db.database import Database, RetryEntry, StoredExpense
 from storage.archive import FileArchive
-from storage.pending import PendingReceiptStore
+from storage.pending import PendingReceiptStore, has_receipt_file
 
 logger = logging.getLogger(__name__)
 MAX_QUEUE_ATTEMPTS = 3
@@ -109,6 +109,18 @@ class ExpenseRetryService:
 
         try:
             portal_expense = self._portal_expense(stored)
+            if (
+                portal_expense.direction == TransactionDirection.EXPENSE
+                and not await asyncio.to_thread(
+                    has_receipt_file, stored.payload, stored.archive_path
+                )
+            ):
+                logger.warning("Queued expense rejected: receipt file is missing")
+                await self._mark_failed(entry.expense_id)
+                await self._notify_user(
+                    bot, stored.telegram_user_id, texts.EXPENSE_RECEIPT_REQUIRED
+                )
+                return "failed"
             if (
                 stored.archive_path is None
                 and stored.payload.get("manual_entry") is not True

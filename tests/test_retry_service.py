@@ -99,6 +99,26 @@ class ExpenseRetryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.succeeded, 1)
         self.assertIsNone(portal.received_expenses[0][0].unit)
 
+    async def test_rejects_queued_expense_without_receipt_even_if_legacy_manual(self) -> None:
+        self.create_queued_expense()
+        self.source.unlink()
+        stored = self.database.get_expense("expense-1")
+        self.database.update_expense_payload(
+            "expense-1", {**stored.payload, "manual_entry": True}
+        )
+        portal = FakeRetryPortal()
+        bot = FakeBot()
+        service = ExpenseRetryService(
+            settings=make_settings(), database=self.database, bilancio_client=portal,
+            archive=FileArchive(self.root / "archive"),
+            pending_store=PendingReceiptStore(self.root / "pending"),
+        )
+        result = await service.process_due(bot)
+        self.assertEqual(result.failed, 1)
+        self.assertEqual(portal.received_expenses, [])
+        self.assertEqual(self.database.get_expense("expense-1").status, "failed")
+        self.assertIn("ricevuta allegata", bot.messages[0][1])
+
     async def test_failed_attempt_is_rescheduled_with_backoff(self) -> None:
         self.create_queued_expense()
         portal = FakeRetryPortal(failure=True)
