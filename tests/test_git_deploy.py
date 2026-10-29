@@ -98,6 +98,8 @@ class GitDeployTests(unittest.TestCase):
         self.assertEqual((self.source / "release.txt").read_text(), "new release")
         expected = self.git("-C", str(publisher), "rev-parse", "HEAD").stdout.strip()
         self.assertIn(f"Versione installata: {expected}", result.stdout)
+        short = self.git("-C", str(publisher), "rev-parse", "--short", "HEAD").stdout.strip()
+        self.assertIn(f"Ultimo commit installato: {short} - New release (", result.stdout)
 
     def test_refuses_concurrent_deploy(self) -> None:
         (self.source / ".git" / "nas-deploy.lock").mkdir()
@@ -110,6 +112,7 @@ class GitDeployTests(unittest.TestCase):
         result = self.deploy(MOCK_UPDATE_EXIT="1")
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("Versione installata:", result.stdout)
+        self.assertNotIn("Ultimo commit installato:", result.stdout)
         self.assertFalse((self.source / ".git" / "nas-deploy.lock").exists())
 
     def test_failed_fetch_does_not_run_updater(self) -> None:

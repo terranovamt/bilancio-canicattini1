@@ -38,11 +38,14 @@ main() {
     git merge --ff-only refs/remotes/origin/deploy \
         || fail "Il ramo NAS e divergente. Non eseguo reset o sovrascritture."
     revision=$(git rev-parse HEAD)
+    commit_summary=$(git log -1 --format='%h - %s (%cd)' --date=format:'%d/%m/%Y %H:%M' HEAD)
     printf 'Versione selezionata: %s\n' "$revision"
+    printf 'Ultimo commit: %s\n' "$commit_summary"
     # The updater may replace files; execute it from the fetched Git checkout.
     sudo sh "$source_dir/aggiorna.sh" "$target_dir" \
         || fail "Aggiornamento non completato. Conserva dati e backup; puoi ritentare lo stesso comando dopo la diagnosi."
     printf 'Versione installata: %s\n' "$revision"
+    printf 'Ultimo commit installato: %s\n' "$commit_summary"
     printf 'Verifica ora /start su Telegram.\n'
 }
 

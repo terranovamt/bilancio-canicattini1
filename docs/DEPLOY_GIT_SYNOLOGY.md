@@ -140,7 +140,7 @@ sh /volume1/docker/bilancio-canicattini1-git/scarica.sh /volume1/docker/bilancio
 4. Sostituisci i percorsi se il tuo volume è diverso.
 5. Inserisci la passphrase della chiave GitHub se richiesta.
 6. Inserisci la password NAS quando `sudo` la richiede per Docker e la copia dei file.
-7. Attendi **Versione installata**, seguito dall'identificativo Git.
+7. Attendi **Versione installata**, seguito dall'identificativo Git, e **Ultimo commit installato**, con codice breve, titolo e data del commit. Confronta il codice breve con quello comunicato dopo la pubblicazione.
 8. Invia `/start` su Telegram per verificare la risposta.
 
 Non anteporre `sudo` al comando iniziale: lo script usa l'utente normale per Git e chiede i privilegi soltanto per installare.
