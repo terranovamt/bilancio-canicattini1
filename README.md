@@ -118,7 +118,7 @@ Inviando una foto o un PDF, invece, la direzione è già **Uscita**. Se l'AI loc
 
 ### Attesa dell'analisi immagini
 
-Ollama invia la risposta progressivamente, ma il bot usa i dati solo quando la risposta è completa e valida. Durante l'attesa aggiorna lo stesso messaggio ogni 30 secondi: prima indica che non ha ancora ricevuto dati, poi segnala quando sta ricevendo la risposta. Non mostra frammenti della ricevuta o del ragionamento e non registra dati parziali. Lo streaming non rende il modello più veloce e la preparazione iniziale può restare senza dati per diversi minuti.
+Ollama invia la risposta progressivamente, ma il bot usa i dati solo quando la risposta è completa e valida. Durante l'attesa aggiorna lo stesso messaggio ogni 30 secondi indicando la fase: preparazione dell'immagine, caricamento del modello, lettura dell'immagine o scrittura dei dati (con il numero di caratteri ricevuti). La fase si ricava dallo stato locale di Ollama (`/api/ps`). Non mostra frammenti della ricevuta o del ragionamento e non registra dati parziali. Alla fine il log del bot riporta i tempi di ogni fase (caricamento, lettura dell'immagine, scrittura), senza contenuti della ricevuta. Lo streaming non rende il modello più veloce e la lettura dell'immagine può durare diversi minuti.
 
 Il limite predefinito è **600 secondi (10 minuti)** per l'analisi, compresa la preparazione dell'immagine. Se scade o la risposta si interrompe, il file resta conservato e il bot chiede i dati a mano. `/start` e l'aiuto restano disponibili durante l'attesa.
 

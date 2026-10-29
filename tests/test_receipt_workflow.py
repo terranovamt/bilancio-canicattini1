@@ -25,7 +25,12 @@ from storage.archive import FileArchive
 from storage.pending import PendingReceiptStore
 from vision.receipt_schema import ReceiptData
 from vision.receipt_schema import ReceiptParseError
-from vision.ollama_client import LocalVisionError, VisionFailureCode
+from vision.ollama_client import (
+    AnalysisPhase,
+    AnalysisProgress,
+    LocalVisionError,
+    VisionFailureCode,
+)
 from vision.preprocess import ImagePreprocessingError
 
 
@@ -136,7 +141,9 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
     async def test_progress_updates_original_message_without_exposing_partial_data(self) -> None:
         async def analyze_with_progress(file_bytes, file_name, *, on_progress):
             await asyncio.sleep(0.025)
-            on_progress()
+            on_progress(AnalysisProgress(AnalysisPhase.READING_IMAGE))
+            await asyncio.sleep(0.025)
+            on_progress(AnalysisProgress(AnalysisPhase.WRITING, 42))
             await asyncio.sleep(0.025)
             return self.analyzer.receipt
 
@@ -146,7 +153,8 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             result = await self.workflow._analyze_receipt(b"image", "test.png", progress)
         rendered = [call.args[0] for call in progress.edit_text.await_args_list]
         self.assertTrue(any("Non ho ancora ricevuto dati" in text for text in rendered))
-        self.assertTrue(any("un pezzo alla volta" in text for text in rendered))
+        self.assertTrue(any("sta leggendo l’immagine" in text for text in rendered))
+        self.assertTrue(any("42 caratteri finora" in text for text in rendered))
         self.assertEqual(rendered[-1], texts.ANALYSIS_FINISHED)
         self.assertFalse(any("Negozio" in text for text in rendered))
         self.assertEqual(result, self.analyzer.receipt)
@@ -170,7 +178,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_timeout_stops_progress_monitor_and_preserves_manual_recovery(self) -> None:
         async def analyze_with_progress(file_bytes, file_name, *, on_progress):
-            on_progress()
+            on_progress(AnalysisProgress(AnalysisPhase.WRITING, 1))
             await asyncio.Event().wait()
 
         self.workflow._analyzer = SimpleNamespace(analyze_with_progress=analyze_with_progress)

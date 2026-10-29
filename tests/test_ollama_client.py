@@ -8,7 +8,12 @@ from unittest.mock import patch
 import httpx
 from PIL import Image, ImageDraw
 
-from vision.ollama_client import LocalVisionError, OllamaReceiptAnalyzer, VisionFailureCode
+from vision.ollama_client import (
+    AnalysisPhase,
+    LocalVisionError,
+    OllamaReceiptAnalyzer,
+    VisionFailureCode,
+)
 
 
 class ChunkStream(httpx.AsyncByteStream):
@@ -66,10 +71,69 @@ class OllamaReceiptAnalyzerTests(unittest.IsolatedAsyncioTestCase):
         wire = b"\n" + b"".join(chunks)
         stream = ChunkStream([wire[:15], wire[15:48], wire[48:]])
         progress = []
-        receipt = await self.run_stream(stream, on_progress=lambda: progress.append(True))
+        with self.assertLogs("vision.ollama_client", level="INFO") as logs:
+            receipt = await self.run_stream(stream, on_progress=progress.append)
         self.assertEqual(receipt.merchant, "Caffè")
-        self.assertEqual(len(progress), 3)
+        self.assertEqual(progress[0].phase, AnalysisPhase.PREPARING_IMAGE)
+        writing = [item for item in progress if item.phase is AnalysisPhase.WRITING]
+        self.assertEqual(len(writing), 3)
+        self.assertEqual(writing[-1].characters, len(content))
         self.assertTrue(stream.closed)
+        self.assertNotIn("Caffè", "\n".join(logs.output))
+
+    async def test_reports_model_loading_then_image_reading_from_local_status(self) -> None:
+        status_calls = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/api/ps":
+                status_calls.append(request.method)
+                models = [] if len(status_calls) == 1 else [{"name": "test:latest"}]
+                return httpx.Response(200, json={"models": models})
+            content = json.dumps(_VALID_RECEIPT)
+            return httpx.Response(200, stream=ChunkStream([
+                json.dumps({"message": {"content": content}, "done": True}).encode() + b"\n"
+            ], delay=0.2))
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        progress = []
+        with (
+            patch("vision.ollama_client.preprocess_receipt", return_value=[b"image"]),
+            patch("vision.ollama_client.httpx.AsyncClient", return_value=client),
+            patch("vision.ollama_client._PHASE_POLL_SECONDS", 0.05),
+        ):
+            await OllamaReceiptAnalyzer(
+                base_url="http://ollama:11434", model="test"
+            ).analyze_with_progress(b"input", "image.png", on_progress=progress.append)
+        phases = [item.phase for item in progress]
+        self.assertIn(AnalysisPhase.LOADING_MODEL, phases)
+        self.assertIn(AnalysisPhase.READING_IMAGE, phases)
+        self.assertLess(
+            phases.index(AnalysisPhase.LOADING_MODEL), phases.index(AnalysisPhase.READING_IMAGE)
+        )
+        self.assertEqual(phases[-1], AnalysisPhase.WRITING)
+        self.assertEqual(set(status_calls), {"GET"})
+
+    async def test_logs_phase_timings_without_receipt_content(self) -> None:
+        content = json.dumps({**_VALID_RECEIPT, "merchant": "Private Shop"})
+        line = json.dumps({
+            "message": {"content": content}, "done": True,
+            "total_duration": 362_000_000_000, "load_duration": 12_000_000_000,
+            "prompt_eval_count": 1500, "prompt_eval_duration": 300_000_000_000,
+            "eval_count": 120, "eval_duration": 50_000_000_000,
+        })
+        with self.assertLogs("vision.ollama_client", level="INFO") as logs:
+            await self.run_stream(ChunkStream([(line + "\n").encode()]))
+        output = "\n".join(logs.output)
+        self.assertIn("total=362.0s load=12.0s image_and_prompt=300.0s (1500 tokens)", output)
+        self.assertIn("answer=50.0s (120 tokens)", output)
+        self.assertNotIn("Private Shop", output)
+
+    async def test_timeout_logs_the_phase_reached(self) -> None:
+        stream = ChunkStream([b'{"message":{"content":""},"done":false}\n'], delay=10)
+        with self.assertLogs("vision.ollama_client", level="WARNING") as logs:
+            with self.assertRaises(LocalVisionError):
+                await self.run_stream(stream, timeout=0.05)
+        self.assertIn("timed out during phase preparing_image", "\n".join(logs.output))
 
     async def test_valid_partial_json_without_final_marker_is_never_accepted(self) -> None:
         line = json.dumps({"message": {"content": json.dumps(_VALID_RECEIPT)}, "done": False})

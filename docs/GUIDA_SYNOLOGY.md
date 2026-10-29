@@ -485,7 +485,9 @@ Il bot non chiede al modello di spiegare il proprio guasto: usa il tipo di eccez
 
 Il client chiede `think=false` per evitare ragionamento non necessario dove supportato, mantiene l'output JSON strutturato e rifiuta risposte incomplete. Questo non garantisce tempi o qualità del modello sul NAS.
 
-L'analisi usa una risposta progressiva. Ogni 30 secondi il messaggio Telegram indica il tempo trascorso e se sono già arrivati frammenti; i dati vengono utilizzati soltanto dopo la conclusione e la validazione della risposta. Nessun frammento viene mostrato o salvato nel portale. Durante il caricamento del modello o la preparazione dell'immagine potrebbero non arrivare ancora dati: lo streaming non rende Ollama più veloce.
+L'analisi usa una risposta progressiva. Ogni 30 secondi il messaggio Telegram indica il tempo trascorso e la fase (1 preparazione immagine, 2 caricamento del modello, 3 lettura dell'immagine, 4 scrittura dei dati); i dati vengono utilizzati soltanto dopo la conclusione e la validazione della risposta. Nessun frammento viene mostrato o salvato nel portale. Nelle fasi 2 e 3 non arrivano ancora dati: lo streaming non rende Ollama più veloce.
+
+Per vedere i dettagli apri **Container Manager** → **Container** → container del bot → **Dettagli** → **Registro**. Troverai righe come `Local receipt analysis phase: reading_image` e, alla fine, `Local receipt analysis finished: total=… load=… image_and_prompt=… answer=…`, con i secondi di ogni fase. Se l'analisi scade, il registro indica la fase raggiunta (`timed out during phase …`). Il registro del container `ollama` mostra invece il caricamento del modello e la durata complessiva della richiesta `POST /api/chat`.
 
 Il timeout predefinito è ora di 10 minuti. Se la configurazione privata contiene ancora `180`, il valore esplicito resta valido; per aumentarlo, quando il NAS ha memoria sufficiente, imposta:
 

@@ -27,7 +27,12 @@ from config import Settings
 from db.database import Database
 from storage.archive import FileArchive
 from storage.pending import MAX_PENDING_RECEIPT_BYTES, PendingReceiptStore, has_receipt_file
-from vision.ollama_client import LocalVisionError, VisionFailureCode
+from vision.ollama_client import (
+    AnalysisPhase,
+    AnalysisProgress,
+    LocalVisionError,
+    VisionFailureCode,
+)
 from vision.preprocess import ImagePreprocessingError
 from vision.receipt_schema import (
     ReceiptData,
@@ -77,6 +82,20 @@ _MANUAL_DEFAULT_DESCRIPTION = texts.MANUAL_DESCRIPTION
 _MANUAL_DEFAULT_AMOUNT = "0.10"
 _TOP_TYPES_COUNT = 6
 _ANALYSIS_PROGRESS_INTERVAL_SECONDS = 30
+_ANALYSIS_PHASE_TEXTS = {
+    AnalysisPhase.PREPARING_IMAGE: texts.ANALYSIS_PREPARING_IMAGE,
+    AnalysisPhase.LOADING_MODEL: texts.ANALYSIS_LOADING_MODEL,
+    AnalysisPhase.READING_IMAGE: texts.ANALYSIS_READING_IMAGE,
+    AnalysisPhase.WRITING: texts.ANALYSIS_RECEIVING,
+}
+
+
+def _analysis_progress_text(progress: AnalysisProgress | None, seconds: int) -> str:
+    template = (
+        texts.ANALYSIS_WAITING if progress is None else _ANALYSIS_PHASE_TEXTS[progress.phase]
+    )
+    characters = progress.characters if progress is not None else 0
+    return template.format(seconds=seconds, characters=characters)
 
 
 class ReceiptAnalyzer(Protocol):
@@ -87,9 +106,13 @@ class ReceiptAnalyzer(Protocol):
 @runtime_checkable
 class ProgressReceiptAnalyzer(Protocol):
     async def analyze_with_progress(
-        self, file_bytes: bytes, file_name: str, *, on_progress: Callable[[], None]
+        self,
+        file_bytes: bytes,
+        file_name: str,
+        *,
+        on_progress: Callable[[AnalysisProgress], None],
     ) -> ReceiptData:
-        """Analyze a receipt and signal receipt of generated content."""
+        """Analyze a receipt and report the current analysis phase."""
 
 
 class ReceiptWorkflow:
@@ -349,12 +372,12 @@ class ReceiptWorkflow:
         if self._analyzer is None:
             raise RuntimeError("Receipt analyzer is not configured")
         started = asyncio.get_running_loop().time()
-        receiving = False
+        latest: AnalysisProgress | None = None
         updated = False
 
-        def on_progress() -> None:
-            nonlocal receiving
-            receiving = True
+        def on_progress(progress: AnalysisProgress) -> None:
+            nonlocal latest
+            latest = progress
 
         async def edit_progress(text: str) -> None:
             try:
@@ -367,9 +390,8 @@ class ReceiptWorkflow:
             while True:
                 await asyncio.sleep(_ANALYSIS_PROGRESS_INTERVAL_SECONDS)
                 elapsed = int(asyncio.get_running_loop().time() - started)
-                template = texts.ANALYSIS_RECEIVING if receiving else texts.ANALYSIS_WAITING
                 updated = True
-                await edit_progress(template.format(seconds=elapsed))
+                await edit_progress(_analysis_progress_text(latest, elapsed))
 
         monitor_task = asyncio.create_task(monitor())
         try:

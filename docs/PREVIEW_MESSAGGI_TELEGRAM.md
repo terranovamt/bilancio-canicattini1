@@ -95,17 +95,26 @@ Le schermate hanno **Menu principale**; gli strumenti amministratore hanno anche
 📷 Ricevuto! Lo leggo subito…
 ```
 
-Se l'analisi dura più di 30 secondi, lo stesso messaggio viene aggiornato, ad esempio:
+Se l'analisi dura più di 30 secondi, lo stesso messaggio viene aggiornato ogni 30 secondi con la fase in corso, ad esempio:
 
 ```text
-⏳ Sto ancora analizzando la ricevuta (30 secondi). Non ho ancora ricevuto dati: la preparazione può richiedere tempo. Puoi aprire il menu o l’aiuto mentre aspetti.
+⏳ Analisi in corso (30 secondi).
+Fase 2 di 4: Ollama sta caricando il modello in memoria. La prima analisi dopo una pausa è la più lenta.
 ```
-
-Quando arrivano frammenti di risposta:
 
 ```text
-⏳ Sto ricevendo la risposta, un pezzo alla volta (60 secondi). Aspetto i dati completi prima di usarli.
+⏳ Analisi in corso (120 secondi).
+Fase 3 di 4: il modello è pronto e sta leggendo l’immagine. È la fase più lunga e non mostra avanzamenti finché non inizia a scrivere.
 ```
+
+Quando il modello inizia a scrivere:
+
+```text
+⏳ Analisi in corso (300 secondi).
+Fase 4 di 4: il modello sta scrivendo i dati (180 caratteri finora). Aspetto la risposta completa prima di usarla.
+```
+
+La fase 1 («preparo l’immagine per il modello») di solito dura pochi secondi. Se la fase non è ancora nota compare il messaggio generico «Sto ancora analizzando la ricevuta…».
 
 Alla fine dell'attesa il messaggio viene sostituito da:
 

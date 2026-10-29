@@ -152,9 +152,24 @@ ANALYSIS_WAITING = (
     "Non ho ancora ricevuto dati: la preparazione può richiedere tempo. "
     "Puoi aprire il menu o l’aiuto mentre aspetti."
 )
+ANALYSIS_PREPARING_IMAGE = (
+    "⏳ Analisi in corso ({seconds} secondi).\n"
+    "Fase 1 di 4: preparo l’immagine per il modello."
+)
+ANALYSIS_LOADING_MODEL = (
+    "⏳ Analisi in corso ({seconds} secondi).\n"
+    "Fase 2 di 4: Ollama sta caricando il modello in memoria. "
+    "La prima analisi dopo una pausa è la più lenta."
+)
+ANALYSIS_READING_IMAGE = (
+    "⏳ Analisi in corso ({seconds} secondi).\n"
+    "Fase 3 di 4: il modello è pronto e sta leggendo l’immagine. "
+    "È la fase più lunga e non mostra avanzamenti finché non inizia a scrivere."
+)
 ANALYSIS_RECEIVING = (
-    "⏳ Sto ricevendo la risposta, un pezzo alla volta ({seconds} secondi). "
-    "Aspetto i dati completi prima di usarli."
+    "⏳ Analisi in corso ({seconds} secondi).\n"
+    "Fase 4 di 4: il modello sta scrivendo i dati ({characters} caratteri finora). "
+    "Aspetto la risposta completa prima di usarla."
 )
 ANALYSIS_FINISHED = "📷 Attesa dell’analisi terminata. Trovi il risultato o le istruzioni nel messaggio successivo."
 RECEIPT_TRANSFER_FAILED = (
