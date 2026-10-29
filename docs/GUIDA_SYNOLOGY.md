@@ -485,13 +485,15 @@ Il bot non chiede al modello di spiegare il proprio guasto: usa il tipo di eccez
 
 Il client chiede `think=false` per evitare ragionamento non necessario dove supportato, mantiene l'output JSON strutturato e rifiuta risposte incomplete. Questo non garantisce tempi o qualità del modello sul NAS.
 
-Solo se la diagnosi è `timeout` e il NAS ha memoria sufficiente, puoi aumentare l'attesa aggiungendo alla configurazione privata:
+L'analisi usa una risposta progressiva. Ogni 30 secondi il messaggio Telegram indica il tempo trascorso e se sono già arrivati frammenti; i dati vengono utilizzati soltanto dopo la conclusione e la validazione della risposta. Nessun frammento viene mostrato o salvato nel portale. Durante il caricamento del modello o la preparazione dell'immagine potrebbero non arrivare ancora dati: lo streaming non rende Ollama più veloce.
+
+Il timeout predefinito è ora di 10 minuti. Se la configurazione privata contiene ancora `180`, il valore esplicito resta valido; per aumentarlo, quando il NAS ha memoria sufficiente, imposta:
 
 ```dotenv
 LOCAL_VISION_TIMEOUT_SECONDS=600
 ```
 
-Il valore predefinito resta 180 secondi. Dopo la modifica, dalla cartella attiva ricrea soltanto il bot con `sudo docker compose up -d --force-recreate bot`. L'impostazione regola i timeout HTTP di Ollama, non quelli del download Telegram, e non è una garanzia sulla durata totale dell'analisi.
+Dopo la modifica, quando nessuno sta inserendo un'operazione, dalla cartella attiva ricrea soltanto il bot con `sudo docker compose up -d --force-recreate bot`. L'impostazione limita l'analisi complessiva (preparazione e risposta), oltre ai timeout HTTP di Ollama; non riguarda il download Telegram. Il limite totale resta valido anche se continuano ad arrivare frammenti. Se scade, il bot conserva il file e richiede i dati a mano. Non è una garanzia di completamento del modello sul NAS.
 
 ### Trasferimento Telegram e prova
 

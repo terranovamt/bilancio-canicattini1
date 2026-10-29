@@ -6,7 +6,7 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 from telegram.error import NetworkError, TimedOut
 
@@ -132,6 +132,62 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
+
+    async def test_progress_updates_original_message_without_exposing_partial_data(self) -> None:
+        async def analyze_with_progress(file_bytes, file_name, *, on_progress):
+            await asyncio.sleep(0.025)
+            on_progress()
+            await asyncio.sleep(0.025)
+            return self.analyzer.receipt
+
+        self.workflow._analyzer = SimpleNamespace(analyze_with_progress=analyze_with_progress)
+        progress = SimpleNamespace(edit_text=AsyncMock())
+        with patch("bot.receipt_workflow._ANALYSIS_PROGRESS_INTERVAL_SECONDS", 0.01):
+            result = await self.workflow._analyze_receipt(b"image", "test.png", progress)
+        rendered = [call.args[0] for call in progress.edit_text.await_args_list]
+        self.assertTrue(any("Non ho ancora ricevuto dati" in text for text in rendered))
+        self.assertTrue(any("un pezzo alla volta" in text for text in rendered))
+        self.assertEqual(rendered[-1], texts.ANALYSIS_FINISHED)
+        self.assertFalse(any("Negozio" in text for text in rendered))
+        self.assertEqual(result, self.analyzer.receipt)
+        count = progress.edit_text.await_count
+        await asyncio.sleep(0.025)
+        self.assertEqual(progress.edit_text.await_count, count)
+
+    async def test_progress_notification_failure_does_not_abort_analysis(self) -> None:
+        async def analyze(file_bytes, file_name):
+            await asyncio.sleep(0.035)
+            return self.analyzer.receipt
+
+        self.workflow._analyzer = SimpleNamespace(analyze=analyze)
+        progress = SimpleNamespace(edit_text=AsyncMock(side_effect=NetworkError("offline")))
+        with (
+            patch("bot.receipt_workflow._ANALYSIS_PROGRESS_INTERVAL_SECONDS", 0.01),
+            self.assertLogs("bot.receipt_workflow", level="WARNING"),
+        ):
+            result = await self.workflow._analyze_receipt(b"image", "test.png", progress)
+        self.assertEqual(result, self.analyzer.receipt)
+
+    async def test_timeout_stops_progress_monitor_and_preserves_manual_recovery(self) -> None:
+        async def analyze_with_progress(file_bytes, file_name, *, on_progress):
+            on_progress()
+            await asyncio.Event().wait()
+
+        self.workflow._analyzer = SimpleNamespace(analyze_with_progress=analyze_with_progress)
+        self.workflow._settings = replace(make_settings(), local_vision_timeout_seconds=1)
+        message, update, context = self.make_photo_update(b"progress-timeout")
+        progress = SimpleNamespace(edit_text=AsyncMock())
+        message.reply_text.return_value = progress
+        with patch("bot.receipt_workflow._ANALYSIS_PROGRESS_INTERVAL_SECONDS", 0.01):
+            await self.workflow.receive_receipt(update, context)
+        self.assertIn(texts.MISSING_DATE, message.reply_text.await_args.args[0])
+        state = self.database.get_conversation_state(12345)
+        self.assertEqual(state[0], "awaiting_receipt_data")
+        payload = self.database.get_expense(state[1]["expense_id"]).payload
+        self.assertTrue(Path(payload["pending_path"]).is_file())
+        count = progress.edit_text.await_count
+        await asyncio.sleep(0.03)
+        self.assertEqual(progress.edit_text.await_count, count)
 
     async def test_analyzes_photo_and_persists_confirmation_state(self) -> None:
         message, update, context = self.make_photo_update(b"private receipt")

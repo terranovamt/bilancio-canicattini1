@@ -111,7 +111,7 @@ class Settings:
     dry_run: bool
     puid: int | None
     pgid: int | None
-    local_vision_timeout_seconds: int = 180
+    local_vision_timeout_seconds: int = 600
 
     @classmethod
     def from_env(
@@ -176,7 +176,7 @@ class Settings:
             puid=_optional_non_negative_integer(source, "PUID"),
             pgid=_optional_non_negative_integer(source, "PGID"),
             local_vision_timeout_seconds=_positive_integer(
-                _optional_text(source, "LOCAL_VISION_TIMEOUT_SECONDS") or "180",
+                _optional_text(source, "LOCAL_VISION_TIMEOUT_SECONDS") or "600",
                 "LOCAL_VISION_TIMEOUT_SECONDS",
             ),
         )

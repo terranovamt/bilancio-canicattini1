@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+from collections.abc import Callable
 from enum import Enum
 
 import httpx
@@ -82,7 +83,7 @@ class OllamaReceiptAnalyzer:
         *,
         base_url: str,
         model: str,
-        timeout_seconds: float = 180,
+        timeout_seconds: float = 600,
     ) -> None:
         if not base_url.strip():
             raise ValueError("base_url must not be empty")
@@ -95,6 +96,26 @@ class OllamaReceiptAnalyzer:
         self._timeout_seconds = timeout_seconds
 
     async def analyze(self, file_bytes: bytes, file_name: str) -> ReceiptData:
+        return await self.analyze_with_progress(file_bytes, file_name, on_progress=None)
+
+    async def analyze_with_progress(
+        self,
+        file_bytes: bytes,
+        file_name: str,
+        *,
+        on_progress: Callable[[], None] | None,
+    ) -> ReceiptData:
+        try:
+            async with asyncio.timeout(self._timeout_seconds):
+                return await self._analyze(file_bytes, file_name, on_progress)
+        except TimeoutError as error:
+            raise LocalVisionError(
+                "The local vision service timed out", code=VisionFailureCode.TIMEOUT
+            ) from error
+
+    async def _analyze(
+        self, file_bytes: bytes, file_name: str, on_progress: Callable[[], None] | None
+    ) -> ReceiptData:
         processed_images = await asyncio.to_thread(
             preprocess_receipt,
             file_bytes,
@@ -113,7 +134,7 @@ class OllamaReceiptAnalyzer:
                     "images": encoded_images,
                 },
             ],
-            "stream": False,
+            "stream": True,
             "think": False,
             "format": ReceiptData.model_json_schema(),
             "options": {"temperature": 0},
@@ -124,8 +145,67 @@ class OllamaReceiptAnalyzer:
                 timeout=self._timeout_seconds,
                 trust_env=False,
             ) as client:
-                response = await client.post(self._chat_url, json=request_body)
-                response.raise_for_status()
+                async with client.stream("POST", self._chat_url, json=request_body) as response:
+                    if response.is_error:
+                        await response.aread()
+                    response.raise_for_status()
+                    parts: list[str] = []
+                    size = 0
+                    completed = False
+                    async for line in response.aiter_lines():
+                        if not line.strip():
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                        except json.JSONDecodeError as error:
+                            raise LocalVisionError(
+                                "The local vision service returned an invalid response",
+                                code=VisionFailureCode.INVALID_RESPONSE,
+                            ) from error
+                        if not isinstance(chunk, dict):
+                            raise LocalVisionError(
+                                "The local vision service returned an invalid response",
+                                code=VisionFailureCode.INVALID_RESPONSE,
+                            )
+                        if chunk.get("error"):
+                            raise LocalVisionError(
+                                "The local vision service reported an error",
+                                code=_service_error_code(httpx.Response(200, json=chunk)),
+                            )
+                        message = chunk.get("message")
+                        if not isinstance(message, dict):
+                            raise LocalVisionError(
+                                "The local vision service returned no receipt result",
+                                code=VisionFailureCode.EMPTY_RESULT,
+                            )
+                        content = message.get("content", "")
+                        if not isinstance(content, str):
+                            raise LocalVisionError(
+                                "The local vision service returned an invalid response",
+                                code=VisionFailureCode.INVALID_RESPONSE,
+                            )
+                        size += len(content)
+                        if size > 1_000_000:
+                            raise LocalVisionError(
+                                "The local vision result exceeded the size limit",
+                                code=VisionFailureCode.INVALID_RESPONSE,
+                            )
+                        parts.append(content)
+                        if content and on_progress is not None:
+                            on_progress()
+                        if chunk.get("done_reason") == "length":
+                            raise LocalVisionError(
+                                "The local vision service returned an incomplete response",
+                                code=VisionFailureCode.INCOMPLETE_RESPONSE,
+                            )
+                        if chunk.get("done") is True:
+                            completed = True
+                            break
+                    if not completed:
+                        raise LocalVisionError(
+                            "The local vision service returned an incomplete response",
+                            code=VisionFailureCode.INCOMPLETE_RESPONSE,
+                        )
         except httpx.HTTPStatusError as error:
             raise LocalVisionError(
                 "The local vision service returned an error",
@@ -143,38 +223,8 @@ class OllamaReceiptAnalyzer:
                 code=VisionFailureCode.CONNECTION,
             ) from error
 
-        try:
-            response_data = response.json()
-        except json.JSONDecodeError as error:
-            raise LocalVisionError(
-                "The local vision service returned an invalid response",
-                code=VisionFailureCode.INVALID_RESPONSE,
-            ) from error
-        if not isinstance(response_data, dict):
-            raise LocalVisionError(
-                "The local vision service returned an invalid response",
-                code=VisionFailureCode.INVALID_RESPONSE,
-            )
-        service_error = response_data.get("error")
-        if isinstance(service_error, str) and service_error:
-            raise LocalVisionError(
-                "The local vision service reported an error",
-                code=_service_error_code(response),
-            )
-        if response_data.get("done") is False or response_data.get("done_reason") == "length":
-            raise LocalVisionError(
-                "The local vision service returned an incomplete response",
-                code=VisionFailureCode.INCOMPLETE_RESPONSE,
-            )
-
-        message = response_data.get("message")
-        if not isinstance(message, dict):
-            raise LocalVisionError(
-                "The local vision service returned no receipt result",
-                code=VisionFailureCode.EMPTY_RESULT,
-            )
-        content = message.get("content")
-        if not isinstance(content, str) or not content.strip():
+        content = "".join(parts)
+        if not content.strip():
             raise LocalVisionError(
                 "The local vision service returned no receipt result",
                 code=VisionFailureCode.EMPTY_RESULT,

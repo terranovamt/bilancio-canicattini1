@@ -116,6 +116,20 @@ Il vecchio `/testspesa` è stato rimosso per non confondere una prova con un ins
 
 Inviando una foto o un PDF, invece, la direzione è già **Uscita**. Se l'AI locale non riesce a leggerlo, anche per timeout, ricevi un avviso e puoi compilare data, descrizione e importo a mano, poi scegliere cassa e tipologia senza dover selezionare di nuovo Uscita. File e stato per il recupero manuale vengono conservati prima di avviare l'AI. L'attesa totale dell'analisi è limitata da `LOCAL_VISION_TIMEOUT_SECONDS`. Il file resta temporaneamente sul NAS: compare nell'archivio `scontrini` quando completi l'ultima scelta contabile, con i dati e la cassa scelti. `/annulla` elimina la copia temporanea, non le ricevute già archiviate. La compilazione a mano mantiene la modalità con cui hai inviato la ricevuta. Questo percorso è disponibile agli stessi utenti autorizzati che possono inviare scontrini, anche se il modello non è configurato. Fuori dal percorso manuale dell'amministratore, un'uscita senza file resta bloccata, anche nei ritentativi della coda.
 
+### Attesa dell'analisi immagini
+
+Ollama invia la risposta progressivamente, ma il bot usa i dati solo quando la risposta è completa e valida. Durante l'attesa aggiorna lo stesso messaggio ogni 30 secondi: prima indica che non ha ancora ricevuto dati, poi segnala quando sta ricevendo la risposta. Non mostra frammenti della ricevuta o del ragionamento e non registra dati parziali. Lo streaming non rende il modello più veloce e la preparazione iniziale può restare senza dati per diversi minuti.
+
+Il limite predefinito è **600 secondi (10 minuti)** per l'analisi, compresa la preparazione dell'immagine. Se scade o la risposta si interrompe, il file resta conservato e il bot chiede i dati a mano. `/start` e l'aiuto restano disponibili durante l'attesa.
+
+Per un NAS già configurato:
+
+1. Controlla localmente il valore `LOCAL_VISION_TIMEOUT_SECONDS` nella configurazione privata, senza condividerla.
+2. Se contiene ancora `180` e vuoi attendere fino a 10 minuti, portalo a `600`.
+3. Dalla cartella attiva sul NAS ricrea il bot con `sudo docker compose up -d --force-recreate bot`, quando nessuno sta inserendo un'operazione.
+
+L'aggiornamento del programma non riscrive la configurazione privata: un valore esplicito di `180` continua quindi a valere. Gli errori Telegram nell'aggiornare il messaggio vengono registrati senza interrompere l'analisi.
+
 ### Menu e opzioni contabili
 
 Per usare il bot non occorre ricordare i comandi:

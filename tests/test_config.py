@@ -22,7 +22,7 @@ class SettingsTests(unittest.TestCase):
         self.assertFalse(settings.dry_run)
         self.assertEqual(settings.local_vision_url, "http://ollama:11434")
         self.assertIsNone(settings.local_vision_model)
-        self.assertEqual(settings.local_vision_timeout_seconds, 180)
+        self.assertEqual(settings.local_vision_timeout_seconds, 600)
         self.assertIsNone(settings.anthropic_api_key)
         self.assertIsNone(settings.bilancio_url)
         self.assertIsNone(settings.playwright_browser_channel)
@@ -96,6 +96,8 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.local_vision_model, "local-test-model")
 
     def test_loads_local_vision_timeout_and_rejects_invalid_values(self) -> None:
+        self.environ["LOCAL_VISION_TIMEOUT_SECONDS"] = "180"
+        self.assertEqual(Settings.from_env(self.environ).local_vision_timeout_seconds, 180)
         self.environ["LOCAL_VISION_TIMEOUT_SECONDS"] = "600"
         self.assertEqual(
             Settings.from_env(self.environ).local_vision_timeout_seconds, 600

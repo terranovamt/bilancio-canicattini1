@@ -147,6 +147,16 @@ STATUS_REVIEW = "⚠️ da controllare"
 STATUS_WORKING = "⏳ in corso"
 
 RECEIPT_PROGRESS = "📷 Ricevuto! Lo leggo subito…"
+ANALYSIS_WAITING = (
+    "⏳ Sto ancora analizzando la ricevuta ({seconds} secondi). "
+    "Non ho ancora ricevuto dati: la preparazione può richiedere tempo. "
+    "Puoi aprire il menu o l’aiuto mentre aspetti."
+)
+ANALYSIS_RECEIVING = (
+    "⏳ Sto ricevendo la risposta, un pezzo alla volta ({seconds} secondi). "
+    "Aspetto i dati completi prima di usarli."
+)
+ANALYSIS_FINISHED = "📷 Attesa dell’analisi terminata. Trovi il risultato o le istruzioni nel messaggio successivo."
 RECEIPT_TRANSFER_FAILED = (
     "⚠️ Non sono riuscito a completare il trasferimento della foto o del PDF "
     "da Telegram. L'analisi non è iniziata e non ho registrato nulla. "

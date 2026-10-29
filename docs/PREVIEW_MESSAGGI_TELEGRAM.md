@@ -95,6 +95,26 @@ Le schermate hanno **Menu principale**; gli strumenti amministratore hanno anche
 📷 Ricevuto! Lo leggo subito…
 ```
 
+Se l'analisi dura più di 30 secondi, lo stesso messaggio viene aggiornato, ad esempio:
+
+```text
+⏳ Sto ancora analizzando la ricevuta (30 secondi). Non ho ancora ricevuto dati: la preparazione può richiedere tempo. Puoi aprire il menu o l’aiuto mentre aspetti.
+```
+
+Quando arrivano frammenti di risposta:
+
+```text
+⏳ Sto ricevendo la risposta, un pezzo alla volta (60 secondi). Aspetto i dati completi prima di usarli.
+```
+
+Alla fine dell'attesa il messaggio viene sostituito da:
+
+```text
+📷 Attesa dell’analisi terminata. Trovi il risultato o le istruzioni nel messaggio successivo.
+```
+
+I frammenti non vengono mostrati né usati per registrare operazioni. Il limite predefinito è 10 minuti; eventuali valori espliciti già configurati restano validi. Dopo un timeout o una risposta interrotta compare il recupero manuale.
+
 ### 5 · Controllo dei dati
 
 ```text

@@ -6,7 +6,8 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Protocol
+from collections.abc import Callable
+from typing import Protocol, runtime_checkable
 import uuid
 
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
@@ -75,11 +76,20 @@ _BUSY_TEXT = texts.BUSY
 _MANUAL_DEFAULT_DESCRIPTION = texts.MANUAL_DESCRIPTION
 _MANUAL_DEFAULT_AMOUNT = "0.10"
 _TOP_TYPES_COUNT = 6
+_ANALYSIS_PROGRESS_INTERVAL_SECONDS = 30
 
 
 class ReceiptAnalyzer(Protocol):
     async def analyze(self, file_bytes: bytes, file_name: str) -> ReceiptData:
         """Analyze a receipt using the configured local vision model."""
+
+
+@runtime_checkable
+class ProgressReceiptAnalyzer(Protocol):
+    async def analyze_with_progress(
+        self, file_bytes: bytes, file_name: str, *, on_progress: Callable[[], None]
+    ) -> ReceiptData:
+        """Analyze a receipt and signal receipt of generated content."""
 
 
 class ReceiptWorkflow:
@@ -210,7 +220,7 @@ class ReceiptWorkflow:
                 )
             )
             stage = "progress_message"
-            await message.reply_text(
+            progress_message = await message.reply_text(
                 texts.RECEIPT_PROGRESS, connect_timeout=30, read_timeout=30
             )
         except NetworkError as error:
@@ -271,7 +281,7 @@ class ReceiptWorkflow:
                     code=VisionFailureCode.NOT_CONFIGURED,
                 )
             async with asyncio.timeout(self._settings.local_vision_timeout_seconds):
-                receipt = await self._analyzer.analyze(file_bytes, file_name)
+                receipt = await self._analyze_receipt(file_bytes, file_name, progress_message)
         except (LocalVisionError, ReceiptParseError, ImagePreprocessingError, TimeoutError) as error:
             code = (
                 error.code if isinstance(error, LocalVisionError)
@@ -332,6 +342,50 @@ class ReceiptWorkflow:
             )
             return
         await self._offer_accounts(user.id, pending.receipt_id, data, message, context)
+
+    async def _analyze_receipt(
+        self, file_bytes: bytes, file_name: str, progress_message: Message
+    ) -> ReceiptData:
+        if self._analyzer is None:
+            raise RuntimeError("Receipt analyzer is not configured")
+        started = asyncio.get_running_loop().time()
+        receiving = False
+        updated = False
+
+        def on_progress() -> None:
+            nonlocal receiving
+            receiving = True
+
+        async def edit_progress(text: str) -> None:
+            try:
+                await progress_message.edit_text(text, connect_timeout=10, read_timeout=10)
+            except TelegramError as error:
+                logger.warning("Could not update analysis progress: %s", type(error).__name__)
+
+        async def monitor() -> None:
+            nonlocal updated
+            while True:
+                await asyncio.sleep(_ANALYSIS_PROGRESS_INTERVAL_SECONDS)
+                elapsed = int(asyncio.get_running_loop().time() - started)
+                template = texts.ANALYSIS_RECEIVING if receiving else texts.ANALYSIS_WAITING
+                updated = True
+                await edit_progress(template.format(seconds=elapsed))
+
+        monitor_task = asyncio.create_task(monitor())
+        try:
+            if isinstance(self._analyzer, ProgressReceiptAnalyzer):
+                return await self._analyzer.analyze_with_progress(
+                    file_bytes, file_name, on_progress=on_progress
+                )
+            return await self._analyzer.analyze(file_bytes, file_name)
+        finally:
+            monitor_task.cancel()
+            try:
+                await monitor_task
+            except asyncio.CancelledError:
+                pass
+            if updated:
+                await edit_progress(texts.ANALYSIS_FINISHED)
 
     async def handle_text(
         self,
