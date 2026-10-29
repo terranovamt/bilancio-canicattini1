@@ -402,13 +402,19 @@ class PlaywrightBilancioClient:
         expense_to_submit = replace(expense, unit=unit)
 
         async def fill_form(page: Page) -> PortalSubmissionResult:
+            nonlocal expense_to_submit
+            expense_to_submit = replace(expense, unit=unit)
             await self._run_portal_stage(
                 "opening the account ledger",
                 self._open_account_ledger(page, expense.account),
             )
             existing = await self._run_portal_stage(
                 "checking for an existing expense",
-                self._find_matching_expense(page, expense_to_submit),
+                self._find_matching_expense(
+                    page,
+                    expense_to_submit,
+                    allow_missing_unit=True,
+                ),
             )
             if existing:
                 return PortalSubmissionResult(
@@ -439,10 +445,13 @@ class PlaywrightBilancioClient:
                     ),
                 )
             if unit is not None:
-                await self._run_portal_stage(
+                selected_unit = await self._run_portal_stage(
                     "selecting the unit",
-                    self._select_dropdown(page, "unit", unit),
+                    self._select_dropdown(page, "unit", unit, allow_empty=True),
                 )
+                if selected_unit is None:
+                    logger.info("Portal offers no unit; leaving the unit empty")
+                    expense_to_submit = replace(expense_to_submit, unit=None)
             if expense.category is not None:
                 await self._run_portal_stage(
                     "selecting the category",
@@ -946,7 +955,9 @@ class PlaywrightBilancioClient:
         selector_key: str,
         option: PortalOption,
         direction: TransactionDirection | None = None,
-    ) -> None:
+        *,
+        allow_empty: bool = False,
+    ) -> PortalOption | None:
         locator = self._dropdown_locator(page, selector_key, direction)
         await self._require_one(locator, selector_key)
         await locator.click()
@@ -955,6 +966,18 @@ class PlaywrightBilancioClient:
         option_role = option_config.get("role")
         if not isinstance(option_role, str):
             raise BilancioClientError("AGESCI option selector role is invalid")
+        if allow_empty and await self._option_list_is_empty(
+            option_list.get_by_role(option_role),
+            option_list.get_by_role("listitem").filter(
+                has_text=re.compile(r"^\s*No results\s*$", re.IGNORECASE)
+            ),
+        ):
+            await locator.click()
+            if not await _wait_for_hidden_locator(option_list, self._timeout_ms):
+                raise PortalOptionsUnavailable(
+                    f"The empty portal option list did not close: {selector_key}"
+                )
+            return None
         option_locator = option_list.get_by_role(
             option_role,
             name=option.label,
@@ -966,6 +989,28 @@ class PlaywrightBilancioClient:
             )
         await self._require_one(option_locator, f"{selector_key}_option")
         await option_locator.click()
+        return option
+
+    async def _option_list_is_empty(
+        self,
+        options: Locator,
+        empty_marker: Locator,
+    ) -> bool:
+        """Wait until the list shows options or stays on "No results" briefly."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._timeout_ms / 1000
+        empty_since: float | None = None
+        while loop.time() < deadline:
+            if await options.count() > 0:
+                return False
+            if await empty_marker.count() > 0:
+                empty_since = empty_since or loop.time()
+                if loop.time() - empty_since >= 1.5:
+                    return True
+            else:
+                empty_since = None
+            await asyncio.sleep(0.1)
+        return False
 
     async def _dropdown_option_list_locator(
         self,
@@ -1071,8 +1116,17 @@ class PlaywrightBilancioClient:
         self,
         page: Page,
         expense: PortalExpense,
+        *,
+        allow_missing_unit: bool = False,
     ) -> bool:
-        return await self._matching_expense_count(page, expense) > 0
+        return (
+            await self._matching_expense_count(
+                page,
+                expense,
+                allow_missing_unit=allow_missing_unit,
+            )
+            > 0
+        )
 
     async def _wait_for_matching_expense(
         self,
@@ -1090,6 +1144,8 @@ class PlaywrightBilancioClient:
         self,
         page: Page,
         expense: PortalExpense,
+        *,
+        allow_missing_unit: bool = False,
     ) -> int:
         rows = self._locator(page, "ledger_rows")
         loading_overlay = self._locator(page, "ledger_loading_overlay")
@@ -1173,9 +1229,9 @@ class PlaywrightBilancioClient:
                 values.get(key) == value
                 for key, value in expected.items()
                 if key != "Unità"
-            ) and _unit_ledger_value_matches(
-                values.get("Unità", ""),
-                expense.unit,
+            ) and (
+                _unit_ledger_value_matches(values.get("Unità", ""), expense.unit)
+                or (allow_missing_unit and not values.get("Unità"))
             ):
                 matches += 1
         return matches

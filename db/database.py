@@ -495,6 +495,54 @@ class Database:
             )
         return cursor.rowcount > 0
 
+    def transaction_type_usage(
+        self,
+        account_label: str,
+        direction: str,
+    ) -> dict[str, int]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT payload_json FROM expenses
+                WHERE status IN ('submitted', 'dry_run')
+                """
+            ).fetchall()
+        usage: dict[str, int] = {}
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            if not isinstance(payload, dict):
+                continue
+            account = payload.get("account")
+            transaction_type = payload.get("transaction_type")
+            if (
+                not isinstance(account, dict)
+                or not isinstance(transaction_type, dict)
+                or account.get("label") != account_label
+                or payload.get("direction") != direction
+            ):
+                continue
+            label = transaction_type.get("label")
+            if isinstance(label, str):
+                usage[label] = usage.get(label, 0) + 1
+        return usage
+
+    def clear_history(self) -> dict[str, int]:
+        """Delete every local expense, retry and conversation state."""
+        with self._connection() as connection:
+            counts = {
+                "expenses": connection.execute(
+                    "SELECT COUNT(*) FROM expenses"
+                ).fetchone()[0],
+                "retries": connection.execute(
+                    "SELECT COUNT(*) FROM retry_queue"
+                ).fetchone()[0],
+            }
+            connection.execute("DELETE FROM retry_queue")
+            connection.execute("DELETE FROM conversation_states")
+            connection.execute("DELETE FROM file_hashes")
+            connection.execute("DELETE FROM expenses")
+        return counts
+
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self._path, timeout=10)

@@ -402,32 +402,29 @@ Un container acceso non basta: la risposta Telegram conferma anche che il bot ri
 Questa prova accede al portale con le credenziali configurate, ma deve restare simulata.
 
 1. Invia `/testspesa`.
-2. Leggi il messaggio iniziale e verifica che la modalità sia SIMULATA.
-3. Quando viene chiesto, invia data, descrizione e importo separati da `|`. Per esempio:
-
-```text
-29/10/2026 | PROVA SIMULATA | 1,00
-```
-
-4. Scegli la cassa proposta dal bot.
-5. Scegli entrata o uscita.
-6. Segui le successive scelte di voci, tipologia, unità e categoria: dipendono dalle opzioni disponibili nel portale.
-7. Leggi il riepilogo completo.
-8. Verifica data, anno scout, descrizione, importo e scelte contabili.
-9. Procedi soltanto se il riepilogo indica chiaramente **SIMULATA**.
-10. Conferma la simulazione.
-11. Attendi la risposta che indica il completamento senza salvataggio reale.
+2. Leggi il riepilogo proposto dal bot: data di oggi, descrizione «Prova Telegram», importo 0,10 € e modalità SIMULATA.
+3. Se vuoi cambiare un valore, premi **📅 Data**, **💶 Importo** o **✏️ Descrizione** e invia il nuovo valore.
+4. Premi **✅ Conferma**.
+5. Scegli la cassa proposta dal bot.
+6. Scegli entrata o uscita.
+7. Scegli la tipologia: compaiono prima le più usate; premi **➕ Altre tipologie** se quella giusta non c'è. Unità e categoria vengono impostate dal bot.
+8. Leggi il riepilogo completo.
+9. Verifica data, anno scout, descrizione, importo e scelte contabili.
+10. Procedi soltanto se il riepilogo indica chiaramente **SIMULATA**.
+11. Conferma la simulazione.
+12. Attendi la risposta che indica il completamento senza salvataggio reale.
 
 Puoi interrompere prima della conferma finale con `/annulla`. Non fare clic su Salva nel portale per completare questa prova.
 
 ### Tempi dei menu e aggiornamento delle opzioni
 
-La prima lettura delle casse e di ogni combinazione di tipologia, unità e categoria apre il portale e può essere lenta sul NAS. Il bot riutilizza poi gli elenchi già letti per sei ore, senza riaprire il browser per quei menu. Le opzioni non sono inventate o fissate nel codice: provengono dal portale e sono separate per anno scout, cassa, direzione e scelte precedenti.
+Il bot legge casse e tipologie dal portale in sottofondo dopo l'avvio e ogni notte, e le riutilizza per 26 ore senza riaprire il browser per quei menu. Le opzioni non sono inventate o fissate nel codice: provengono dal portale e sono separate per anno scout, cassa, direzione e scelte precedenti.
 
 1. Se le opzioni sono cambiate nel portale, invia `/aggiornaopzioni` dalla chat amministratore.
-2. Se avevi già aperto una selezione, invia `/annulla`.
-3. Ricomincia con `/testspesa` o con una nuova ricevuta.
-4. Attendi la nuova lettura: sarà più lenta della successiva selezione dalla cache.
+2. Attendi il messaggio «✅ Opzioni aggiornate» con il numero di casse e di tipologie lette. Se compare «❌», riprova più tardi.
+3. Se avevi già aperto una selezione, invia `/annulla` e ricomincia con `/testspesa` o con una nuova ricevuta.
+
+Per eliminare dal bot operazioni rimaste in coda o elenchi non più utili, l'amministratore può usare `/pulisci`: chiede conferma e non cancella nulla nel portale né le ricevute archiviate.
 
 Un riavvio del bot svuota la cache in memoria. Questa modifica non rende istantaneo l'inserimento: compilazione, controllo dei duplicati e verifica del risultato devono ancora usare il portale.
 

@@ -374,6 +374,53 @@ class PlaywrightBilancioClientTests(unittest.IsolatedAsyncioTestCase):
                         client._wait_for_matching_expense.assert_awaited_once_with(page, expense)
                         client._open_operation_form.assert_awaited_once_with(page, direction)
 
+    async def test_saves_without_unit_when_portal_offers_none(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            client = self.make_client(Path(directory))
+            expense = PortalExpense(
+                transaction_date=date(2026, 10, 29),
+                description="PROVA",
+                amount=Decimal("0.10"),
+                direction=TransactionDirection.EXPENSE,
+                account=PortalOption("account", "Cassa Co.ca"),
+                transaction_type=PortalOption("type", "Tipologia di prova"),
+                unit=None,
+                category=None,
+                notes=None,
+            )
+            page = object()
+
+            async def with_page(operation, **_kwargs):
+                return await operation(page)
+
+            async def select_dropdown(_page, selector_key, option, *_args, **_kwargs):
+                return None if selector_key == "unit" else option
+
+            client._with_page = AsyncMock(side_effect=with_page)
+            client._open_account_ledger = AsyncMock()
+            client._find_matching_expense = AsyncMock(return_value=False)
+            client._open_operation_form = AsyncMock()
+            client._fill_form = AsyncMock()
+            client._select_accounting_voice = AsyncMock()
+            client._select_dropdown = AsyncMock(side_effect=select_dropdown)
+            client._wait_for_matching_expense = AsyncMock(return_value=True)
+            save = Mock(click=AsyncMock())
+            client._locator = Mock(return_value=save)
+
+            result = await client.create_expense(expense, dry_run=False)
+
+            self.assertTrue(result.verified)
+            unit_call = client._select_dropdown.await_args_list[-1]
+            self.assertEqual(unit_call.args[2], PortalOption("Gruppo G1", "Gruppo G1"))
+            self.assertTrue(unit_call.kwargs["allow_empty"])
+            self.assertEqual(
+                client._find_matching_expense.await_args.kwargs,
+                {"allow_missing_unit": True},
+            )
+            verified_expense = client._wait_for_matching_expense.await_args.args[1]
+            self.assertIsNone(verified_expense.unit)
+            save.click.assert_awaited_once()
+
     def make_client(self, root: Path) -> PlaywrightBilancioClient:
         return PlaywrightBilancioClient(
             base_url="https://bilancio.agesci.it/login",
@@ -528,7 +575,7 @@ class PlaywrightBilancioClientTests(unittest.IsolatedAsyncioTestCase):
             async def open_ledger(_page, _account):
                 events.append("ledger")
 
-            async def find_existing(_page, _expense):
+            async def find_existing(_page, _expense, **_kwargs):
                 events.append("find_existing")
                 return False
 
@@ -541,8 +588,9 @@ class PlaywrightBilancioClientTests(unittest.IsolatedAsyncioTestCase):
             async def select_voice(_page, _voice):
                 events.append("accounting_voice")
 
-            async def select_dropdown(page, selector_key, option, direction=None):
+            async def select_dropdown(page, selector_key, option, direction=None, **_kwargs):
                 events.append(selector_key)
+                return option
 
             client._with_page = AsyncMock(side_effect=with_page)
             client._open_account_ledger = AsyncMock(side_effect=open_ledger)
@@ -632,6 +680,38 @@ class PlaywrightBilancioClientTests(unittest.IsolatedAsyncioTestCase):
                 [option.label for option in options],
                 ["A.2 Oneri e servizi bancari"],
             )
+            self.assertEqual(dropdown.click_count, 2)
+            self.assertFalse(option_list.visible)
+
+    async def test_empty_unit_list_is_closed_and_left_blank(self) -> None:
+        class Counted:
+            def __init__(self, count: int) -> None:
+                self._count = count
+
+            async def count(self) -> int:
+                return self._count
+
+            def filter(self, **kwargs: object) -> "Counted":
+                return self
+
+        class EmptyList(FakeDropdownOptionList):
+            def get_by_role(self, role: str, **kwargs: object) -> Counted:
+                return Counted(1 if role == "listitem" else 0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            client = self.make_client(Path(directory))
+            option_list = EmptyList([])
+            dropdown = FakeDropdownLocator(option_list)
+            client._dropdown_locator = Mock(return_value=dropdown)
+
+            selected = await client._select_dropdown(
+                FakeDropdownPage(option_list),
+                "unit",
+                PortalOption("Gruppo G1", "Gruppo G1"),
+                allow_empty=True,
+            )
+
+            self.assertIsNone(selected)
             self.assertEqual(dropdown.click_count, 2)
             self.assertFalse(option_list.visible)
 

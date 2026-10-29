@@ -63,11 +63,13 @@ Il bot legge token e ID dal file `.env`; non inviare quel file o le sue credenzi
 
 ### Prova manuale AGESCI senza ricevuta
 
-All'avvio il bot registra il menu dei comandi Telegram: scrivendo `/` compaiono i suggerimenti. Invia `/start` per visualizzare anche la tastiera rapida e, per l'amministratore, i comandi riservati. Il messaggio iniziale indica se la modalità è simulata o reale.
+All'avvio il bot registra il menu dei comandi Telegram: scrivendo `/` compaiono i suggerimenti. Invia `/start` per visualizzare la tastiera rapida. Gli altri utenti vedono solo i comandi di uso quotidiano; l'amministratore riceve anche i comandi riservati e l'indicazione della modalità, simulata o reale. Anche `/help` mostra i comandi riservati solo all'amministratore.
 
-Le casse e le tipologie `Voci Scout` vengono lette dal portale in sottofondo circa 10 secondi dopo l'avvio del bot e di nuovo ogni notte alle 02:30 UTC. Restano in memoria per 26 ore, così durante la giornata i menu si aprono senza attendere il browser. La cache distingue anno scout, cassa, entrata/uscita, voce, tipologia e unità, così non mescola elenchi dipendenti. Se scegli un menu mentre la lettura iniziale è ancora in corso, il bot mostra un messaggio di attesa e completa la scelta appena possibile. Usa `/aggiornaopzioni` (amministratore) per svuotare la cache e rileggerla subito in sottofondo; se un menu era già aperto, annulla e ricomincia. Il salvataggio e la verifica nel portale restano sempre operazioni reali di browser, anche quando i menu provengono dalla cache.
+Le casse e le tipologie `Voci Scout` vengono lette dal portale in sottofondo circa 10 secondi dopo l'avvio del bot e di nuovo ogni notte alle 02:30 UTC. Restano in memoria per 26 ore, così durante la giornata i menu si aprono senza attendere il browser. La cache distingue anno scout, cassa, entrata/uscita, voce, tipologia e unità, così non mescola elenchi dipendenti. Se scegli un menu mentre la lettura iniziale è ancora in corso, il bot mostra un messaggio di attesa e completa la scelta appena possibile. Usa `/aggiornaopzioni` (amministratore) per rileggere subito casse e tipologie: al termine il bot ti scrive quante casse ha letto e quante tipologie di entrata e di uscita ha trovato per ciascuna. Il salvataggio e la verifica nel portale restano sempre operazioni reali di browser, anche quando i menu provengono dalla cache.
 
-L’amministratore può usare `/testspesa` per inserire data, descrizione e importo direttamente in Telegram, senza scontrino e senza AI. Il bot chiede cassa e direzione, usa `Voci Scout` e mostra le tipologie disponibili per quella scelta. Imposta l’unità predefinita associata alla cassa, se nota; lascia la categoria vuota. Prima di un inserimento reale mostra un riepilogo e chiede conferma.
+Nel passaggio delle tipologie il bot mostra prima le 6 più usate per quella cassa e direzione; in fondo c'è il pulsante **➕ Altre tipologie** con quelle mancanti. All'inizio, quando non ci sono ancora spese registrate, mostra le prime 6 nell'ordine del portale.
+
+L’amministratore può usare `/testspesa` per una prova senza scontrino e senza AI. Il bot propone subito valori predefiniti: data di oggi, descrizione «Prova Telegram» e importo 0,10 €. Puoi cambiarli con i pulsanti **📅 Data**, **💶 Importo** e **✏️ Descrizione**, poi premi **✅ Conferma**. Il bot chiede cassa e direzione, usa `Voci Scout` e mostra le tipologie disponibili per quella scelta. Imposta l’unità predefinita associata alla cassa; se per quell'anno scout il portale non offre alcuna unità («No results»), lascia l'unità vuota. Lascia la categoria vuota. Prima di un inserimento reale mostra un riepilogo e chiede conferma.
 
 - Con `DRY_RUN=true`, il portale non salva la spesa.
 - Con `DRY_RUN=false`, il pulsante finale inserisce davvero la spesa nel portale.
@@ -78,6 +80,18 @@ L’amministratore può usare `/testspesa` per inserire data, descrizione e impo
 - Se una conversazione iniziata prima di un aggiornamento mostra ancora i vecchi pulsanti per unità o categoria, usa `/annulla` e ricomincia con `/testspesa`.
 
 Per la prima prova usa una descrizione chiaramente riconoscibile e controlla con attenzione anno, conto, direzione, tipologia, unità predefinita e importo. Non condividere i dati della spesa in chat con altre persone.
+
+### Ultime spese e pulizia
+
+`/ultime` mostra le ultime 10 spese con lo stato: ✅ registrata, 🧪 simulata, ⏳ in coda (non ancora registrata) oppure ❌ non registrata. Le operazioni annullate o mai confermate non compaiono.
+
+`/pulisci` (solo amministratore) svuota la memoria del bot. Cancella la coda, l'elenco di `/ultime`, le operazioni aperte, i file temporanei, i log e la diagnostica. Non cancella nulla nel portale AGESCI e non tocca le ricevute archiviate.
+
+1. Su Telegram invia `/pulisci`.
+2. Leggi l'avviso e premi **Sì, pulisci tutto**; premi **No** per lasciare tutto com'è.
+3. Il bot risponde con il numero di spese e di file eliminati.
+
+Dopo la pulizia la classifica delle tipologie più usate riparte da zero.
 
 ## Verifiche automatiche sul PC
 

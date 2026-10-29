@@ -9,6 +9,8 @@ from pathlib import Path
 from telegram import (
     BotCommand,
     BotCommandScopeChat,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     MenuButtonCommands,
     ReplyKeyboardMarkup,
     Update,
@@ -41,17 +43,22 @@ from storage.pending import PendingReceiptStore
 
 logger = logging.getLogger(__name__)
 
-HELP_TEXT = (
+USER_HELP_TEXT = (
     "📋 Comandi disponibili\n\n"
     "/start - inizia a usare il bot\n"
     "/help - mostra questo aiuto\n"
     "/ultime - mostra le ultime 10 spese\n"
     "/annulla - annulla l’operazione in corso\n"
     "/coda - mostra le spese in attesa o da verificare\n"
-    "/riprova - ritenta le spese in coda\n"
-    "/testspesa - inserisce una spesa manuale (solo amministratore)\n"
-    "/testbilancio - controlla il portale (solo amministratore)"
-    "\n/aggiornaopzioni - aggiorna le scelte AGESCI (solo amministratore)"
+    "/riprova - ritenta le spese in coda"
+)
+ADMIN_HELP_TEXT = (
+    f"{USER_HELP_TEXT}\n\n"
+    "🔧 Amministratore\n"
+    "/testspesa - prova di inserimento con valori predefiniti\n"
+    "/testbilancio - controlla il portale\n"
+    "/aggiornaopzioni - rilegge casse e tipologie AGESCI\n"
+    "/pulisci - svuota coda, ultime spese e log"
 )
 
 USER_COMMANDS = (
@@ -67,6 +74,7 @@ ADMIN_COMMANDS = (
     BotCommand("testspesa", "Inserisci una spesa senza foto"),
     BotCommand("testbilancio", "Verifica il collegamento AGESCI"),
     BotCommand("aggiornaopzioni", "Rileggi casse e tipologie dal portale"),
+    BotCommand("pulisci", "Svuota coda, ultime spese e log"),
 )
 
 
@@ -139,6 +147,10 @@ def create_application(
     application.add_handler(CommandHandler("testspesa", manual_expense_command))
     application.add_handler(CommandHandler("testbilancio", test_bilancio_command))
     application.add_handler(CommandHandler("aggiornaopzioni", refresh_options_command))
+    application.add_handler(CommandHandler("pulisci", clean_command))
+    application.add_handler(
+        CallbackQueryHandler(clean_callback, pattern=r"^admin:clean:")
+    )
     application.add_handler(
         MessageHandler(
             filters.PHOTO | filters.Document.PDF,
@@ -175,32 +187,51 @@ async def start_command(
         return
     settings: Settings = context.application.bot_data["settings"]
     rows = [["/ultime", "/coda"], ["/help", "/annulla"]]
-    if update.effective_user is not None and update.effective_user.id == settings.admin_user_id:
+    if _is_admin(update, settings):
         rows.insert(0, ["/testspesa", "/testbilancio"])
+        rows.append(["/aggiornaopzioni", "/pulisci"])
         await context.bot.set_my_commands(
             ADMIN_COMMANDS,
             scope=BotCommandScopeChat(chat_id=settings.admin_user_id),
         )
-    mode = "🧪 Modalità SIMULATA: nessun salvataggio sul portale." if settings.dry_run else (
-        "⚠️ Modalità REALE: la conferma finale può salvare sul portale."
-    )
+        mode = "🧪 Modalità SIMULATA: nessun salvataggio sul portale." if settings.dry_run else (
+            "⚠️ Modalità REALE: la conferma finale salva sul portale."
+        )
+        text = (
+            "🧾 Archivio spese · amministratore\n\n"
+            "📷 Inviami la foto o il PDF di uno scontrino.\n"
+            "✍️ /testspesa prepara una prova con valori predefiniti da modificare.\n"
+            "🔄 /aggiornaopzioni rilegge casse e tipologie dal portale.\n"
+            "🧹 /pulisci svuota coda, ultime spese e log.\n\n"
+            f"{mode}"
+        )
+    else:
+        text = (
+            "🧾 Benvenuto nel tuo archivio spese!\n\n"
+            "📷 Inviami la foto o il PDF di uno scontrino.\n"
+            "Prima di procedere ti mostrerò i dati da controllare.\n\n"
+            "Scegli un comando qui sotto oppure scrivi / per aprire i suggerimenti."
+        )
     await update.message.reply_text(
-        "🧾 Benvenuto nel tuo archivio spese!\n\n"
-        "📷 Inviami la foto o il PDF di uno scontrino.\n"
-        "✍️ Per una spesa senza foto usa /testspesa (amministratore).\n"
-        "Prima di procedere ti mostrerò i dati da controllare.\n\n"
-        f"{mode}\n\n"
-        "Scegli un comando qui sotto oppure scrivi / per aprire i suggerimenti.",
+        text,
         reply_markup=ReplyKeyboardMarkup(rows, resize_keyboard=True),
     )
+
+
+def _is_admin(update: Update, settings: Settings) -> bool:
+    user = update.effective_user
+    return user is not None and user.id == settings.admin_user_id
 
 
 async def help_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    if update.message is not None:
-        await update.message.reply_text(HELP_TEXT)
+    if update.message is None:
+        return
+    settings: Settings | None = context.application.bot_data.get("settings")
+    is_admin = settings is not None and _is_admin(update, settings)
+    await update.message.reply_text(ADMIN_HELP_TEXT if is_admin else USER_HELP_TEXT)
 
 
 async def cancel_command(
@@ -248,7 +279,15 @@ async def latest_expenses_command(
     if update.message is None or update.effective_user is None:
         return
     database: Database = context.application.bot_data["database"]
-    expenses = database.list_recent_expenses(update.effective_user.id, limit=10)
+    expenses = [
+        expense
+        for expense in await asyncio.to_thread(
+            database.list_recent_expenses,
+            update.effective_user.id,
+            30,
+        )
+        if expense.status in _STATUS_LABELS
+    ][:10]
     if not expenses:
         await update.message.reply_text("Non ci sono ancora spese registrate.")
         return
@@ -339,12 +378,11 @@ async def refresh_options_command(
             preload_options_job,
             when=1,
             name="portal-options-manual-preload",
+            data={"notify_chat_id": update.effective_user.id},
         )
     await update.message.reply_text(
-        "🔄 Cache svuotata. Rileggo casse e tipologie dal portale in "
-        "sottofondo: per qualche minuto le scelte potranno essere più lente. "
-        "Nessuna spesa è stata inserita.\n"
-        "Se avevi già aperto un elenco, usa /annulla e ricomincia."
+        "🔄 Rileggo casse e tipologie dal portale in sottofondo. "
+        "Ti scrivo appena ho finito. Nessuna spesa viene inserita."
     )
 
 
@@ -402,30 +440,150 @@ async def preload_options_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     data = getattr(job, "data", None)
     if isinstance(data, dict) and data.get("refresh") is True:
         await client.clear_options_cache()
-    await preload_portal_options(client)
+    summary = await preload_portal_options(client)
+    chat_id = data.get("notify_chat_id") if isinstance(data, dict) else None
+    if isinstance(chat_id, int):
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=_format_preload_summary(summary),
+            )
+        except TelegramError:
+            logger.error("Could not send options refresh summary")
 
 
-async def preload_portal_options(client: BilancioClient) -> int:
+async def preload_portal_options(
+    client: BilancioClient,
+) -> list[tuple[str, TransactionDirection, int | None]] | None:
     """Read accounts and Voci Scout types so Telegram menus open from cache."""
     try:
         accounts = await client.list_accounts()
     except BilancioClientError as error:
         logger.warning("Portal options preload failed: %s", type(error).__name__)
-        return 0
-    loaded = 0
+        return None
+    summary: list[tuple[str, TransactionDirection, int | None]] = []
     for account in accounts:
         for direction in TransactionDirection:
             try:
-                await client.list_transaction_types(account, direction)
+                types = await client.list_transaction_types(account, direction)
             except BilancioClientError as error:
                 logger.warning(
                     "Portal transaction types preload failed: %s",
                     type(error).__name__,
                 )
+                summary.append((account.label, direction, None))
                 continue
-            loaded += 1
-    logger.info("Portal options preloaded for %d account directions", loaded)
-    return loaded
+            summary.append((account.label, direction, len(types)))
+    logger.info(
+        "Portal options preloaded for %d account directions",
+        sum(1 for item in summary if item[2] is not None),
+    )
+    return summary
+
+
+def _format_preload_summary(
+    summary: list[tuple[str, TransactionDirection, int | None]] | None,
+) -> str:
+    if summary is None:
+        return (
+            "❌ Aggiornamento opzioni non riuscito: non riesco a leggere le casse "
+            "dal portale. Riprova più tardi."
+        )
+    accounts: dict[str, dict[TransactionDirection, int | None]] = {}
+    for label, direction, count in summary:
+        accounts.setdefault(label, {})[direction] = count
+
+    def describe(count: int | None) -> str:
+        return "errore" if count is None else str(count)
+
+    lines = [f"✅ Opzioni aggiornate: {len(accounts)} casse."]
+    for label, directions in accounts.items():
+        lines.append(
+            f"• {label}: entrate {describe(directions.get(TransactionDirection.INCOME))}, "
+            f"uscite {describe(directions.get(TransactionDirection.EXPENSE))}"
+        )
+    if any(count is None for _, _, count in summary):
+        lines.append("Alcune tipologie non sono state lette: verranno rilette alla scelta.")
+    return "\n".join(lines)
+
+
+async def clean_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None:
+        return
+    settings: Settings = context.application.bot_data["settings"]
+    if not _is_admin(update, settings):
+        await update.message.reply_text("Comando riservato all’amministratore.")
+        return
+    await update.message.reply_text(
+        "🧹 Vuoi svuotare coda, ultime spese, operazioni aperte, log e "
+        "diagnostica del bot?\n"
+        "Non cancello nulla nel portale AGESCI e non tocco le ricevute archiviate.",
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("Sì, pulisci tutto", callback_data="admin:clean:yes")],
+                [InlineKeyboardButton("No", callback_data="admin:clean:no")],
+            ]
+        ),
+    )
+
+
+async def clean_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    query = update.callback_query
+    if query is None:
+        return
+    await query.answer()
+    settings: Settings = context.application.bot_data["settings"]
+    if not _is_admin(update, settings):
+        return
+    if query.data != "admin:clean:yes":
+        await query.edit_message_text("Pulizia annullata.")
+        return
+    database: Database = context.application.bot_data["database"]
+    counts = await asyncio.to_thread(database.clear_history)
+    data_path = Path(settings.data_path)
+    removed_files = await asyncio.to_thread(
+        _clear_runtime_files,
+        data_path / "pending",
+        data_path / "debug",
+    )
+    await asyncio.to_thread(_truncate_logs, data_path / "logs")
+    logger.info("Local history cleared by the administrator")
+    await query.edit_message_text(
+        "🧹 Pulizia completata.\n"
+        f"Spese eliminate: {counts['expenses']} (di cui in coda: {counts['retries']}).\n"
+        f"File temporanei e diagnostici eliminati: {removed_files}.\n"
+        "Log svuotati. Le ricevute archiviate e il portale non sono stati toccati."
+    )
+
+
+def _clear_runtime_files(*directories: Path) -> int:
+    removed = 0
+    for directory in directories:
+        if not directory.is_dir():
+            continue
+        for path in directory.rglob("*"):
+            if path.is_file():
+                path.unlink()
+                removed += 1
+    return removed
+
+
+def _truncate_logs(log_directory: Path) -> None:
+    if not log_directory.is_dir():
+        return
+    for path in log_directory.glob("bot.log*"):
+        if path.name == "bot.log":
+            # The rotating handler keeps this file open, so empty it in place.
+            with path.open("r+", encoding="utf-8") as handle:
+                handle.truncate(0)
+        elif path.is_file():
+            path.unlink()
 
 
 async def telegram_error_handler(
@@ -451,11 +609,24 @@ def _format_recent_expenses(expenses: Sequence[StoredExpense]) -> str:
         merchant = _safe_field(payload.get("merchant"))
         amount = _safe_field(payload.get("total_amount"))
         currency = _safe_field(payload.get("currency"))
-        account = _safe_field(payload.get("account"))
+        account_data = payload.get("account")
+        account = _safe_field(
+            account_data.get("label") if isinstance(account_data, dict) else account_data
+        )
+        status = _STATUS_LABELS.get(expense.status, expense.status)
         lines.append(
-            f"{transaction_date} · {merchant} · {amount} {currency} · {account}"
+            f"{status} · {transaction_date} · {merchant} · {amount} {currency} · {account}"
         )
     return "\n".join(lines)
+
+
+_STATUS_LABELS = {
+    "submitted": "✅ registrata",
+    "dry_run": "🧪 simulata",
+    "queued": "⏳ in coda, non registrata",
+    "failed": "❌ non registrata",
+    "confirmed": "⏳ in lavorazione",
+}
 
 
 def _safe_field(value: object) -> str:

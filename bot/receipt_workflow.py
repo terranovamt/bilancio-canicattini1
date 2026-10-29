@@ -40,6 +40,11 @@ _FIELD_PROMPTS = {
     "total_amount": "Non riesco a leggere l’importo totale. Scrivilo, per esempio 12,50.",
 }
 _EDIT_FIELDS = {"date", "merchant", "total_amount", "suggested_category"}
+_MANUAL_EDIT_PROMPTS = {
+    "date": "📅 Scrivi la data dell’operazione (GG/MM/AAAA).",
+    "merchant": "✏️ Scrivi la descrizione dell’operazione.",
+    "total_amount": "💶 Scrivi l’importo, per esempio 12,50.",
+}
 _CALLBACK_STATES = {
     "confirm": {"awaiting_confirmation"},
     "edit": {"awaiting_confirmation"},
@@ -53,9 +58,13 @@ _CALLBACK_STATES = {
         "awaiting_category",
     },
     "no_category": {"awaiting_category"},
+    "more_types": {"awaiting_transaction_type"},
 }
 _STALE_CHOICE_TEXT = "Questa scelta non è più attiva."
 _BUSY_TEXT = "⏳ Sto ancora lavorando, attendi."
+_MANUAL_DEFAULT_DESCRIPTION = "Prova Telegram"
+_MANUAL_DEFAULT_AMOUNT = "0.10"
+_TOP_TYPES_COUNT = 6
 
 
 class ReceiptAnalyzer(Protocol):
@@ -118,29 +127,28 @@ class ReceiptWorkflow:
             await message.reply_text("Ho annullato la prova precedente rimasta aperta.")
 
         expense_id = uuid.uuid4().hex
+        payload: dict[str, object] = {
+            "manual_entry": True,
+            "date": date.today().isoformat(),
+            "merchant": _MANUAL_DEFAULT_DESCRIPTION,
+            "total_amount": _MANUAL_DEFAULT_AMOUNT,
+            "currency": "EUR",
+            "confidence": 1.0,
+        }
         await asyncio.to_thread(
             self._database.create_manual_expense,
             expense_id=expense_id,
             telegram_user_id=user.id,
-            payload={"manual_entry": True},
+            payload=payload,
         )
         await self._save_state(
             user.id,
-            "manual_entry_data",
+            "awaiting_confirmation",
             {"expense_id": expense_id},
         )
-        mode_notice = (
-            "La modalità attuale è SIMULATA: il portale non salverà la spesa."
-            if self._settings.dry_run
-            else "La modalità attuale è REALE: dopo le scelte ti chiederò un’ultima "
-            "conferma prima di inserirla nel portale."
-        )
         await message.reply_text(
-            "✍️ Spesa manuale · senza foto e senza AI\n\n"
-            "1. Scrivi data, descrizione e importo separati da |.\n"
-            "Esempio: 26/10/2026 | Prova Telegram | 1,00\n"
-            f"{mode_notice}\n"
-            "Per interrompere in qualsiasi momento usa /annulla."
+            self._manual_confirmation_text(payload),
+            reply_markup=self._manual_confirmation_keyboard(),
         )
 
     async def receive_receipt(
@@ -287,7 +295,7 @@ class ReceiptWorkflow:
             await self._save_state(user.id, "awaiting_confirmation", state_data)
             await message.reply_text(
                 self._manual_confirmation_text(updated),
-                reply_markup=self._confirmation_keyboard(),
+                reply_markup=self._manual_confirmation_keyboard(),
             )
             return
         if state == "awaiting_receipt_data":
@@ -350,7 +358,7 @@ class ReceiptWorkflow:
         if updated.get("manual_entry") is True:
             await message.reply_text(
                 self._manual_confirmation_text(updated),
-                reply_markup=self._confirmation_keyboard(),
+                reply_markup=self._manual_confirmation_keyboard(),
             )
             return
         await message.reply_text(
@@ -435,7 +443,12 @@ class ReceiptWorkflow:
                 "awaiting_edit",
                 {"expense_id": expense_id, "edit_field": field_name},
             )
-            await query.edit_message_text(self._prompt_for(field_name))
+            await query.edit_message_text(
+                _MANUAL_EDIT_PROMPTS[field_name]
+                if expense.payload.get("manual_entry") is True
+                and field_name in _MANUAL_EDIT_PROMPTS
+                else self._prompt_for(field_name)
+            )
         elif value == "confirm":
             if self._bilancio is None:
                 await query.edit_message_text(
@@ -500,6 +513,8 @@ class ReceiptWorkflow:
                 query,
                 context,
             )
+        elif value == "more_types":
+            await self._show_more_types(state_data, query)
         elif value == "no_category":
             await self._complete_portal_selection(
                 update,
@@ -717,10 +732,70 @@ class ReceiptWorkflow:
             accounting_voice=accounting_voice,
             options=self._serialize_options(options),
         )
+        usage = await asyncio.to_thread(
+            self._database.transaction_type_usage,
+            account.label,
+            direction.value,
+        )
+        top_indices = self._top_type_indices(options, usage)
+        state_data["top_indices"] = top_indices
         await self._save_state(user_id, "awaiting_transaction_type", state_data)
+        hidden = len(options) - len(top_indices)
+        title = (
+            "🏷️ 3/3 · Scegli la tipologia (le più usate):"
+            if hidden
+            else "🏷️ 3/3 · Scegli la tipologia:"
+        )
+        extra_rows = (
+            [[InlineKeyboardButton(
+                f"➕ Altre tipologie ({hidden})",
+                callback_data="receipt:more_types",
+            )]]
+            if hidden
+            else []
+        )
         await query.edit_message_text(
-            "🏷️ 3/3 · Scegli la tipologia:",
-            reply_markup=self._option_keyboard(options),
+            title,
+            reply_markup=self._option_keyboard(
+                options,
+                indices=top_indices,
+                extra_rows=extra_rows,
+            ),
+        )
+
+    @staticmethod
+    def _top_type_indices(
+        options: list[PortalOption] | tuple[PortalOption, ...],
+        usage: dict[str, int],
+    ) -> list[int]:
+        if len(options) <= _TOP_TYPES_COUNT + 1:
+            return list(range(len(options)))
+        used = sorted(
+            (index for index, option in enumerate(options) if usage.get(option.label)),
+            key=lambda index: (-usage[options[index].label], index),
+        )[:_TOP_TYPES_COUNT]
+        for index in range(len(options)):
+            if len(used) >= _TOP_TYPES_COUNT:
+                break
+            if index not in used:
+                used.append(index)
+        return used
+
+    async def _show_more_types(
+        self,
+        state_data: dict[str, object],
+        query: CallbackQuery,
+    ) -> None:
+        options = self._deserialize_options(state_data.get("options"))
+        top = state_data.get("top_indices")
+        shown = set(top) if isinstance(top, list) else set()
+        await query.edit_message_text(
+            "🏷️ 3/3 · Altre tipologie:",
+            reply_markup=self._option_keyboard(
+                options,
+                indices=[index for index in range(len(options)) if index not in shown],
+                extra_rows=[[InlineKeyboardButton("Annulla", callback_data="receipt:cancel")]],
+            ),
         )
 
     async def _select_portal_option(
@@ -1224,15 +1299,40 @@ class ReceiptWorkflow:
         cls._receipt_from_payload(updated)
         return updated
 
-    @staticmethod
-    def _manual_confirmation_text(payload: dict[str, object]) -> str:
+    def _manual_confirmation_text(self, payload: dict[str, object]) -> str:
+        transaction_date = payload["date"]
+        if isinstance(transaction_date, str):
+            try:
+                transaction_date = date.fromisoformat(transaction_date).strftime("%d/%m/%Y")
+            except ValueError:
+                pass
+        amount = str(payload["total_amount"]).replace(".", ",")
+        mode = (
+            "🧪 Modalità SIMULATA: il portale non salverà nulla."
+            if self._settings.dry_run
+            else "⚠️ Modalità REALE: prima dell’inserimento ti chiederò un’ultima conferma."
+        )
         return (
-            "Controlla la spesa manuale:\n"
-            f"Data: {payload['date']}\n"
+            "✍️ Spesa manuale · senza foto e senza AI\n\n"
+            f"Data: {transaction_date}\n"
             f"Descrizione: {payload['merchant']}\n"
-            f"Importo: {payload['total_amount']} EUR\n\n"
-            "Non verrà usata l’AI e non verrà archiviato uno scontrino. "
-            "Dopo questa conferma sceglierai le opzioni del portale."
+            f"Importo: {amount} EUR\n\n"
+            "Premi Conferma per usare questi valori oppure modificali con i pulsanti.\n"
+            f"{mode}"
+        )
+
+    @staticmethod
+    def _manual_confirmation_keyboard() -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("✅ Conferma", callback_data="receipt:confirm")],
+                [
+                    InlineKeyboardButton("📅 Data", callback_data="receipt:edit:date"),
+                    InlineKeyboardButton("💶 Importo", callback_data="receipt:edit:total_amount"),
+                ],
+                [InlineKeyboardButton("✏️ Descrizione", callback_data="receipt:edit:merchant")],
+                [InlineKeyboardButton("Annulla", callback_data="receipt:cancel")],
+            ]
         )
 
     def _manual_final_confirmation_text(
@@ -1322,11 +1422,15 @@ class ReceiptWorkflow:
         options: list[PortalOption] | tuple[PortalOption, ...],
         *,
         include_no_category: bool = False,
+        indices: list[int] | None = None,
+        extra_rows: list[list[InlineKeyboardButton]] | None = None,
     ) -> InlineKeyboardMarkup:
+        selected = indices if indices is not None else range(len(options))
         rows = [
-            [InlineKeyboardButton(option.label[:60], callback_data=f"receipt:choose:{index}")]
-            for index, option in enumerate(options)
+            [InlineKeyboardButton(options[index].label[:60], callback_data=f"receipt:choose:{index}")]
+            for index in selected
         ]
+        rows.extend(extra_rows or [])
         if include_no_category:
             rows.append(
                 [

@@ -124,6 +124,45 @@ class DatabaseTests(unittest.TestCase):
 
         self.assertEqual([expense.expense_id for expense in recent], ["expense-a"])
 
+    def test_transaction_type_usage_counts_completed_entries_only(self) -> None:
+        payload = {
+            "account": {"value": "a", "label": "Cassa Co.ca"},
+            "direction": "uscita",
+            "transaction_type": {"value": "t", "label": "Tipo A"},
+        }
+        for index, status in enumerate(("submitted", "dry_run", "queued")):
+            self.database.create_manual_expense(
+                expense_id=f"manual-{index}", telegram_user_id=12345, payload=payload
+            )
+            self.database.update_expense_status(f"manual-{index}", status)
+        self.database.create_manual_expense(
+            expense_id="other",
+            telegram_user_id=12345,
+            payload={**payload, "direction": "entrata"},
+        )
+        self.database.update_expense_status("other", "submitted")
+
+        self.assertEqual(
+            self.database.transaction_type_usage("Cassa Co.ca", "uscita"),
+            {"Tipo A": 2},
+        )
+
+    def test_clear_history_removes_expenses_queue_and_states(self) -> None:
+        self.create_expense()
+        self.database.enqueue_retry(
+            "expense-1",
+            next_attempt_at="2026-10-26T10:00:00+00:00",
+            error_code="portal_timeout",
+        )
+        self.database.save_conversation_state(12345, "awaiting", {"expense_id": "expense-1"})
+
+        counts = self.database.clear_history()
+
+        self.assertEqual(counts, {"expenses": 1, "retries": 1})
+        self.assertEqual(self.database.list_recent_expenses(12345), [])
+        self.assertIsNone(self.database.get_conversation_state(12345))
+        self.assertFalse(self.database.contains_file_hash("a" * 64))
+
     def test_invalid_expense_status_is_rejected(self) -> None:
         self.create_expense()
 

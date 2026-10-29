@@ -8,13 +8,18 @@ from telegram.ext import ApplicationHandlerStop
 
 from bot.application import (
     ADMIN_COMMANDS,
-    HELP_TEXT,
+    ADMIN_HELP_TEXT,
     USER_COMMANDS,
+    USER_HELP_TEXT,
+    _format_preload_summary,
     _format_recent_expenses,
     authorize_update,
     cancel_command,
+    clean_callback,
+    clean_command,
     configure_bot_menu,
     help_command,
+    latest_expenses_command,
     preload_options_job,
     preload_portal_options,
     queue_command,
@@ -92,6 +97,9 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(
             "/testspesa", [button.text for row in keyboard.keyboard for button in row]
         )
+        text = message.reply_text.await_args.args[0]
+        for admin_detail in ("/testspesa", "/pulisci", "/aggiornaopzioni", "SIMULATA", "REALE"):
+            self.assertNotIn(admin_detail, text)
 
     async def test_refresh_options_invalidates_cache_without_submission(self) -> None:
         client = SimpleNamespace(
@@ -107,6 +115,33 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         client.clear_options_cache.assert_awaited_once()
         client.create_expense.assert_not_awaited()
         context.application.job_queue.run_once.assert_called_once()
+        self.assertEqual(
+            context.application.job_queue.run_once.call_args.kwargs["data"],
+            {"notify_chat_id": 12345},
+        )
+        self.assertIn("Ti scrivo appena ho finito", message.reply_text.await_args.args[0])
+
+    async def test_manual_refresh_reports_loaded_options(self) -> None:
+        accounts = [PortalOption("a", "Cassa Co.ca")]
+        client = SimpleNamespace(
+            list_accounts=AsyncMock(return_value=accounts),
+            list_transaction_types=AsyncMock(
+                side_effect=[[PortalOption("t", "Tipo")] * 4, BilancioClientError("x")]
+            ),
+        )
+        context = self.make_context(bilancio_client=client)
+        context.job = SimpleNamespace(data={"notify_chat_id": 12345})
+        context.bot = SimpleNamespace(send_message=AsyncMock())
+
+        await preload_options_job(context)
+
+        sent = context.bot.send_message.await_args.kwargs
+        self.assertEqual(sent["chat_id"], 12345)
+        self.assertIn("Opzioni aggiornate: 1 casse", sent["text"])
+        self.assertIn("Cassa Co.ca: entrate 4, uscite errore", sent["text"])
+
+    def test_preload_summary_reports_unreadable_accounts(self) -> None:
+        self.assertIn("non riuscito", _format_preload_summary(None))
 
     async def test_preload_reads_every_account_direction_without_submission(self) -> None:
         accounts = [PortalOption("a", "Cassa Co.ca"), PortalOption("b", "Cassa EG")]
@@ -118,9 +153,9 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
             create_expense=AsyncMock(),
         )
 
-        loaded = await preload_portal_options(client)
+        summary = await preload_portal_options(client)
 
-        self.assertEqual(loaded, 3)
+        self.assertEqual(sum(1 for item in summary if item[2] is not None), 3)
         self.assertEqual(client.list_transaction_types.await_count, 4)
         requested = {
             (call.args[0].label, call.args[1])
@@ -158,14 +193,110 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         )
         client.clear_options_cache.assert_not_awaited()
 
-    async def test_help_lists_registered_commands_in_italian(self) -> None:
+    async def test_help_depends_on_role(self) -> None:
+        context = self.make_context(settings=make_settings())
+        for user_id, expected in ((12345, ADMIN_HELP_TEXT), (67890, USER_HELP_TEXT)):
+            message = SimpleNamespace(reply_text=AsyncMock())
+            await help_command(
+                SimpleNamespace(message=message, effective_user=SimpleNamespace(id=user_id)),
+                context,
+            )
+            self.assertEqual(message.reply_text.await_args.args[0], expected)
+        self.assertIn("/ultime", USER_HELP_TEXT)
+        for command in ("/testspesa", "/pulisci", "/aggiornaopzioni", "/testbilancio"):
+            self.assertNotIn(command, USER_HELP_TEXT)
+            self.assertIn(command, ADMIN_HELP_TEXT)
+
+    async def test_clean_is_admin_only(self) -> None:
         message = SimpleNamespace(reply_text=AsyncMock())
+        await clean_command(
+            SimpleNamespace(message=message, effective_user=SimpleNamespace(id=67890)),
+            self.make_context(settings=make_settings()),
+        )
+        self.assertEqual(
+            message.reply_text.await_args.args[0],
+            "Comando riservato all’amministratore.",
+        )
 
-        await help_command(SimpleNamespace(message=message), SimpleNamespace())
+    async def test_clean_asks_confirmation_then_clears_local_history(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = Settings.from_env(
+                {
+                    "BOT_TOKEN": "test-token-placeholder",
+                    "ALLOWED_USER_IDS": "12345",
+                    "ADMIN_USER_ID": "12345",
+                    "DATA_PATH": str(root / "data"),
+                    "STORAGE_PATH": str(root / "archive"),
+                }
+            )
+            database = Database(root / "bot.sqlite3")
+            database.initialize()
+            database.create_manual_expense(
+                expense_id="e1", telegram_user_id=12345, payload={"merchant": "x"}
+            )
+            for relative in ("pending/r.jpg", "debug/d.html", "logs/bot.log.1"):
+                (root / "data" / relative).parent.mkdir(parents=True, exist_ok=True)
+                (root / "data" / relative).write_text("x", encoding="utf-8")
+            (root / "data" / "logs" / "bot.log").write_text("old log", encoding="utf-8")
+            (root / "archive").mkdir()
+            (root / "archive" / "receipt.jpg").write_text("keep", encoding="utf-8")
+            context = self.make_context(settings=settings, database=database)
+            user = SimpleNamespace(id=12345)
 
-        self.assertEqual(message.reply_text.await_args.args[0], HELP_TEXT)
-        self.assertIn("/ultime", HELP_TEXT)
-        self.assertIn("/testspesa", HELP_TEXT)
+            message = SimpleNamespace(reply_text=AsyncMock())
+            await clean_command(SimpleNamespace(message=message, effective_user=user), context)
+            markup = message.reply_text.await_args.kwargs["reply_markup"]
+            self.assertEqual(markup.inline_keyboard[0][0].callback_data, "admin:clean:yes")
+            self.assertIsNotNone(database.get_expense("e1"))
+
+            query = SimpleNamespace(
+                data="admin:clean:yes", answer=AsyncMock(), edit_message_text=AsyncMock()
+            )
+            await clean_callback(SimpleNamespace(callback_query=query, effective_user=user), context)
+
+            self.assertIsNone(database.get_expense("e1"))
+            self.assertFalse((root / "data" / "pending" / "r.jpg").exists())
+            self.assertFalse((root / "data" / "debug" / "d.html").exists())
+            self.assertFalse((root / "data" / "logs" / "bot.log.1").exists())
+            self.assertEqual((root / "data" / "logs" / "bot.log").read_text(encoding="utf-8"), "")
+            self.assertTrue((root / "archive" / "receipt.jpg").exists())
+            self.assertIn("Spese eliminate: 1", query.edit_message_text.await_args.args[0])
+
+    async def test_clean_can_be_declined(self) -> None:
+        database = Mock()
+        query = SimpleNamespace(
+            data="admin:clean:no", answer=AsyncMock(), edit_message_text=AsyncMock()
+        )
+        await clean_callback(
+            SimpleNamespace(callback_query=query, effective_user=SimpleNamespace(id=12345)),
+            self.make_context(settings=make_settings(), database=database),
+        )
+        database.clear_history.assert_not_called()
+        self.assertEqual(query.edit_message_text.await_args.args[0], "Pulizia annullata.")
+
+    async def test_latest_expenses_hide_unfinished_entries_and_show_status(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Database(Path(directory) / "bot.sqlite3")
+            database.initialize()
+            for expense_id, status in (("a", "submitted"), ("b", "cancelled"), ("c", "queued")):
+                database.create_manual_expense(
+                    expense_id=expense_id,
+                    telegram_user_id=12345,
+                    payload={"merchant": f"Spesa {expense_id}", "account": {"label": "Cassa Co.ca"}},
+                )
+                database.update_expense_status(expense_id, status)
+            message = SimpleNamespace(reply_text=AsyncMock())
+            await latest_expenses_command(
+                SimpleNamespace(message=message, effective_user=SimpleNamespace(id=12345)),
+                self.make_context(database=database),
+            )
+            text = message.reply_text.await_args.args[0]
+            self.assertIn("✅ registrata", text)
+            self.assertIn("⏳ in coda, non registrata", text)
+            self.assertNotIn("Spesa b", text)
+            self.assertIn("Cassa Co.ca", text)
+            self.assertNotIn("{", text)
 
     async def test_cancel_command_clears_saved_state(self) -> None:
         workflow = Mock()
