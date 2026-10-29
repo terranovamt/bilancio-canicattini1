@@ -6,33 +6,56 @@ from datetime import date
 from decimal import Decimal
 from typing import Mapping
 
-USER_START = (
+HOME_TEXT = (
     "👋 Ciao! Qui tieni in ordine le spese.\n\n"
-    "📷 Mandami la foto o il PDF di uno scontrino: lo leggo io e ti faccio "
-    "controllare i dati prima di salvare.\n\n"
-    "Cosa puoi fare:\n"
-    "• /ultime – le ultime spese\n"
-    "• /riepilogo – saldi delle casse\n"
-    "• /help – tutti i comandi"
+    "📷 Mandami una foto o un PDF dello scontrino, oppure scegli cosa fare "
+    "con i pulsanti qui sotto."
 )
-ADMIN_START = (
-    '👋 Ciao! Sei collegato come amministratore.\n\n📷 Mandami uno scontrino per registrare una spesa.\n✍️ /entrata – inserisci un’entrata senza ricevuta\n📊 /riepilogo – saldi delle casse\n\n{mode}\n\n{version}\n\nAltri strumenti: /help'
+HOME_BUTTON = "🏠 Menu principale"
+BACK_BUTTON = "⬅️ Indietro"
+MENU_HELP = (
+    "❓ Come funziona\n\n"
+    "📷 Nuovo scontrino: invia una foto o un PDF, controlla i dati e scegli "
+    "cassa e tipologia. Se non riesco a leggerlo, ti chiedo i dati a mano.\n\n"
+    "📊 Riepilogo: consulta i saldi delle casse.\n"
+    "📋 Ultime operazioni: controlla le tue registrazioni.\n"
+    "⏳ Operazioni in attesa: consulta gli elementi da riprovare o verificare.\n\n"
+    "Aprire il menu non annulla un inserimento in corso. Per interromperlo "
+    "premi «Annulla operazione»."
+)
+MENU_ADMIN_HELP = (
+    "\n\n✍️ Inserisci a mano: registra un’entrata o un’uscita senza foto.\n"
+    "💰 Nuova entrata: registra un’entrata senza foto.\n"
+    "⚠️ Queste operazioni salvano davvero, anche in modalità prova, "
+    "solo dopo la conferma finale «Salva davvero»."
+)
+MENU_RECEIPT = (
+    "📷 Nuovo scontrino\n\nInvia qui una foto o un PDF della ricevuta. "
+    "Lo conserverò e ti farò controllare i dati prima di continuare."
+)
+MENU_ADMIN = "⚙️ Strumenti amministratore\n\nScegli un’operazione."
+MENU_UNKNOWN = "Questo pulsante non è disponibile. Torna al menu principale."
+MENU_RETRY = "🔄 Riprova operazioni"
+MENU_RECEIPT_BUTTON = "📷 Nuovo scontrino"
+MENU_MANUAL_BUTTON = "✍️ Inserisci a mano"
+MENU_INCOME_BUTTON = "💰 Nuova entrata"
+MENU_SUMMARY_BUTTON = "📊 Riepilogo"
+MENU_LATEST_BUTTON = "📋 Ultime operazioni"
+MENU_QUEUE_BUTTON = "⏳ Operazioni in attesa"
+MENU_HELP_BUTTON = "❓ Aiuto"
+MENU_CANCEL_BUTTON = "✖️ Annulla operazione"
+MENU_ADMIN_BUTTON = "⚙️ Amministrazione"
+MENU_HEALTH_BUTTON = "🔌 Verifica collegamento"
+MENU_OPTIONS_BUTTON = "🔄 Aggiorna casse e tipologie"
+MENU_VERSION_BUTTON = "🔖 Versione e aggiornamenti"
+MENU_CLEAN_BUTTON = "🧹 Pulisci cronologia"
+MENU_UPDATE_BUTTON = "🔄 Installa aggiornamento"
+MENU_MODE_NOTICE = (
+    "\n\n⚠️ Gli inserimenti manuali salvano davvero solo dopo «Salva davvero», "
+    "anche in modalità prova."
 )
 MODE_TRIAL = "🧪 Modalità PROVA: non viene salvato nulla nel portale."
 MODE_REAL = "⚠️ Modalità REALE: le spese confermate vengono salvate nel portale."
-MANUAL_MODE_NOTICE = "/entrata e /testspesa salvano davvero, anche in modalità prova, dopo la tua conferma. Le uscite richiedono una ricevuta."
-USER_HELP = (
-    "📋 Cosa posso fare per te\n\n"
-    "📷 Scontrino – mandami una foto o un PDF\n"
-    "/ultime – le ultime 10 spese\n"
-    "/riepilogo – saldi e andamento delle casse\n"
-    "/coda – spese in attesa o da controllare\n"
-    "/riprova – riprovo le spese in attesa\n"
-    "/annulla – interrompo quello che stiamo facendo"
-)
-ADMIN_HELP = (
-    '{user_help}\n\n🔧 Solo amministratore\n/entrata – inserisci un’entrata senza ricevuta\n/testspesa – alias di /entrata\n/testbilancio – verifico il collegamento al portale\n    /aggiornaopzioni – aggiorno casse e tipologie\n/aggiorna – installo l\'ultima versione del bot\n/pulisci – svuoto coda, ultime spese e registri'
-)
 COMMAND_START = "Apri il menu del bot"
 COMMAND_HELP = "Guida e comandi"
 COMMAND_LATEST = "Le tue ultime spese"
@@ -40,8 +63,8 @@ COMMAND_SUMMARY = "Saldi e andamento delle casse"
 COMMAND_CANCEL = "Interrompi quello che stiamo facendo"
 COMMAND_QUEUE = "Spese in attesa o da controllare"
 COMMAND_RETRY = "Riprova le spese in attesa"
-COMMAND_MANUAL = "Alias di entrata: inserimento manuale reale"
-COMMAND_INCOME = "Inserisci davvero un'entrata senza ricevuta"
+COMMAND_MANUAL = "Inserisci un'entrata o un'uscita a mano"
+COMMAND_INCOME = "Inserisci un'entrata manualmente"
 COMMAND_HEALTH = "Verifica il collegamento al portale"
 COMMAND_REFRESH = "Aggiorna casse e tipologie"
 COMMAND_CLEAN = "Svuota spese e registri del bot"
@@ -51,11 +74,17 @@ VERSION_WITH_DATE = "{short} del {date}"
 VERSION_RUNNING = "🔖 Versione attiva: {version}"
 VERSION_UNKNOWN = "🔖 Versione attiva: non indicata (installata senza Git)."
 VERSION_UNKNOWN_SHORT = "versione non indicata"
-VERSION_NOT_CHECKED = "ℹ️ Il controllo automatico degli aggiornamenti non è ancora attivo."
-VERSION_CHECK_FAILED = "⚠️ L'ultimo controllo degli aggiornamenti non è riuscito ({checked})."
+VERSION_NOT_CHECKED = (
+    "ℹ️ Il controllo automatico degli aggiornamenti non è ancora attivo."
+)
+VERSION_CHECK_FAILED = (
+    "⚠️ L'ultimo controllo degli aggiornamenti non è riuscito ({checked})."
+)
 VERSION_NEW = "🆕 Nuova versione disponibile: {summary}\nPer installarla: /aggiorna"
 VERSION_LATEST = "✅ È l'ultima versione (controllo del {checked})."
-VERSION_PUBLISHED = "ℹ️ Ultima versione pubblicata: {summary} (controllo del {checked})."
+VERSION_PUBLISHED = (
+    "ℹ️ Ultima versione pubblicata: {summary} (controllo del {checked})."
+)
 VERSION_LAST_FAILED = "⚠️ Ultimo aggiornamento non riuscito ({summary}): {reason}"
 VERSION_REQUEST_PENDING = "⏳ Installazione richiesta: parte al prossimo controllo."
 UPDATE_REASONS = {
@@ -74,7 +103,9 @@ UPDATE_DONE = "✅ Aggiornamento installato: {summary}"
 UPDATE_ROLLED_BACK = "⚠️ Aggiornamento non riuscito ({summary}): {reason}"
 UPDATE_FAILED = "❌ Aggiornamento non riuscito ({summary}): {reason}"
 UPDATE_SKIPPED = "ℹ️ Nessun aggiornamento: {reason}"
-UPDATE_AVAILABLE = "🆕 È disponibile una nuova versione del bot: {summary}\nPer installarla: /aggiorna"
+UPDATE_AVAILABLE = (
+    "🆕 È disponibile una nuova versione del bot: {summary}\nPer installarla: /aggiorna"
+)
 UPDATE_PROMPT = (
     "🔄 Vuoi installare l'ultima versione?\n\n{status}\n\n"
     "Il bot si riavvia per circa un minuto: controlla che nessuno stia registrando una spesa."
@@ -85,7 +116,9 @@ UPDATE_REQUESTED = (
     "⏳ Richiesta registrata. Il NAS la esegue al prossimo controllo, "
     "di solito entro 10 minuti, e ti scrivo l'esito."
 )
-UPDATE_ALREADY_REQUESTED = "⏳ C'è già una richiesta in attesa: il NAS la esegue al prossimo controllo."
+UPDATE_ALREADY_REQUESTED = (
+    "⏳ C'è già una richiesta in attesa: il NAS la esegue al prossimo controllo."
+)
 UPDATE_CANCELLED = "Ok, nessun aggiornamento."
 UPDATE_LIVE_MODE = (
     "⚠️ Il bot è in modalità REALE: l'aggiornamento automatico è bloccato. "
@@ -96,8 +129,6 @@ UPDATE_NOT_CONFIGURED = (
     "Aggiorna con il comando manuale."
 )
 UPDATE_REQUEST_FAILED = "❌ Non riesco a registrare la richiesta. Riprova più tardi."
-USER_KEYBOARD = (("/ultime", "/riepilogo"), ("/coda", "/help"), ("/annulla",))
-ADMIN_KEYBOARD = (("/entrata", "/testbilancio"), *USER_KEYBOARD)
 
 SAVED_ICON = "✅"
 TRIAL_ICON = "🧪"
@@ -131,21 +162,25 @@ MANUAL_MERCHANT = "✏️ Come descrivo la spesa?"
 MANUAL_AMOUNT = "💶 Qual è l'importo? (es. 12,50)"
 MANUAL_DESCRIPTION = "Prova Telegram"
 MANUAL_CONFIRMATION = (
-    "✍️ Entrata a mano, senza ricevuta\n\n{details}\n\n"
+    "✍️ Operazione a mano, senza ricevuta\n\n{details}\n\n"
     "Va bene così o vuoi cambiare qualcosa?\n"
     "⚠️ Verrà salvata davvero nel portale: prima ti chiedo un'ultima conferma."
+)
+MANUAL_START = (
+    "✍️ Inseriamo un’entrata o un’uscita senza ricevuta: data, descrizione e importo, "
+    "poi cassa, direzione e tipologia. Dopo la conferma finale sarà salvata davvero "
+    "nel portale, anche in modalità prova. Puoi interrompere con il pulsante Annulla.\n\n{prompt}"
 )
 INCOME_START = (
     "✍️ Inseriamo un’entrata senza ricevuta: data, descrizione e importo, "
     "poi cassa e tipologia. Dopo la conferma finale sarà salvata davvero "
-    "nel portale, anche in modalità prova. Puoi interrompere con /annulla.\n\n{prompt}"
+    "nel portale, anche in modalità prova. Puoi interrompere con il pulsante Annulla.\n\n{prompt}"
 )
-MANUAL_FINAL = (
-    'Ultimo controllo prima di salvare:\n\n{details}\n\n⚠️ Se confermi, la spesa viene salvata DAVVERO nel portale.'
-)
+MANUAL_FINAL = "Ultimo controllo prima di salvare:\n\n{details}\n\n⚠️ Se confermi, la spesa viene salvata DAVVERO nel portale."
 MANUAL_FAILED = (
     "❌ Non sono riuscito a salvare la spesa e non riproverò da solo.\n\n"
-    "{details}\n\n👉 Controlla nel portale se compare. Se non c'è, ripeti /testspesa."
+    "{details}\n\n👉 Controlla nel portale se compare. Se non c'è, riparti dal menu "
+    "con «Inserisci a mano» o «Nuova entrata»."
 )
 MANUAL_FORMAT = (
     "Non ho capito 🙂 Scrivi data, descrizione e importo separati da «|», "
@@ -153,10 +188,12 @@ MANUAL_FORMAT = (
 )
 ACCOUNTS_PROGRESS = "⏳ Cerco le casse…"
 ACCOUNT_PROMPT = "🏦 Quale cassa vuoi usare? (1 di 3)"
-INCOME_ONLY_PROMPT = "➕ Senza ricevuta puoi registrare solo un’entrata. Premi Entrata per continuare."
+INCOME_ONLY_PROMPT = (
+    "➕ Senza ricevuta puoi registrare solo un’entrata. Premi Entrata per continuare."
+)
 EXPENSE_RECEIPT_REQUIRED = (
     "⚠️ Per registrare un’uscita serve una ricevuta allegata. "
-    "Non ho registrato nulla. Usa /annulla e invia una foto o un PDF: "
+    "Non ho registrato nulla. Premi «Annulla operazione» nel menu e invia una foto o un PDF: "
     "se non riesco a leggerlo, puoi compilare i dati a mano."
 )
 DIRECTION_PROMPT = "↔️ È un'entrata o un'uscita? (2 di 3)"
@@ -167,7 +204,7 @@ TYPE_PROGRESS = (
 TYPE_POPULAR = "🏷️ Che tipo di spesa è? (3 di 3)\nTi mostro le più usate."
 TYPE_ALL = "🏷️ Che tipo di spesa è? (3 di 3)"
 TYPE_MORE = "🏷️ Altre tipologie"
-MORE_TYPES_BUTTON = '➕ Mostra altre ({count})'
+MORE_TYPES_BUTTON = "➕ Mostra altre ({count})"
 INCOME = "⬇️ Entrata"
 EXPENSE = "⬆️ Uscita"
 SAVE_PROGRESS = (
@@ -175,8 +212,7 @@ SAVE_PROGRESS = (
     "Un attimo, non premere altro."
 )
 TRIAL_PROGRESS = (
-    "🧪 Faccio la prova nel portale (non salvo nulla)… "
-    "Un attimo, non premere altro."
+    "🧪 Faccio la prova nel portale (non salvo nulla)… " "Un attimo, non premere altro."
 )
 SAVE_BUTTON = "✅ Salva davvero"
 MANUAL_CONFIRM_BUTTON = "✅ Va bene"
@@ -193,12 +229,10 @@ LATEST_HEADER = "🧾 Le tue ultime spese"
 LATEST_EMPTY = "Ancora nessuna spesa. Mandami uno scontrino per iniziare 📷"
 QUEUE_HEADER = "⏳ Spese ancora da salvare o da controllare"
 QUEUE_EMPTY = "Tutto a posto: non ci sono spese in attesa ✅"
-QUEUE_FOOTER = "Scrivi /riprova per riprovare quelle in attesa."
+QUEUE_FOOTER = "Premi «Riprova operazioni» per riprovare quelle in attesa."
 QUEUE_WAITING = "in attesa"
 NOTHING_TO_RETRY = "Non c'è niente da riprovare."
-RETRY_DONE = (
-    'Ho riprovato: {saved} salvata ✅, {pending} ancora in attesa ⏳, {failed} da controllare ⚠️.'
-)
+RETRY_DONE = "Ho riprovato: {saved} salvata ✅, {pending} ancora in attesa ⏳, {failed} da controllare ⚠️."
 RETRY_DONE_WITH_TRIALS = (
     "Ho riprovato: {saved} salvate ✅, {trials} in prova 🧪 "
     "(nel portale non è stato salvato nulla per queste prove), "
@@ -211,26 +245,22 @@ RETRY_EXHAUSTED = (
     "L'amministratore la controllerà: non devi fare altro."
 )
 ADMIN_RETRY_EXHAUSTED = (
-    "⚠️ Una spesa non è stata salvata dopo vari tentativi. Controlla con /coda."
+    "⚠️ Una spesa non è stata salvata dopo vari tentativi. Controlla «Operazioni in attesa» nel menu."
 )
-ADMIN_TRIAL_UNCONFIRMED = (
-    "⚠️ La modalità prova non è stata rispettata. Controlla il portale prima di riprovare."
-)
+ADMIN_TRIAL_UNCONFIRMED = "⚠️ La modalità prova non è stata rispettata. Controlla il portale prima di riprovare."
 HEALTH_OK = "✅ Il portale risponde correttamente. Non ho inserito nulla."
-HEALTH_MANUAL = (
-    '⚠️ Il portale chiede una verifica manuale (es. un codice). Non ho inserito nulla.\nDettagli: {folder}{diagnostic_file}'
-)
+HEALTH_MANUAL = "⚠️ Il portale chiede una verifica manuale (es. un codice). Non ho inserito nulla.\nDettagli: {folder}{diagnostic_file}"
 HEALTH_FAILED = (
-    '❌ Non riesco ad accedere al portale. Non ho inserito nulla.\nDettagli: {folder}'
+    "❌ Non riesco ad accedere al portale. Non ho inserito nulla.\nDettagli: {folder}"
 )
-ADMIN_DIAGNOSTIC = '{message} ({filename})'
+ADMIN_DIAGNOSTIC = "{message} ({filename})"
 DIAGNOSTIC_DETAILS = "Dettagli: {path}"
 REFRESH_PROGRESS = (
     "🔄 Aggiorno casse e tipologie in sottofondo, ti scrivo quando ho finito. "
     "Non inserisco nessuna spesa."
 )
-REFRESH_DONE = '✅ Fatto! Trovate {count} casse.'
-REFRESH_ROW = '• {account}: {income} entrate, {expense} uscite'
+REFRESH_DONE = "✅ Fatto! Trovate {count} casse."
+REFRESH_ROW = "• {account}: {income} entrate, {expense} uscite"
 UNREAD_COUNT = "da rileggere"
 REFRESH_PARTIAL = "Alcune tipologie non si sono caricate: le rileggo quando servono."
 REFRESH_FAILED = "❌ Non riesco a leggere le casse dal portale. Riprova più tardi."
@@ -240,19 +270,19 @@ CLEAN_PROMPT = (
 )
 CLEAN_YES = "Sì, pulisci"
 CLEAN_NO = "No, lascia stare"
-CLEAN_DONE = (
-    '🧹 Fatto! Eliminate {expenses} spese ({pending} in attesa) e {files} file temporanei. Portale e ricevute intatti.'
-)
+CLEAN_DONE = "🧹 Fatto! Eliminate {expenses} spese ({pending} in attesa) e {files} file temporanei. Portale e ricevute intatti."
 CLEAN_CANCELLED = "Ok, non ho toccato niente."
 CANCELLED = "Ok, ho annullato. Quando vuoi, mandami un altro scontrino."
 NOTHING_TO_CANCEL = "Non c'è niente da annullare."
 RECEIPT_ALREADY_ACTIVE = (
-    "Stiamo già lavorando su uno scontrino: completalo oppure scrivi /annulla."
+    "Stiamo già lavorando su uno scontrino: completalo oppure premi «Annulla operazione» nel menu."
 )
-MANUAL_RECEIPT_ACTIVE = "Prima finiamo lo scontrino in corso, oppure scrivi /annulla."
-MANUAL_PREVIOUS_CANCELLED = "Avevi una prova rimasta aperta: l'ho chiusa."
-USE_BUTTONS = "Usa i pulsanti qui sopra, oppure scrivi /annulla."
-ANALYZER_UNAVAILABLE = "Al momento non riesco a leggere gli scontrini. Riprova più tardi."
+MANUAL_RECEIPT_ACTIVE = "Prima finiamo lo scontrino in corso, oppure premi «Annulla operazione» nel menu."
+MANUAL_PREVIOUS_CANCELLED = "Avevi un inserimento manuale rimasto aperto: l'ho chiuso."
+USE_BUTTONS = "Usa i pulsanti qui sopra, oppure premi «Annulla operazione» nel menu."
+ANALYZER_UNAVAILABLE = (
+    "Al momento non riesco a leggere gli scontrini. Riprova più tardi."
+)
 SEND_RECEIPT = "Mandami una foto o un PDF dello scontrino 📷"
 FILE_TOO_LARGE = "Il file è troppo grande (massimo 20 MB). Ne provi uno più leggero?"
 FILE_UNREADABLE = (
@@ -263,12 +293,10 @@ ANALYSIS_FAILED = (
     "⚠️ Non sono riuscito a leggere lo scontrino con l’AI locale. "
     "Ho conservato il file temporaneo, senza inviarlo a servizi AI online. "
     "Inseriamo i dati a mano: data, descrizione e importo, poi cassa e tipologia. "
-    "La ricevuta sarà archiviata quando confermi l’operazione; /annulla elimina "
+    "La ricevuta sarà archiviata quando confermi l’operazione; Annulla elimina "
     "la copia temporanea.\n\n{prompt}"
 )
-ADMIN_ANALYSIS_FAILED = (
-    "L'analisi locale di una ricevuta non è riuscita. Il file non è stato inviato a servizi online."
-)
+ADMIN_ANALYSIS_FAILED = "L'analisi locale di una ricevuta non è riuscita. Il file non è stato inviato a servizi online."
 AI_FAILURE_REASONS = {
     "timeout": "Ollama non ha risposto entro il tempo configurato. La causa può essere il caricamento iniziale o l'elaborazione lenta sulla CPU; non è una prova di memoria insufficiente.",
     "connection": "Il bot non riesce a comunicare con Ollama. Verifica che il servizio sia avviato e raggiungibile nella rete Docker.",
@@ -289,7 +317,7 @@ AI_ADMIN_DIAGNOSTIC = (
     "Timeout configurato: {timeout} secondi.\n{reason}"
 )
 AI_HTTP_STATUS = " — HTTP {status}"
-AI_FAILURE_WITH_DIAGNOSTIC = "{message}\n\n{diagnostic}"
+AI_FAILURE_WITH_DIAGNOSTIC = "{message}\n\n{diagnostic}\n\n{prompt}"
 
 
 def ai_admin_diagnostic(code: str, status: int | None, timeout: int) -> str:
@@ -301,6 +329,7 @@ def ai_admin_diagnostic(code: str, status: int | None, timeout: int) -> str:
         timeout=timeout,
         reason=AI_FAILURE_REASONS[code],
     )
+
 
 STALE_BUTTON = (
     "Questo pulsante non è più attivo. Se vuoi, mandami di nuovo lo scontrino."
@@ -315,17 +344,13 @@ PORTAL_UNAVAILABLE_RECEIPT = (
     "Il collegamento al portale non è ancora attivo. "
     "Non ho salvato nulla: lo scontrino resta in attesa."
 )
-PORTAL_READ_FAILED = (
-    'Non riesco a leggere {subject} dal portale adesso. Non ho salvato nulla e i dati dello scontrino restano qui: premi «Sì, è giusto» per riprovare oppure Annulla.'
-)
-PORTAL_MANUAL_READ_FAILED = (
-    'Non riesco a leggere {subject} dal portale. Ho annullato la prova, non è stato inserito nulla. Riprova più tardi con /testspesa.'
-)
+PORTAL_READ_FAILED = "Non riesco a leggere {subject} dal portale adesso. Non ho salvato nulla e i dati dello scontrino restano qui: premi «Sì, è giusto» per riprovare oppure Annulla."
+PORTAL_MANUAL_READ_FAILED = "Non riesco a leggere {subject} dal portale. Non ho inserito nulla e ho conservato i dati: premi «Va bene» per riprovare oppure Annulla."
 ACCOUNTS_SUBJECT = "le casse"
 TYPES_SUBJECT = "le tipologie"
-ADMIN_ACCOUNTS_FAILED = 'Non riesco a leggere le casse. Dettagli: {folder}'
-ADMIN_TYPES_FAILED = 'Non riesco a leggere le tipologie. Dettagli: {folder}'
-ADMIN_UNVERIFIED = '⚠️ Registrazione non verificata. Controlla {folder} e /coda.'
+ADMIN_ACCOUNTS_FAILED = "Non riesco a leggere le casse. Dettagli: {folder}"
+ADMIN_TYPES_FAILED = "Non riesco a leggere le tipologie. Dettagli: {folder}"
+ADMIN_UNVERIFIED = "⚠️ Registrazione non verificata. Controlla {folder} e «Operazioni in attesa» nel menu."
 SUBMISSION_QUEUED = (
     "⚠️ Non sono sicuro che la spesa sia stata salvata. L'ho messa in attesa "
     "e riproverò io: non devi rifare nulla."
@@ -343,30 +368,42 @@ UNEXPECTED_ERROR = "⚠️ Errore imprevisto durante l'elaborazione di un messag
 SUMMARY_PROGRESS = "⏳ Leggo i saldi dal portale (circa un minuto). Non modifico nulla."
 SUMMARY_FAILED = "❌ Non riesco a leggere i saldi adesso. Riprova tra poco."
 SUMMARY_BUSY = "⏳ Lo sto già preparando, un attimo!"
-SUMMARY_HEADER = '📊 Bilancio {year}\nDati aggiornati adesso dal portale.'
-PREVIOUS_YEAR = '⬅️ Anno {year}'
-NEXT_YEAR = 'Anno {year} ➡️'
+SUMMARY_HEADER = "📊 Bilancio {year}\nDati aggiornati adesso dal portale."
+PREVIOUS_YEAR = "⬅️ Anno {year}"
+NEXT_YEAR = "Anno {year} ➡️"
 REFRESH_BUTTON = "🔄 Aggiorna"
 DETAILS_BUTTON = "📈 Dettagli"
-ACCOUNT_HEADER = '🏦 {account}'
-ACCOUNT_BALANCE = '💰 Saldo: {balance}'
+ACCOUNT_HEADER = "🏦 {account}"
+ACCOUNT_BALANCE = "💰 Saldo: {balance}"
 ACCOUNT_TOTALS = "Entrate {income} · uscite {expense}"
 OPENING_BALANCE = "Saldo iniziale: {amount}"
 MONTHLY_HEADER = "📈 Andamento mensile"
 OPERATIONS_HEADER = "🧾 Ultime operazioni"
-MONTHLY_ROW = '• {month} {year}: entrate {income} · uscite {expense} → saldo {balance}'
-PARTIAL_LEDGER = '⚠️ Il portale mostra solo {visible} righe su {total}: i dati sono parziali.'
+MONTHLY_ROW = "• {month} {year}: entrate {income} · uscite {expense} → saldo {balance}"
+PARTIAL_LEDGER = (
+    "⚠️ Il portale mostra solo {visible} righe su {total}: i dati sono parziali."
+)
 NO_MOVEMENTS = "Nessuna operazione dall'inizio dell'anno."
-LEDGER_ROW = '• {day:%d/%m} {description}: {amount}'
+LEDGER_ROW = "• {day:%d/%m} {description}: {amount}"
 LAST_MOVEMENT = "Ultima operazione: {day:%d/%m} {description} {amount}"
-NO_ACCOUNTS = '{header}\n\nNon trovo casse nel portale.'
+NO_ACCOUNTS = "{header}\n\nNon trovo casse nel portale."
 MONTH_NAMES = (
-    "Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
-    "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre",
+    "Gennaio",
+    "Febbraio",
+    "Marzo",
+    "Aprile",
+    "Maggio",
+    "Giugno",
+    "Luglio",
+    "Agosto",
+    "Settembre",
+    "Ottobre",
+    "Novembre",
+    "Dicembre",
 )
 EMPTY_VALUE = "—"
 EURO_AMOUNT = "{sign}{digits} €"
-ELLIPSIS = '{text}…'
+ELLIPSIS = "{text}…"
 DATE_LINE = "📅 {value}"
 MERCHANT_LINE = "🏪 {value}"
 DESCRIPTION_LINE = "📝 {value}"
@@ -418,8 +455,10 @@ def operation_details(
     lines: list[str] = []
     for template, value in (
         (DATE_LINE, date_text(payload.get("date"))),
-        (DESCRIPTION_LINE if payload.get("manual_entry") is True else MERCHANT_LINE,
-         safe_text(payload.get("merchant"))),
+        (
+            DESCRIPTION_LINE if payload.get("manual_entry") is True else MERCHANT_LINE,
+            safe_text(payload.get("merchant")),
+        ),
     ):
         if value:
             lines.append(template.format(value=value))
@@ -427,11 +466,15 @@ def operation_details(
     if amount:
         direction = selections.get("direction")
         if direction:
-            amount = DIRECTION_AMOUNT.format(amount=amount, direction=safe_text(direction))
+            amount = DIRECTION_AMOUNT.format(
+                amount=amount, direction=safe_text(direction)
+            )
         lines.append(AMOUNT_LINE.format(value=amount))
     for key, template in (
-        ("account", ACCOUNT_LINE), ("transaction_type", CATEGORY_LINE),
-        ("unit", UNIT_LINE), ("category", PORTAL_CATEGORY_LINE),
+        ("account", ACCOUNT_LINE),
+        ("transaction_type", CATEGORY_LINE),
+        ("unit", UNIT_LINE),
+        ("category", PORTAL_CATEGORY_LINE),
     ):
         if key == "unit" and unit_left_empty:
             continue
@@ -456,7 +499,9 @@ def receipt_confirmation(payload: Mapping[str, object], confidence: float) -> st
     return text
 
 
-def expense_row(payload: Mapping[str, object], status: str, *, queued: bool = False) -> str:
+def expense_row(
+    payload: Mapping[str, object], status: str, *, queued: bool = False
+) -> str:
     fields = [
         date_text(payload.get("date"), short=True),
         safe_text(payload.get("merchant"), 80),

@@ -1,9 +1,11 @@
+import asyncio
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 from pathlib import Path
 
+from telegram import Update
 from telegram.ext import ApplicationHandlerStop
 
 from bot.application import (
@@ -18,9 +20,12 @@ from bot.application import (
     clean_callback,
     clean_command,
     configure_bot_menu,
+    create_application,
     help_command,
     latest_expenses_command,
     manual_income_command,
+    manual_expense_command,
+    menu_callback,
     ledger_summary_job,
     preload_options_job,
     preload_portal_options,
@@ -62,6 +67,97 @@ def make_settings() -> Settings:
 
 
 class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_manual_command_collects_fields_and_offers_both_directions(self) -> None:
+        workflow = SimpleNamespace(start_manual_expense=AsyncMock())
+        context = self.make_context(receipt_workflow=workflow)
+        update = SimpleNamespace()
+        await manual_expense_command(update, context)
+        workflow.start_manual_expense.assert_awaited_once_with(
+            update, context, collect_data=True, direction=None
+        )
+        self.assertIn("manual", {command.command for command in ADMIN_COMMANDS})
+        self.assertNotIn("testspesa", {command.command for command in ADMIN_COMMANDS})
+        self.assertNotIn("manual", {command.command for command in USER_COMMANDS})
+        self.assertIn("Inserisci a mano", ADMIN_HELP_TEXT)
+
+    async def test_start_and_help_bypass_slow_work_but_mutations_stay_sequential(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            application = create_application(
+                make_settings(), Database(Path(directory) / "test.sqlite3")
+            )
+            processor = application.update_processor
+            entered = asyncio.Event()
+            release = asyncio.Event()
+            second = AsyncMock()
+
+            async def slow() -> None:
+                entered.set()
+                await release.wait()
+
+            first_task = asyncio.create_task(processor.process_update(object(), slow()))
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            queued_task = asyncio.create_task(processor.process_update(object(), second()))
+            try:
+                for command in ("/start", "/help", "/start@example_bot"):
+                    update = Update.de_json(
+                        {
+                            "update_id": 1,
+                            "message": {
+                                "message_id": 1, "date": 0,
+                                "chat": {"id": 12345, "type": "private"},
+                                "from": {"id": 12345, "is_bot": False, "first_name": "Test"},
+                                "text": command,
+                                "entities": [{
+                                    "type": "bot_command", "offset": 0,
+                                    "length": len(command),
+                                }],
+                            },
+                        },
+                        application.bot,
+                    )
+                    response = AsyncMock()
+                    context = self.make_context(settings=make_settings())
+                    context.bot = SimpleNamespace(set_my_commands=AsyncMock())
+
+                    async def quick() -> None:
+                        await authorize_update(update, context)
+                        if command == "/help":
+                            await help_command(update, context)
+                        else:
+                            await start_command(update, context)
+
+                    with patch.object(type(update.message), "reply_text", new=response):
+                        await asyncio.wait_for(
+                            processor.process_update(update, quick()), timeout=0.5
+                        )
+                    self.assertEqual(response.await_count, 1 if command == "/help" else 2)
+                    second.assert_not_awaited()
+
+                blocked_update = Update.de_json(
+                    {
+                        "update_id": 2,
+                        "message": {
+                            "message_id": 2, "date": 0,
+                            "chat": {"id": 99999, "type": "private"},
+                            "from": {"id": 99999, "is_bot": False, "first_name": "Test"},
+                            "text": "/start",
+                            "entities": [{"type": "bot_command", "offset": 0, "length": 6}],
+                        },
+                    },
+                    application.bot,
+                )
+                with self.assertRaises(ApplicationHandlerStop):
+                    await processor.process_update(
+                        blocked_update,
+                        authorize_update(
+                            blocked_update, self.make_context(settings=make_settings())
+                        ),
+                    )
+            finally:
+                release.set()
+                await asyncio.gather(first_task, queued_task)
+            second.assert_awaited_once()
+
     async def test_income_command_collects_all_fields_and_is_admin_menu_only(self) -> None:
         workflow = SimpleNamespace(start_manual_expense=AsyncMock())
         context = self.make_context(receipt_workflow=workflow)
@@ -101,11 +197,15 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("scontrino", text)
         self.assertIn("PROVA", text)
         keyboard = message.reply_text.await_args.kwargs["reply_markup"]
-        self.assertEqual(keyboard.keyboard[0][0].text, "/entrata")
-        for rare_command in ("/aggiornaopzioni", "/pulisci"):
-            self.assertNotIn(
-                rare_command, [button.text for row in keyboard.keyboard for button in row]
-            )
+        buttons = [button for row in keyboard.inline_keyboard for button in row]
+        self.assertIn("menu:manual", [button.callback_data for button in buttons])
+        self.assertIn("menu:income", [button.callback_data for button in buttons])
+        self.assertIn("menu:admin", [button.callback_data for button in buttons])
+        self.assertFalse(any("/" in button.text for button in buttons))
+        self.assertNotIn("/", text)
+        self.assertTrue(
+            message.reply_text.await_args_list[0].kwargs["reply_markup"].remove_keyboard
+        )
         admin_call = context.bot.set_my_commands.await_args
         self.assertEqual(admin_call.args[0], ADMIN_COMMANDS)
         self.assertEqual(admin_call.kwargs["scope"].chat_id, 12345)
@@ -129,8 +229,11 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         )
         keyboard = message.reply_text.await_args.kwargs["reply_markup"]
         self.assertNotIn(
-            "/testspesa", [button.text for row in keyboard.keyboard for button in row]
+            "menu:manual", [button.callback_data for row in keyboard.inline_keyboard for button in row]
         )
+        self.assertNotIn("menu:admin", [
+            button.callback_data for row in keyboard.inline_keyboard for button in row
+        ])
         text = message.reply_text.await_args.args[0]
         for admin_detail in ("/testspesa", "/pulisci", "/aggiornaopzioni", "SIMULATA", "REALE"):
             self.assertNotIn(admin_detail, text)
@@ -242,7 +345,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         buttons = [b.callback_data for row in edit.kwargs["reply_markup"].inline_keyboard for b in row]
         self.assertEqual(buttons, [
             f"summary:{start_year - 1}", f"summary:{start_year}",
-            f"summary:details:{start_year}",
+            f"summary:details:{start_year}", "menu:home",
         ])
         self.assertFalse(context.application.bot_data["ledger_summary_running"])
 
@@ -396,17 +499,20 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_help_depends_on_role(self) -> None:
         context = self.make_context(settings=make_settings())
-        for user_id, expected in ((12345, ADMIN_HELP_TEXT), (67890, USER_HELP_TEXT)):
+        for user_id, expected in (
+            (12345, texts.MENU_HELP + texts.MENU_ADMIN_HELP),
+            (67890, texts.MENU_HELP),
+        ):
             message = SimpleNamespace(reply_text=AsyncMock())
             await help_command(
                 SimpleNamespace(message=message, effective_user=SimpleNamespace(id=user_id)),
                 context,
             )
             self.assertEqual(message.reply_text.await_args.args[0], expected)
-        self.assertIn("/ultime", USER_HELP_TEXT)
-        for command in ("/testspesa", "/pulisci", "/aggiornaopzioni", "/testbilancio"):
-            self.assertNotIn(command, USER_HELP_TEXT)
-            self.assertIn(command, ADMIN_HELP_TEXT)
+            self.assertNotIn("/", expected)
+        self.assertIn("Ultime operazioni", USER_HELP_TEXT)
+        self.assertNotIn("Inserisci a mano", USER_HELP_TEXT)
+        self.assertIn("Inserisci a mano", ADMIN_HELP_TEXT)
 
     async def test_clean_is_admin_only(self) -> None:
         message = SimpleNamespace(reply_text=AsyncMock())
@@ -615,15 +721,19 @@ class UpdateCommandTests(unittest.IsolatedAsyncioTestCase):
             encoding="utf-8",
         )
 
-    async def test_admin_start_shows_running_and_available_version(self) -> None:
+    async def test_admin_version_screen_shows_running_and_available_version(self) -> None:
         self.write_check("b" * 40)
-        message = SimpleNamespace(reply_text=AsyncMock())
-        await start_command(
-            SimpleNamespace(message=message, effective_user=self.user), self.context()
+        query = SimpleNamespace(
+            data="menu:version", message=SimpleNamespace(),
+            answer=AsyncMock(), edit_message_text=AsyncMock(),
         )
-        text = message.reply_text.await_args.args[0]
+        await menu_callback(
+            SimpleNamespace(callback_query=query, effective_user=self.user), self.context()
+        )
+        text = query.edit_message_text.await_args.args[0]
         self.assertIn("Versione attiva: aaaaaaa – Attuale", text)
         self.assertIn("Nuova versione disponibile: bbbbbbb - Nuova", text)
+        self.assertNotIn("/aggiorna", text)
 
     async def test_non_admin_start_hides_version(self) -> None:
         self.write_check("b" * 40)
@@ -704,7 +814,6 @@ class UpdateCommandTests(unittest.IsolatedAsyncioTestCase):
         names = [command.command for command in ADMIN_COMMANDS]
         self.assertIn("aggiorna", names)
         self.assertNotIn("aggiorna", [command.command for command in USER_COMMANDS])
-        self.assertIn("/aggiorna", ADMIN_HELP_TEXT)
 
 
 if __name__ == "__main__":

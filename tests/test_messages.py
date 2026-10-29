@@ -97,7 +97,7 @@ class TelegramMessagesTests(unittest.TestCase):
 
     def test_user_messages_do_not_include_internal_paths_or_technical_terms(self) -> None:
         rendered = (
-            messages.USER_START, messages.USER_HELP, messages.ANALYSIS_FAILED,
+            messages.HOME_TEXT, messages.MENU_HELP, messages.ANALYSIS_FAILED,
             messages.ANALYZER_UNAVAILABLE, messages.SUBMISSION_QUEUED,
             messages.SUBMISSION_FAILED, messages.TRIAL_UNCONFIRMED,
             messages.operation_details(self.payload, self.selections),
@@ -138,6 +138,7 @@ class TelegramMessagesTests(unittest.TestCase):
             ("🏪 Negozio", "receipt:edit:merchant"),
             ("🏷️ Categoria", "receipt:edit:suggested_category"),
             ("Annulla", "receipt:cancel"),
+            (messages.HOME_BUTTON, "menu:home"),
         ])
 
 

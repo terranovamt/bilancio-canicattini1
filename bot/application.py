@@ -2,23 +2,26 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Sequence
 from datetime import date, datetime, time as day_time, timezone
 from pathlib import Path
 
 from telegram import (
     BotCommand,
     BotCommandScopeChat,
+    CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     MenuButtonCommands,
-    ReplyKeyboardMarkup,
+    MessageEntity,
+    ReplyKeyboardRemove,
     Update,
 )
 from telegram.error import TelegramError
 from telegram.ext import (
     Application,
     ApplicationHandlerStop,
+    BaseUpdateProcessor,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
@@ -57,12 +60,8 @@ from storage.pending import PendingReceiptStore
 
 logger = logging.getLogger(__name__)
 
-USER_HELP_TEXT = (
-    texts.USER_HELP
-)
-ADMIN_HELP_TEXT = (
-    texts.ADMIN_HELP.format(user_help=USER_HELP_TEXT)
-)
+USER_HELP_TEXT = texts.MENU_HELP
+ADMIN_HELP_TEXT = texts.MENU_HELP + texts.MENU_ADMIN_HELP
 
 USER_COMMANDS = (
     BotCommand("start", texts.COMMAND_START),
@@ -76,12 +75,48 @@ USER_COMMANDS = (
 ADMIN_COMMANDS = (
     *USER_COMMANDS,
     BotCommand("entrata", texts.COMMAND_INCOME),
-    BotCommand("testspesa", texts.COMMAND_MANUAL),
+    BotCommand("manual", texts.COMMAND_MANUAL),
     BotCommand("testbilancio", texts.COMMAND_HEALTH),
     BotCommand("aggiornaopzioni", texts.COMMAND_REFRESH),
     BotCommand("aggiorna", texts.COMMAND_UPDATE),
     BotCommand("pulisci", texts.COMMAND_CLEAN),
 )
+
+
+class ResponsiveUpdateProcessor(BaseUpdateProcessor):
+    def __init__(self) -> None:
+        super().__init__(max_concurrent_updates=32)
+        self._workflow_lock = asyncio.Lock()
+
+    async def initialize(self) -> None:
+        pass
+
+    async def shutdown(self) -> None:
+        pass
+
+    async def do_process_update(
+        self, update: object, coroutine: Awaitable[object]
+    ) -> None:
+        query = update.callback_query if isinstance(update, Update) else None
+        if query is not None and query.data in {
+            "menu:home", "menu:help", "menu:receipt", "menu:admin", "menu:version"
+        }:
+            await coroutine
+            return
+        message = update.message if isinstance(update, Update) else None
+        if message is not None and message.text and message.entities:
+            entity = message.entities[0]
+            command = message.text.split(maxsplit=1)[0].split("@", 1)[0].lower()
+            if (
+                entity.type == MessageEntity.BOT_COMMAND
+                and entity.offset == 0
+                and command in {"/start", "/help"}
+            ):
+                await coroutine
+                return
+        # Keep state changes and submissions sequential, but let read-only help bypass them.
+        async with self._workflow_lock:
+            await coroutine
 
 
 async def configure_bot_menu(application: Application) -> None:
@@ -99,6 +134,7 @@ def create_application(
     application = (
         Application.builder()
         .token(settings.bot_token)
+        .concurrent_updates(ResponsiveUpdateProcessor())
         .post_init(configure_bot_menu)
         .build()
     )
@@ -157,6 +193,7 @@ def create_application(
     application.add_handler(TypeHandler(Update, authorize_update), group=-1)
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^menu:"))
     application.add_handler(CommandHandler("annulla", cancel_command))
     application.add_handler(CommandHandler("ultime", latest_expenses_command))
     application.add_handler(CommandHandler("riepilogo", summary_command))
@@ -166,7 +203,7 @@ def create_application(
     application.add_handler(CommandHandler("coda", queue_command))
     application.add_handler(CommandHandler("riprova", retry_command))
     application.add_handler(CommandHandler("entrata", manual_income_command))
-    application.add_handler(CommandHandler("testspesa", manual_expense_command))
+    application.add_handler(CommandHandler(["manual", "testspesa"], manual_expense_command))
     application.add_handler(CommandHandler("testbilancio", test_bilancio_command))
     application.add_handler(CommandHandler("aggiornaopzioni", refresh_options_command))
     application.add_handler(CommandHandler("aggiorna", update_command))
@@ -212,30 +249,134 @@ async def start_command(
     if update.message is None:
         return
     settings: Settings = context.application.bot_data["settings"]
-    rows = texts.USER_KEYBOARD
     if _is_admin(update, settings):
-        rows = texts.ADMIN_KEYBOARD
         await context.bot.set_my_commands(
             ADMIN_COMMANDS,
             scope=BotCommandScopeChat(chat_id=settings.admin_user_id),
         )
-        mode = texts.MODE_TRIAL if settings.dry_run else (
-            texts.MODE_REAL
+    await update.message.reply_text(
+        texts.HOME_BUTTON, reply_markup=ReplyKeyboardRemove()
+    )
+    await update.message.reply_text(
+        _home_text(settings, _is_admin(update, settings)),
+        reply_markup=_home_keyboard(_is_admin(update, settings)),
+    )
+
+
+def _home_text(settings: Settings, admin: bool) -> str:
+    if not admin:
+        return texts.HOME_TEXT
+    mode = texts.MODE_TRIAL if settings.dry_run else texts.MODE_REAL
+    return f"{texts.HOME_TEXT}\n\n{mode}{texts.MENU_MODE_NOTICE}"
+
+
+def _navigation_keyboard(*, admin: bool = False) -> InlineKeyboardMarkup:
+    rows = []
+    if admin:
+        rows.append([InlineKeyboardButton(texts.BACK_BUTTON, callback_data="menu:admin")])
+    rows.append([InlineKeyboardButton(texts.HOME_BUTTON, callback_data="menu:home")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _home_keyboard(admin: bool) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(texts.MENU_RECEIPT_BUTTON, callback_data="menu:receipt")]]
+    if admin:
+        rows.append([
+            InlineKeyboardButton(texts.MENU_MANUAL_BUTTON, callback_data="menu:manual"),
+            InlineKeyboardButton(texts.MENU_INCOME_BUTTON, callback_data="menu:income"),
+        ])
+    rows.extend([
+        [InlineKeyboardButton(texts.MENU_SUMMARY_BUTTON, callback_data="menu:summary"),
+         InlineKeyboardButton(texts.MENU_LATEST_BUTTON, callback_data="menu:latest")],
+        [InlineKeyboardButton(texts.MENU_QUEUE_BUTTON, callback_data="menu:queue")],
+        [InlineKeyboardButton(texts.MENU_HELP_BUTTON, callback_data="menu:help"),
+         InlineKeyboardButton(texts.MENU_CANCEL_BUTTON, callback_data="menu:cancel")],
+    ])
+    if admin:
+        rows.append([InlineKeyboardButton(texts.MENU_ADMIN_BUTTON, callback_data="menu:admin")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _admin_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(texts.MENU_HEALTH_BUTTON, callback_data="menu:health")],
+        [InlineKeyboardButton(texts.MENU_OPTIONS_BUTTON, callback_data="menu:options")],
+        [InlineKeyboardButton(texts.MENU_VERSION_BUTTON, callback_data="menu:version")],
+        [InlineKeyboardButton(texts.MENU_CLEAN_BUTTON, callback_data="menu:clean")],
+        [InlineKeyboardButton(texts.HOME_BUTTON, callback_data="menu:home")],
+    ])
+
+
+async def _edit_menu_screen(
+    query: CallbackQuery, text: str, keyboard: InlineKeyboardMarkup
+) -> None:
+    if (
+        getattr(query.message, "text", None) == text
+        and getattr(query.message, "reply_markup", None) == keyboard
+    ):
+        return
+    await query.edit_message_text(text, reply_markup=keyboard)
+
+
+async def _show_command_screen(
+    update: Update, text: str, keyboard: InlineKeyboardMarkup
+) -> None:
+    query = getattr(update, "callback_query", None)
+    if query is not None:
+        await _edit_menu_screen(query, text, keyboard)
+        return
+    if update.message is not None:
+        await update.message.reply_text(text, reply_markup=keyboard)
+
+
+async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or query.message is None:
+        return
+    settings: Settings = context.application.bot_data["settings"]
+    admin = _is_admin(update, settings)
+    action = str(query.data).removeprefix("menu:")
+    if action in {"admin", "manual", "income", "health", "options", "version", "update", "clean"} and not admin:
+        await query.answer(texts.ADMIN_ONLY)
+        return
+    await query.answer()
+    if action == "home":
+        await _edit_menu_screen(query, _home_text(settings, admin), _home_keyboard(admin))
+    elif action == "help":
+        await _edit_menu_screen(
+            query,
+            ADMIN_HELP_TEXT if admin else USER_HELP_TEXT,
+            _navigation_keyboard(),
         )
-        text = (
-            texts.ADMIN_START.format(
-                mode=f"{mode}\n{texts.MANUAL_MODE_NOTICE}",
-                version=await asyncio.to_thread(_version_status, context, settings),
-            )
+    elif action == "receipt":
+        await _edit_menu_screen(query, texts.MENU_RECEIPT, _navigation_keyboard())
+    elif action == "admin":
+        await _edit_menu_screen(query, texts.MENU_ADMIN, _admin_keyboard())
+    elif action == "version":
+        status = await asyncio.to_thread(_version_status, context, settings)
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(texts.MENU_UPDATE_BUTTON, callback_data="menu:update")],
+            *_navigation_keyboard(admin=True).inline_keyboard,
+        ])
+        await _edit_menu_screen(
+            query,
+            status.replace("/aggiorna", "premi «Installa aggiornamento»"),
+            keyboard,
         )
     else:
-        text = (
-            texts.USER_START
-        )
-    await update.message.reply_text(
-        text,
-        reply_markup=ReplyKeyboardMarkup(rows, resize_keyboard=True),
-    )
+        handlers = {
+            "manual": manual_expense_command, "income": manual_income_command,
+            "latest": latest_expenses_command, "summary": summary_command,
+            "queue": queue_command, "retry": retry_command,
+            "cancel": cancel_command, "health": test_bilancio_command,
+            "options": refresh_options_command, "update": update_command,
+            "clean": clean_command,
+        }
+        handler = handlers.get(action)
+        if handler is None:
+            await query.edit_message_text(texts.MENU_UNKNOWN, reply_markup=_navigation_keyboard())
+            return
+        await handler(update, context)
 
 
 def _is_admin(update: Update, settings: Settings) -> bool:
@@ -270,29 +411,31 @@ async def update_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    if update.message is None:
+    message = getattr(update, "effective_message", None) or update.message
+    if message is None:
         return
     settings: Settings = context.application.bot_data["settings"]
     if not _is_admin(update, settings):
-        await update.message.reply_text(texts.ADMIN_ONLY)
+        await message.reply_text(texts.ADMIN_ONLY)
         return
     if not settings.dry_run:
-        await update.message.reply_text(texts.UPDATE_LIVE_MODE)
+        await message.reply_text(texts.UPDATE_LIVE_MODE, reply_markup=_navigation_keyboard(admin=True))
         return
     store = _update_store(context, settings)
     if await asyncio.to_thread(store.read_check) is None:
-        await update.message.reply_text(texts.UPDATE_NOT_CONFIGURED)
+        await message.reply_text(texts.UPDATE_NOT_CONFIGURED, reply_markup=_navigation_keyboard(admin=True))
         return
     if await asyncio.to_thread(store.has_request):
-        await update.message.reply_text(texts.UPDATE_ALREADY_REQUESTED)
+        await message.reply_text(texts.UPDATE_ALREADY_REQUESTED, reply_markup=_navigation_keyboard(admin=True))
         return
     status = await asyncio.to_thread(_version_status, context, settings)
-    await update.message.reply_text(
+    await message.reply_text(
         texts.UPDATE_PROMPT.format(status=status),
         reply_markup=InlineKeyboardMarkup(
             [
                 [InlineKeyboardButton(texts.UPDATE_YES, callback_data="admin:update:yes")],
                 [InlineKeyboardButton(texts.UPDATE_NO, callback_data="admin:update:no")],
+                *_navigation_keyboard(admin=True).inline_keyboard,
             ]
         ),
     )
@@ -310,20 +453,20 @@ async def update_callback(
     if not _is_admin(update, settings):
         return
     if query.data != "admin:update:yes":
-        await query.edit_message_text(texts.UPDATE_CANCELLED)
+        await query.edit_message_text(texts.UPDATE_CANCELLED, reply_markup=_navigation_keyboard(admin=True))
         return
     if not settings.dry_run:
-        await query.edit_message_text(texts.UPDATE_LIVE_MODE)
+        await query.edit_message_text(texts.UPDATE_LIVE_MODE, reply_markup=_navigation_keyboard(admin=True))
         return
     store = _update_store(context, settings)
     try:
         await asyncio.to_thread(store.request_install, datetime.now(timezone.utc))
     except OSError as error:
         logger.error("Could not record update request: %s", type(error).__name__)
-        await query.edit_message_text(texts.UPDATE_REQUEST_FAILED)
+        await query.edit_message_text(texts.UPDATE_REQUEST_FAILED, reply_markup=_navigation_keyboard(admin=True))
         return
     logger.info("Update installation requested by the administrator")
-    await query.edit_message_text(texts.UPDATE_REQUESTED)
+    await query.edit_message_text(texts.UPDATE_REQUESTED, reply_markup=_navigation_keyboard(admin=True))
 
 
 async def update_status_job(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -356,21 +499,25 @@ async def help_command(
         return
     settings: Settings | None = context.application.bot_data.get("settings")
     is_admin = settings is not None and _is_admin(update, settings)
-    await update.message.reply_text(ADMIN_HELP_TEXT if is_admin else USER_HELP_TEXT)
+    await update.message.reply_text(
+        ADMIN_HELP_TEXT if is_admin else USER_HELP_TEXT,
+        reply_markup=_navigation_keyboard(),
+    )
 
 
 async def cancel_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    if update.message is None or update.effective_user is None:
+    message = getattr(update, "effective_message", None) or update.message
+    if message is None or update.effective_user is None:
         return
     workflow: ReceiptWorkflow = context.application.bot_data["receipt_workflow"]
     was_cancelled = await workflow.cancel_current(update.effective_user.id)
     if was_cancelled:
-        await update.message.reply_text(texts.CANCELLED)
+        await message.reply_text(texts.CANCELLED, reply_markup=_navigation_keyboard())
     else:
-        await update.message.reply_text(texts.NOTHING_TO_CANCEL)
+        await message.reply_text(texts.NOTHING_TO_CANCEL, reply_markup=_navigation_keyboard())
 
 
 async def receive_receipt(
@@ -401,7 +548,8 @@ async def latest_expenses_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    if update.message is None or update.effective_user is None:
+    message = getattr(update, "effective_message", None) or update.message
+    if message is None or update.effective_user is None:
         return
     database: Database = context.application.bot_data["database"]
     expenses = [
@@ -414,16 +562,17 @@ async def latest_expenses_command(
         if expense.status in _STATUS_LABELS
     ][:10]
     if not expenses:
-        await update.message.reply_text(texts.LATEST_EMPTY)
+        await _show_command_screen(update, texts.LATEST_EMPTY, _navigation_keyboard())
         return
-    await update.message.reply_text(_format_recent_expenses(expenses))
+    await _show_command_screen(update, _format_recent_expenses(expenses), _navigation_keyboard())
 
 
 async def queue_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    if update.message is None or update.effective_user is None:
+    message = getattr(update, "effective_message", None) or update.message
+    if message is None or update.effective_user is None:
         return
     database: Database = context.application.bot_data["database"]
     expenses = await asyncio.to_thread(
@@ -431,25 +580,33 @@ async def queue_command(
         update.effective_user.id,
     )
     if not expenses:
-        await update.message.reply_text(texts.QUEUE_EMPTY)
+        await _show_command_screen(update, texts.QUEUE_EMPTY, _navigation_keyboard())
         return
     lines = [texts.QUEUE_HEADER]
     for expense in expenses:
         lines.append(texts.expense_row(expense.payload, expense.status, queued=True))
     lines.extend(("", texts.QUEUE_FOOTER))
-    await update.message.reply_text("\n".join(lines))
+    await _show_command_screen(
+        update,
+        "\n".join(lines),
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton(texts.MENU_RETRY, callback_data="menu:retry")],
+            *_navigation_keyboard().inline_keyboard,
+        ]),
+    )
 
 
 async def retry_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    if update.message is None or update.effective_user is None:
+    message = getattr(update, "effective_message", None) or update.message
+    if message is None or update.effective_user is None:
         return
     service: ExpenseRetryService | None = context.application.bot_data["retry_service"]
     if service is None:
-        await update.message.reply_text(
-            texts.PORTAL_UNAVAILABLE
+        await message.reply_text(
+            texts.PORTAL_UNAVAILABLE, reply_markup=_navigation_keyboard()
         )
         return
     database: Database = context.application.bot_data["database"]
@@ -458,19 +615,20 @@ async def retry_command(
         update.effective_user.id,
     )
     if requested == 0:
-        await update.message.reply_text(texts.NOTHING_TO_RETRY)
+        await message.reply_text(texts.NOTHING_TO_RETRY, reply_markup=_navigation_keyboard())
         return
     summary = await service.process_due(
         context.bot,
         telegram_user_id=update.effective_user.id,
     )
-    await update.message.reply_text(
+    await message.reply_text(
         texts.RETRY_DONE_WITH_TRIALS.format(
             saved=summary.succeeded - summary.trials, trials=summary.trials,
             pending=summary.pending, failed=summary.failed,
         ) if summary.trials else texts.RETRY_DONE.format(
             saved=summary.succeeded, pending=summary.pending, failed=summary.failed,
-        )
+        ),
+        reply_markup=_navigation_keyboard(),
     )
 
 
@@ -479,7 +637,9 @@ async def manual_expense_command(
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
     workflow: ReceiptWorkflow = context.application.bot_data["receipt_workflow"]
-    await workflow.start_manual_expense(update, context)
+    await workflow.start_manual_expense(
+        update, context, collect_data=True, direction=None
+    )
 
 
 async def manual_income_command(
@@ -494,15 +654,16 @@ async def refresh_options_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    if update.message is None or update.effective_user is None:
+    message = getattr(update, "effective_message", None) or update.message
+    if message is None or update.effective_user is None:
         return
     settings: Settings = context.application.bot_data["settings"]
     if update.effective_user.id != settings.admin_user_id:
-        await update.message.reply_text(texts.ADMIN_ONLY)
+        await message.reply_text(texts.ADMIN_ONLY)
         return
     client: BilancioClient | None = context.application.bot_data["bilancio_client"]
     if client is None:
-        await update.message.reply_text(texts.PORTAL_UNAVAILABLE)
+        await message.reply_text(texts.PORTAL_UNAVAILABLE, reply_markup=_navigation_keyboard(admin=True))
         return
     await client.clear_options_cache()
     job_queue = getattr(context.application, "job_queue", None)
@@ -513,8 +674,8 @@ async def refresh_options_command(
             name="portal-options-manual-preload",
             data={"notify_chat_id": update.effective_user.id},
         )
-    await update.message.reply_text(
-        texts.REFRESH_PROGRESS
+    await message.reply_text(
+        texts.REFRESH_PROGRESS, reply_markup=_navigation_keyboard(admin=True)
     )
 
 
@@ -547,6 +708,7 @@ def _summary_keyboard(start_year: int, today: date) -> InlineKeyboardMarkup:
             buttons,
             [InlineKeyboardButton(texts.REFRESH_BUTTON, callback_data=f"summary:{start_year}")],
             [InlineKeyboardButton(texts.DETAILS_BUTTON, callback_data=f"summary:details:{start_year}")],
+            *_navigation_keyboard().inline_keyboard,
         ]
     )
 
@@ -575,16 +737,17 @@ async def summary_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    if update.message is None:
+    message = getattr(update, "effective_message", None) or update.message
+    if message is None:
         return
     if context.application.bot_data.get("bilancio_client") is None:
-        await update.message.reply_text(texts.PORTAL_UNAVAILABLE)
+        await message.reply_text(texts.PORTAL_UNAVAILABLE, reply_markup=_navigation_keyboard())
         return
     if context.application.bot_data.get(_SUMMARY_RUNNING_KEY):
-        await update.message.reply_text(texts.SUMMARY_BUSY)
+        await message.reply_text(texts.SUMMARY_BUSY, reply_markup=_navigation_keyboard())
         return
     start_year = scout_year_start(date.today())
-    progress = await update.message.reply_text(_summary_progress_text(start_year))
+    progress = await message.reply_text(_summary_progress_text(start_year), reply_markup=_navigation_keyboard())
     _schedule_summary(
         context,
         chat_id=progress.chat_id,
@@ -672,16 +835,17 @@ async def test_bilancio_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    if update.message is None or update.effective_user is None:
+    message = getattr(update, "effective_message", None) or update.message
+    if message is None or update.effective_user is None:
         return
     settings: Settings = context.application.bot_data["settings"]
     if update.effective_user.id != settings.admin_user_id:
-        await update.message.reply_text(texts.ADMIN_ONLY)
+        await message.reply_text(texts.ADMIN_ONLY)
         return
     client: BilancioClient | None = context.application.bot_data["bilancio_client"]
     if client is None:
-        await update.message.reply_text(
-            texts.PORTAL_UNAVAILABLE
+        await message.reply_text(
+            texts.PORTAL_UNAVAILABLE, reply_markup=_navigation_keyboard(admin=True)
         )
         return
     try:
@@ -689,22 +853,23 @@ async def test_bilancio_command(
     except ManualPortalLoginRequired as error:
         logger.error("AGESCI manual login is required")
         debug_path = Path(settings.data_path) / "debug"
-        await update.message.reply_text(
+        await message.reply_text(
             texts.HEALTH_MANUAL.format(
                 folder=debug_path,
                 diagnostic_file=f" ({Path(error.diagnostic_path).name})" if error.diagnostic_path else "",
-            )
+            ),
+            reply_markup=_navigation_keyboard(admin=True),
         )
         return
     except BilancioClientError as error:
         logger.error("AGESCI health check failed: %s", type(error).__name__)
         debug_path = Path(settings.data_path) / "debug"
-        await update.message.reply_text(
-            texts.HEALTH_FAILED.format(folder=debug_path)
+        await message.reply_text(
+            texts.HEALTH_FAILED.format(folder=debug_path), reply_markup=_navigation_keyboard(admin=True)
         )
         return
-    await update.message.reply_text(
-        texts.HEALTH_OK
+    await message.reply_text(
+        texts.HEALTH_OK, reply_markup=_navigation_keyboard(admin=True)
     )
 
 
@@ -791,18 +956,20 @@ async def clean_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    if update.message is None:
+    message = getattr(update, "effective_message", None) or update.message
+    if message is None:
         return
     settings: Settings = context.application.bot_data["settings"]
     if not _is_admin(update, settings):
-        await update.message.reply_text(texts.ADMIN_ONLY)
+        await message.reply_text(texts.ADMIN_ONLY)
         return
-    await update.message.reply_text(
+    await message.reply_text(
         texts.CLEAN_PROMPT,
         reply_markup=InlineKeyboardMarkup(
             [
                 [InlineKeyboardButton(texts.CLEAN_YES, callback_data="admin:clean:yes")],
                 [InlineKeyboardButton(texts.CLEAN_NO, callback_data="admin:clean:no")],
+                *_navigation_keyboard(admin=True).inline_keyboard,
             ]
         ),
     )
@@ -820,7 +987,7 @@ async def clean_callback(
     if not _is_admin(update, settings):
         return
     if query.data != "admin:clean:yes":
-        await query.edit_message_text(texts.CLEAN_CANCELLED)
+        await query.edit_message_text(texts.CLEAN_CANCELLED, reply_markup=_navigation_keyboard(admin=True))
         return
     database: Database = context.application.bot_data["database"]
     counts = await asyncio.to_thread(database.clear_history)
@@ -833,7 +1000,8 @@ async def clean_callback(
     await asyncio.to_thread(_truncate_logs, data_path / "logs")
     logger.info("Local history cleared by the administrator")
     await query.edit_message_text(
-        texts.CLEAN_DONE.format(expenses=counts['expenses'], pending=counts['retries'], files=removed_files)
+        texts.CLEAN_DONE.format(expenses=counts['expenses'], pending=counts['retries'], files=removed_files),
+        reply_markup=_navigation_keyboard(admin=True),
     )
 
 

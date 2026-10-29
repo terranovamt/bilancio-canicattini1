@@ -1,3 +1,4 @@
+import asyncio
 import tempfile
 import unittest
 from dataclasses import replace
@@ -166,6 +167,56 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state[0], "awaiting_receipt_data")
         self.assertIn("29/10/2026", message.reply_text.await_args.args[0])
 
+    async def test_persists_manual_recovery_before_analysis_and_bounds_total_wait(self) -> None:
+        async def stalled_analysis(file_bytes: bytes, file_name: str) -> ReceiptData:
+            state = self.database.get_conversation_state(12345)
+            self.assertIsNotNone(state)
+            self.assertEqual(state[0], "awaiting_receipt_data")
+            stored = self.database.get_expense(state[1]["expense_id"])
+            self.assertTrue(Path(stored.payload["pending_path"]).is_file())
+            self.assertIsNone(stored.payload["date"])
+            await asyncio.Event().wait()
+            return self.analyzer.receipt
+
+        self.workflow._settings = replace(
+            make_settings(), local_vision_timeout_seconds=1
+        )
+        self.workflow._analyzer = SimpleNamespace(analyze=stalled_analysis)
+        message, update, context = self.make_photo_update(b"stalled-receipt")
+        await asyncio.wait_for(self.workflow.receive_receipt(update, context), timeout=3)
+
+        reply = message.reply_text.await_args.args[0]
+        self.assertIn("Inseriamo i dati a mano", reply)
+        self.assertIn(texts.MISSING_DATE, reply)
+        self.assertIn("Codice: timeout", reply)
+        self.assertTrue(reply.endswith(texts.MISSING_DATE))
+        state = self.database.get_conversation_state(12345)
+        stored = self.database.get_expense(state[1]["expense_id"])
+        self.assertTrue(Path(stored.payload["pending_path"]).is_file())
+
+    async def test_photo_skips_direction_and_requests_expense_types(self) -> None:
+        portal = FakeBilancioClient()
+        portal.list_transaction_types = AsyncMock(
+            return_value=[PortalOption("type-1", "Tipo uscita")]
+        )
+        self.workflow._bilancio = portal
+        _, update, context = self.make_photo_update(b"automatic-direction")
+        await self.workflow.receive_receipt(update, context)
+        user = update.effective_user
+        await self._tap(self.workflow, user, "receipt:confirm")
+        query = await self._tap(self.workflow, user, "receipt:choose:0")
+        state, data = self.database.get_conversation_state(user.id)
+        self.assertEqual(state, "awaiting_transaction_type")
+        self.assertEqual(data["direction"], "uscita")
+        self.assertEqual(
+            portal.list_transaction_types.await_args.args[1],
+            TransactionDirection.EXPENSE,
+        )
+        self.assertNotIn(
+            texts.DIRECTION_PROMPT,
+            [call.args[0] for call in query.edit_message_text.await_args_list],
+        )
+
     async def test_telegram_transfer_failure_does_not_start_analysis_or_store_files(self) -> None:
         for stage in ("get_file", "download", "progress_message"):
             for error_type in (TimedOut, NetworkError):
@@ -266,16 +317,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             ),
             SimpleNamespace(),
         )
-        direction_query = self.make_query("receipt:direction:uscita")
-        await workflow.handle_callback(
-            SimpleNamespace(
-                callback_query=direction_query,
-                effective_user=SimpleNamespace(id=12345),
-            ),
-            SimpleNamespace(),
-        )
-
-        type_markup = direction_query.edit_message_text.await_args.kwargs["reply_markup"]
+        type_markup = account_query.edit_message_text.await_args.kwargs["reply_markup"]
         self.assertEqual(type_markup.inline_keyboard[0][0].text, "Tipo uscita")
         self.assertEqual(
             self.database.get_conversation_state(12345)[0],
@@ -328,7 +370,6 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         for callback_data in (
             "receipt:confirm",
             "receipt:choose:0",
-            "receipt:direction:entrata",
             "receipt:choose:0",
         ):
             query = self.make_query(callback_data)
@@ -453,7 +494,6 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         for data in (
             "receipt:confirm",
             "receipt:choose:0",
-            "receipt:direction:uscita",
             "receipt:choose:0",
         ):
             await self._tap(workflow, SimpleNamespace(id=12345), data)
@@ -486,7 +526,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
                 await workflow.receive_receipt(update, context)
                 for data in (
                     "receipt:confirm", "receipt:choose:0",
-                    "receipt:direction:uscita", "receipt:choose:0",
+                    "receipt:choose:0",
                 ):
                     query = await self._tap(workflow, SimpleNamespace(id=12345), data, context)
                 text = query.edit_message_text.await_args.args[0]
@@ -533,7 +573,6 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         for callback_data in (
             "receipt:confirm",
             "receipt:choose:0",
-            "receipt:direction:entrata",
             "receipt:choose:0",
         ):
             query = self.make_query(callback_data)
@@ -595,7 +634,6 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         for callback_data in (
             "receipt:confirm",
             "receipt:choose:0",
-            "receipt:direction:uscita",
             "receipt:choose:0",
         ):
             query = self.make_query(callback_data)
@@ -625,8 +663,8 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             PortalOption("Gruppo G1", "Gruppo G1"),
         )
 
-    async def test_manual_one_euro_income_with_fake_live_client(self) -> None:
-        for direction in (TransactionDirection.INCOME,):
+    async def test_manual_one_euro_income_and_expense_with_fake_live_client(self) -> None:
+        for direction in TransactionDirection:
             with self.subTest(direction=direction):
                 portal = FakeBilancioClient()
                 portal.list_accounts = AsyncMock(
@@ -645,17 +683,17 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
                         message=SimpleNamespace(reply_text=AsyncMock()),
                         effective_user=user,
                     ),
-                    SimpleNamespace(),
+                    SimpleNamespace(), collect_data=True, direction=None,
                 )
                 expense_id = self.database.get_conversation_state(user.id)[1]["expense_id"]
-                await self._tap(workflow, user, "receipt:edit:total_amount")
-                await workflow.handle_text(
-                    SimpleNamespace(
-                        message=SimpleNamespace(text="1,00", reply_text=AsyncMock()),
-                        effective_user=user,
-                    ),
-                    SimpleNamespace(),
-                )
+                for value in ("29/10/2026", "Esempio manuale", "1,00"):
+                    await workflow.handle_text(
+                        SimpleNamespace(
+                            message=SimpleNamespace(text=value, reply_text=AsyncMock()),
+                            effective_user=user,
+                        ),
+                        SimpleNamespace(),
+                    )
                 self.assertEqual(
                     self.database.get_conversation_state(user.id)[0],
                     "awaiting_confirmation",
@@ -705,7 +743,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
                 message=SimpleNamespace(reply_text=AsyncMock()),
                 effective_user=user,
             ),
-            SimpleNamespace(),
+            SimpleNamespace(), direction=None,
         )
         state = self.database.get_conversation_state(user.id)
         assert state is not None
@@ -779,7 +817,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(portal.list_transaction_types.await_count, 1)
         self.assertEqual(portal.submitted, [])
 
-    async def test_type_read_failure_cancels_manual_entry_automatically(self) -> None:
+    async def test_type_read_failure_keeps_manual_entry_for_retry(self) -> None:
         portal = FakeBilancioClient()
         portal.list_transaction_types = AsyncMock(
             side_effect=BilancioClientError("Unavailable")
@@ -793,16 +831,17 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
 
         query = await self._tap(workflow, user, "receipt:direction:entrata", context)
 
-        self.assertIsNone(self.database.get_conversation_state(user.id))
-        self.assertIsNone(self.database.get_expense(expense_id))
-        self.assertIn("annullato la prova", query.edit_message_text.await_args.args[0])
+        self.assertEqual(self.database.get_conversation_state(user.id)[0], "awaiting_confirmation")
+        self.assertIsNotNone(self.database.get_expense(expense_id))
+        self.assertIn("ho conservato i dati", query.edit_message_text.await_args.args[0])
         self.assertEqual(portal.submitted, [])
-        message = SimpleNamespace(reply_text=AsyncMock())
-        await workflow.start_manual_expense(
-            SimpleNamespace(message=message, effective_user=user),
-            SimpleNamespace(),
+        portal.list_transaction_types.side_effect = None
+        portal.list_transaction_types.return_value = [PortalOption("type", "Tipo")]
+        for data in ("receipt:confirm", "receipt:choose:0", "receipt:direction:entrata"):
+            await self._tap(workflow, user, data, context)
+        self.assertEqual(
+            self.database.get_conversation_state(user.id)[0], "awaiting_transaction_type"
         )
-        self.assertIn("Entrata a mano", message.reply_text.await_args.args[0])
 
     async def test_receipt_type_read_failure_keeps_receipt_for_retry(self) -> None:
         portal = FakeBilancioClient()
@@ -825,9 +864,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         user = update.effective_user
         context.bot.send_message = AsyncMock()
         await self._tap(workflow, user, "receipt:confirm", context)
-        await self._tap(workflow, user, "receipt:choose:0", context)
-
-        query = await self._tap(workflow, user, "receipt:direction:uscita", context)
+        query = await self._tap(workflow, user, "receipt:choose:0", context)
 
         state = self.database.get_conversation_state(user.id)
         self.assertEqual(state[0], "awaiting_confirmation")
@@ -847,7 +884,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         )
 
         replies = [call.args[0] for call in message.reply_text.await_args_list]
-        self.assertIn("Avevi una prova rimasta aperta: l'ho chiusa.", replies)
+        self.assertIn(texts.MANUAL_PREVIOUS_CANCELLED, replies)
         self.assertIsNone(self.database.get_expense(old_expense_id))
         state = self.database.get_conversation_state(user.id)
         self.assertEqual(state[0], "awaiting_confirmation")
@@ -870,7 +907,8 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         labels = [row[0].text for row in markup.inline_keyboard]
         self.assertEqual(
             labels,
-            ["Tipo 8", "Tipo 3", "Tipo 0", "Tipo 1", "Tipo 2", "Tipo 4", "➕ Mostra altre (4)"],
+            ["Tipo 8", "Tipo 3", "Tipo 0", "Tipo 1", "Tipo 2", "Tipo 4", "➕ Mostra altre (4)",
+             texts.HOME_BUTTON],
         )
         self.database.transaction_type_usage.assert_called_once_with("Cassa Co.ca", "entrata")
 
@@ -878,7 +916,8 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         more_markup = more.edit_message_text.await_args.kwargs["reply_markup"]
         self.assertEqual(
             [row[0].callback_data for row in more_markup.inline_keyboard],
-            ["receipt:choose:5", "receipt:choose:6", "receipt:choose:7", "receipt:choose:9", "receipt:cancel"],
+            ["receipt:choose:5", "receipt:choose:6", "receipt:choose:7", "receipt:choose:9",
+             "receipt:cancel", "menu:home"],
         )
 
         await self._tap(workflow, user, "receipt:choose:9")
@@ -887,7 +926,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state[1]["transaction_type"]["label"], "Tipo 9")
 
     async def test_failed_ai_retains_file_and_accepts_all_fields_manually(self) -> None:
-        for error_type in (LocalVisionError, ReceiptParseError, ImagePreprocessingError):
+        for error_type in (LocalVisionError, ReceiptParseError, ImagePreprocessingError, TimeoutError):
             with self.subTest(error=error_type.__name__):
                 analyzer = SimpleNamespace(analyze=AsyncMock(side_effect=error_type("private")))
                 portal = FakeBilancioClient()
@@ -920,7 +959,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(portal.submitted, [])
                 for data in (
                     "receipt:confirm", "receipt:choose:0",
-                    "receipt:direction:uscita", "receipt:choose:0",
+                    "receipt:choose:0",
                 ):
                     await self._tap(workflow, user, data, context)
                 stored = self.database.get_expense(expense_id)
@@ -978,7 +1017,8 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
                 await workflow.cancel_current(12345)
 
     async def test_manual_income_collects_fields_and_restricts_to_admin(self) -> None:
-        workflow = self._manual_portal_workflow(FakeBilancioClient())
+        portal = FakeBilancioClient()
+        workflow = self._manual_portal_workflow(portal)
         message = SimpleNamespace(reply_text=AsyncMock())
         await workflow.start_manual_expense(
             SimpleNamespace(message=message, effective_user=SimpleNamespace(id=999)),
@@ -1001,28 +1041,41 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
                 SimpleNamespace(),
             )
         self.assertEqual(self.database.get_conversation_state(12345)[0], "awaiting_confirmation")
+        user = SimpleNamespace(id=12345)
+        await self._tap(workflow, user, "receipt:confirm")
+        query = await self._tap(workflow, user, "receipt:choose:0")
+        state = self.database.get_conversation_state(user.id)
+        self.assertEqual(state[0], "awaiting_transaction_type")
+        self.assertEqual(state[1]["direction"], "entrata")
+        self.assertNotIn(
+            texts.DIRECTION_PROMPT,
+            [call.args[0] for call in query.edit_message_text.await_args_list],
+        )
+        await self._tap(workflow, user, "receipt:choose:0")
+        self.assertEqual(portal.submitted, [])
+        await self._tap(workflow, user, "receipt:manual_save")
+        self.assertEqual(portal.submitted[0][0].direction, TransactionDirection.INCOME)
+        self.assertFalse(portal.submitted[0][1])
 
-    async def test_unattached_expense_is_blocked_by_direction_and_final_submission(self) -> None:
+    async def test_non_manual_unattached_expense_is_blocked_at_direction_and_submission(self) -> None:
         portal = FakeBilancioClient()
         workflow = self._manual_portal_workflow(portal)
         user = SimpleNamespace(id=12345)
         expense_id = await self._start_manual(workflow, user)
+        payload = self.database.get_expense(expense_id).payload
+        payload.pop("manual_entry")
+        self.database.update_expense_payload(expense_id, payload)
         await self._tap(workflow, user, "receipt:confirm")
         query = await self._tap(workflow, user, "receipt:choose:0")
-        buttons = [
-            button.callback_data
-            for row in query.edit_message_text.await_args.kwargs["reply_markup"].inline_keyboard
-            for button in row
-        ]
-        self.assertNotIn("receipt:direction:uscita", buttons)
-        query = await self._tap(workflow, user, "receipt:direction:uscita")
         self.assertEqual(query.edit_message_text.await_args.args[0], texts.EXPENSE_RECEIPT_REQUIRED)
-        for data in ("receipt:direction:entrata", "receipt:choose:0"):
-            await self._tap(workflow, user, data)
         state = self.database.get_conversation_state(12345)
         state[1]["direction"] = "uscita"
-        self.database.save_conversation_state(12345, state[0], state[1])
-        query = await self._tap(workflow, user, "receipt:manual_save")
+        state[1]["transaction_type"] = {"value": "type", "label": "Tipo"}
+        query = self.make_query("receipt:choose:0")
+        await workflow._submit_expense(
+            SimpleNamespace(message=query.message, callback_query=query),
+            SimpleNamespace(), user.id, expense_id, payload, state[1], "-",
+        )
         self.assertEqual(query.edit_message_text.await_args.args[0], texts.EXPENSE_RECEIPT_REQUIRED)
         self.assertEqual(portal.submitted, [])
         self.assertEqual(self.database.get_expense(expense_id).status, "failed")

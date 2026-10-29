@@ -4,98 +4,81 @@ Catalogo aggiornato il 29 ottobre 2026 dai testi centralizzati in [bot/messages.
 
 I dati sono inventati; casse, tipologie e unità sono esempi, non elenchi reali. I percorsi diagnostici usano segnaposto e sono visibili solo all'amministratore. I pulsanti sono indicati tra parentesi quadre.
 
-Non eseguire `/testspesa` o `/pulisci` su dati reali per provare questi messaggi: `/testspesa` salva davvero dopo conferma anche con `DRY_RUN=true`; `/pulisci` cancella la cronologia locale dopo conferma.
+Non eseguire `/manual`, `/entrata` o `/pulisci` su dati reali per provare questi messaggi: `/manual` e `/entrata` salvano davvero dopo conferma anche con `DRY_RUN=true`; `/pulisci` cancella la cronologia locale dopo conferma. `/testspesa` resta un alias di `/manual`.
 
 ## A. Avvio e aiuto
 
-### 1 · `/start` — utente
+### 1 · Avvio — utente
 
 ```text
 👋 Ciao! Qui tieni in ordine le spese.
 
-📷 Mandami la foto o il PDF di uno scontrino: lo leggo io e ti faccio controllare i dati prima di salvare.
-
-Cosa puoi fare:
-• /ultime – le ultime spese
-• /riepilogo – saldi delle casse
-• /help – tutti i comandi
+📷 Mandami una foto o un PDF dello scontrino, oppure scegli cosa fare con i pulsanti qui sotto.
 ```
 
 ```text
-[/ultime] [/riepilogo]
-[/coda] [/help]
-[/annulla]
+[📷 Nuovo scontrino]
+[📊 Riepilogo] [📋 Ultime operazioni]
+[⏳ Operazioni in attesa]
+[❓ Aiuto] [✖️ Annulla operazione]
 ```
 
-### 2 · `/start` — amministratore
+I pulsanti sono sotto il messaggio. All'avvio la vecchia tastiera con i comandi slash viene rimossa; i comandi scritti restano disponibili come alternativa.
+
+### 2 · Avvio — amministratore
+
+Il testo dell'utente viene completato con la modalità attiva e l'avviso sulle operazioni manuali:
 
 ```text
-👋 Ciao! Sei collegato come amministratore.
-
-📷 Mandami uno scontrino per registrare una spesa.
-✍️ /entrata – inserisci un’entrata senza ricevuta
-📊 /riepilogo – saldi delle casse
-
 🧪 Modalità PROVA: non viene salvato nulla nel portale.
-/entrata e /testspesa salvano davvero, anche in modalità prova, dopo la tua conferma. Le uscite richiedono una ricevuta.
 
-🔖 Versione attiva: a1b2c3d del 29/10/2026 13:00 – Titolo del commit
-🆕 Nuova versione disponibile: e4f5a6b - Nuovo titolo (29/10/2026 14:00)
-Per installarla: /aggiorna
-
-Altri strumenti: /help
-```
-
-La parte sulla versione cambia secondo lo stato rilevato dal NAS:
-
-```text
-✅ È l'ultima versione (controllo del 29/10/2026 14:10).
-ℹ️ Il controllo automatico degli aggiornamenti non è ancora attivo.
-⚠️ L'ultimo controllo degli aggiornamenti non è riuscito (29/10/2026 14:10).
-⚠️ Ultimo aggiornamento non riuscito (e4f5a6b - Nuovo titolo …): la nuova versione non è partita, ho ripristinato quella precedente.
-⏳ Installazione richiesta: parte al prossimo controllo.
-🔖 Versione attiva: non indicata (installata senza Git).
-```
-
-In modalità reale la riga della modalità diventa:
-
-```text
-⚠️ Modalità REALE: le spese confermate vengono salvate nel portale.
+⚠️ Gli inserimenti manuali salvano davvero solo dopo «Salva davvero», anche in modalità prova.
 ```
 
 ```text
-[/entrata] [/testbilancio]
-[/ultime] [/riepilogo]
-[/coda] [/help]
-[/annulla]
+[📷 Nuovo scontrino]
+[✍️ Inserisci a mano] [💰 Nuova entrata]
+[📊 Riepilogo] [📋 Ultime operazioni]
+[⏳ Operazioni in attesa]
+[❓ Aiuto] [✖️ Annulla operazione]
+[⚙️ Amministrazione]
 ```
 
-`/aggiornaopzioni`, `/aggiorna` e `/pulisci` restano disponibili con `/help` e nei suggerimenti dei comandi, non nella tastiera rapida.
-
-### 3 · `/help`
+La schermata Amministrazione contiene:
 
 ```text
-📋 Cosa posso fare per te
+[🔌 Verifica collegamento]
+[🔄 Aggiorna casse e tipologie]
+[🔖 Versione e aggiornamenti]
+[🧹 Pulisci cronologia]
+[🏠 Menu principale]
+```
 
-📷 Scontrino – mandami una foto o un PDF
-/ultime – le ultime 10 spese
-/riepilogo – saldi e andamento delle casse
-/coda – spese in attesa o da controllare
-/riprova – riprovo le spese in attesa
-/annulla – interrompo quello che stiamo facendo
+Versione attiva e disponibile vengono mostrate nella schermata **Versione e aggiornamenti**, con **Installa aggiornamento**, **Indietro** e **Menu principale**. Il pulsante di installazione apre la conferma, non installa subito. La pulizia mantiene la propria conferma.
+
+### 3 · Aiuto
+
+```text
+❓ Come funziona
+
+📷 Nuovo scontrino: invia una foto o un PDF, controlla i dati e scegli cassa e tipologia. Se non riesco a leggerlo, ti chiedo i dati a mano.
+
+📊 Riepilogo: consulta i saldi delle casse.
+📋 Ultime operazioni: controlla le tue registrazioni.
+⏳ Operazioni in attesa: consulta gli elementi da riprovare o verificare.
+
+Aprire il menu non annulla un inserimento in corso. Per interromperlo premi «Annulla operazione».
 ```
 
 Per l'amministratore si aggiunge:
 
 ```text
-🔧 Solo amministratore
-/entrata – inserisci un’entrata senza ricevuta
-/testspesa – alias di /entrata
-/testbilancio – verifico il collegamento al portale
-/aggiornaopzioni – aggiorno casse e tipologie
-/aggiorna – installo l'ultima versione del bot
-/pulisci – svuoto coda, ultime spese e registri
+✍️ Inserisci a mano: registra un’entrata o un’uscita senza foto.
+💰 Nuova entrata: registra un’entrata senza foto.
+⚠️ Queste operazioni salvano davvero, anche in modalità prova, solo dopo la conferma finale «Salva davvero».
 ```
+
+Le schermate hanno **Menu principale**; gli strumenti amministratore hanno anche **Indietro**. Il ritorno al menu non cancella un inserimento. I moduli conservano i pulsanti di correzione, conferma e annullamento riportati sotto, con in più il ritorno al menu. Le schermate informative sono accessibili durante le attese dell'AI o del portale; salvataggi e altre azioni che cambiano dati restano sequenziali.
 
 ## B. Inserimento da scontrino
 
@@ -179,6 +162,8 @@ Che categoria vuoi? Scrivi "-" per lasciarla vuota.
 ```
 
 ### 8 · Entrata o uscita
+
+Questo passaggio compare solo con `/manual`. `/entrata` è già impostato su Entrata; una foto o un PDF è già impostato su Uscita.
 
 ```text
 ↔️ È un'entrata o un'uscita? (2 di 3)
@@ -268,20 +253,28 @@ I campi vuoti non compaiono. La riga 👥 manca anche quando il portale non offr
 
 ## C. Inserimento manuale
 
-### 13 · Entrate manuali: `/entrata` e `/testspesa`
+### 13 · Inserimento manuale: `/entrata` e `/manual`
 
 `/entrata` chiede tutti i dati, senza precompilare importi o descrizioni:
 
 ```text
-✍️ Inseriamo un’entrata senza ricevuta: data, descrizione e importo, poi cassa e tipologia. Dopo la conferma finale sarà salvata davvero nel portale, anche in modalità prova. Puoi interrompere con /annulla.
+✍️ Inseriamo un’entrata senza ricevuta: data, descrizione e importo, poi cassa e tipologia. Dopo la conferma finale sarà salvata davvero nel portale, anche in modalità prova. Puoi interrompere con il pulsante Annulla.
 
 📅 Qual è la data? (es. 29/10/2026)
 ```
 
-`/testspesa` mantiene i valori iniziali modificabili. Entrambi permettono solo entrate senza ricevuta:
+`/manual` chiede tutti i dati e permette sia entrate sia uscite senza ricevuta; `/testspesa` ne è un alias:
 
 ```text
-✍️ Entrata a mano, senza ricevuta
+✍️ Inseriamo un’entrata o un’uscita senza ricevuta: data, descrizione e importo, poi cassa, direzione e tipologia. Dopo la conferma finale sarà salvata davvero nel portale, anche in modalità prova. Puoi interrompere con il pulsante Annulla.
+
+📅 Qual è la data? (es. 29/10/2026)
+```
+
+Dopo aver compilato i dati:
+
+```text
+✍️ Operazione a mano, senza ricevuta
 
 📅 29/10/2026
 📝 Prova Telegram
@@ -426,7 +419,7 @@ Non trovo casse nel portale.
 29/10 · Negozio esempio · 12,50 € · in attesa
 29/10 · Negozio esempio · 12,50 € · ⚠️ da controllare
 
-Scrivi /riprova per riprovare quelle in attesa.
+Premi «Riprova operazioni» per riprovare quelle in attesa.
 ```
 
 ```text
@@ -462,7 +455,7 @@ Non c'è niente da riprovare.
 Solo all'amministratore:
 
 ```text
-⚠️ Una spesa non è stata salvata dopo vari tentativi. Controlla con /coda.
+⚠️ Una spesa non è stata salvata dopo vari tentativi. Controlla «Operazioni in attesa» nel menu.
 ```
 
 ## E. Comandi amministratore
@@ -582,11 +575,11 @@ Non c'è niente da annullare.
 ```
 
 ```text
-Stiamo già lavorando su uno scontrino: completalo oppure scrivi /annulla.
+Stiamo già lavorando su uno scontrino: completalo oppure premi «Annulla operazione» nel menu.
 ```
 
 ```text
-Prima finiamo lo scontrino in corso, oppure scrivi /annulla.
+Prima finiamo lo scontrino in corso, oppure premi «Annulla operazione» nel menu.
 ```
 
 ```text
@@ -594,7 +587,7 @@ Avevi una prova rimasta aperta: l'ho chiusa.
 ```
 
 ```text
-Usa i pulsanti qui sopra, oppure scrivi /annulla.
+Usa i pulsanti qui sopra, oppure premi «Annulla operazione» nel menu.
 ```
 
 ### 24 · File e analisi
@@ -616,12 +609,12 @@ Questo scontrino l'ho già ricevuto, non lo rielaboro.
 ```
 
 ```text
-⚠️ Non sono riuscito a leggere lo scontrino con l’AI locale. Ho conservato il file temporaneo, senza inviarlo a servizi AI online. Inseriamo i dati a mano: data, descrizione e importo, poi cassa e tipologia. La ricevuta sarà archiviata quando confermi l’operazione; /annulla elimina la copia temporanea.
+⚠️ Non sono riuscito a leggere lo scontrino con l’AI locale. Ho conservato il file temporaneo, senza inviarlo a servizi AI online. Inseriamo i dati a mano: data, descrizione e importo, poi cassa e tipologia. La ricevuta sarà archiviata quando confermi l’operazione; Annulla elimina la copia temporanea.
 
 Non sono riuscito a leggere la data. Me la scrivi? (es. 29/10/2026)
 ```
 
-Questo è un unico messaggio al mittente, anche se è l'amministratore. Non viene inviata una seconda notifica per lo stesso errore AI. Il file resta disponibile per la compilazione manuale anche se il modello non è configurato.
+Questo è un unico messaggio al mittente, anche se è l'amministratore. Non viene inviata una seconda notifica per lo stesso errore AI. Il file resta disponibile per la compilazione manuale anche se il modello non è configurato o l'analisi va in timeout. File e stato manuale sono conservati prima dell'analisi.
 
 Solo se il mittente è amministratore, lo stesso messaggio aggiunge una diagnosi senza dati della ricevuta, per esempio:
 
@@ -632,12 +625,14 @@ Timeout configurato: 180 secondi.
 Ollama ha segnalato memoria insufficiente. Controlla la RAM libera del NAS e gli altri servizi in esecuzione.
 ```
 
+Per l'amministratore, la domanda sulla data viene mostrata dopo la diagnosi, alla fine dello stesso messaggio.
+
 Se il mittente è un altro utente autorizzato, non vede questa parte: il bot la invia solo all'amministratore, senza contenuti, nomi di file o identificativi della ricevuta. I motivi sono frasi controllate dal programma, non risposte grezze del modello.
 
-Per un'uscita senza ricevuta, anche da un vecchio pulsante o dalla coda:
+Per un'uscita senza ricevuta fuori dall'inserimento manuale dell'amministratore, anche da un vecchio pulsante o dalla coda:
 
 ```text
-⚠️ Per registrare un’uscita serve una ricevuta allegata. Non ho registrato nulla. Usa /annulla e invia una foto o un PDF: se non riesco a leggerlo, puoi compilare i dati a mano.
+⚠️ Per registrare un’uscita serve una ricevuta allegata. Non ho registrato nulla. Premi «Annulla operazione» nel menu e invia una foto o un PDF: se non riesco a leggerlo, puoi compilare i dati a mano.
 ```
 
 ### 25 · Pulsanti non più validi e formato manuale
@@ -681,7 +676,7 @@ Non riesco a leggere le casse dal portale adesso. Non ho salvato nulla e i dati 
 ```
 
 ```text
-Non riesco a leggere le casse dal portale. Ho annullato la prova, non è stato inserito nulla. Riprova più tardi con /testspesa.
+Non riesco a leggere le casse dal portale. Non ho inserito nulla e ho conservato i dati: premi «Va bene» per riprovare oppure Annulla.
 ```
 
 Per le tipologie si usa «le tipologie» al posto di «le casse». Solo all'amministratore:
@@ -703,7 +698,7 @@ Non riesco a leggere le casse. Dettagli: <cartella> (<file>)
 Solo all'amministratore:
 
 ```text
-⚠️ Registrazione non verificata. Controlla <cartella> e /coda.
+⚠️ Registrazione non verificata. Controlla <cartella> e «Operazioni in attesa» nel menu.
 ```
 
 ### 29 · Errore inserimento manuale
@@ -718,7 +713,7 @@ Solo all'amministratore:
 🏷️ Tipologia esempio
 👥 Unità esempio
 
-👉 Controlla nel portale se compare. Se non c'è, ripeti /testspesa.
+👉 Controlla nel portale se compare. Se non c'è, riparti dal menu con «Inserisci a mano» o «Nuova entrata».
 ```
 
 In un messaggio separato, solo all'amministratore:
