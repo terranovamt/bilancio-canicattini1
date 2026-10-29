@@ -15,11 +15,14 @@ from bot.application import (
     cancel_command,
     configure_bot_menu,
     help_command,
+    preload_options_job,
+    preload_portal_options,
     queue_command,
     refresh_options_command,
     start_command,
     test_bilancio_command,
 )
+from bilancio.client import BilancioClientError, PortalOption, TransactionDirection
 from config import Settings
 from db.database import Database, StoredExpense
 
@@ -95,12 +98,56 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
             clear_options_cache=AsyncMock(), create_expense=AsyncMock()
         )
         message = SimpleNamespace(reply_text=AsyncMock())
+        context = self.make_context(settings=make_settings(), bilancio_client=client)
+        context.application.job_queue = Mock()
         await refresh_options_command(
             SimpleNamespace(message=message, effective_user=SimpleNamespace(id=12345)),
-            self.make_context(settings=make_settings(), bilancio_client=client),
+            context,
         )
         client.clear_options_cache.assert_awaited_once()
         client.create_expense.assert_not_awaited()
+        context.application.job_queue.run_once.assert_called_once()
+
+    async def test_preload_reads_every_account_direction_without_submission(self) -> None:
+        accounts = [PortalOption("a", "Cassa Co.ca"), PortalOption("b", "Cassa EG")]
+        client = SimpleNamespace(
+            list_accounts=AsyncMock(return_value=accounts),
+            list_transaction_types=AsyncMock(
+                side_effect=[[], BilancioClientError("Unavailable"), [], []]
+            ),
+            create_expense=AsyncMock(),
+        )
+
+        loaded = await preload_portal_options(client)
+
+        self.assertEqual(loaded, 3)
+        self.assertEqual(client.list_transaction_types.await_count, 4)
+        requested = {
+            (call.args[0].label, call.args[1])
+            for call in client.list_transaction_types.await_args_list
+        }
+        self.assertEqual(
+            requested,
+            {
+                (account.label, direction)
+                for account in accounts
+                for direction in TransactionDirection
+            },
+        )
+        client.create_expense.assert_not_awaited()
+
+    async def test_nightly_preload_refreshes_cache_first(self) -> None:
+        client = SimpleNamespace(
+            clear_options_cache=AsyncMock(),
+            list_accounts=AsyncMock(return_value=[]),
+        )
+        context = self.make_context(bilancio_client=client)
+        context.job = SimpleNamespace(data={"refresh": True})
+
+        await preload_options_job(context)
+
+        client.clear_options_cache.assert_awaited_once()
+        client.list_accounts.assert_awaited_once()
 
     async def test_refresh_options_is_admin_only(self) -> None:
         client = SimpleNamespace(clear_options_cache=AsyncMock())

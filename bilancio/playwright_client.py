@@ -38,6 +38,8 @@ from bilancio.client import (
 
 logger = logging.getLogger(__name__)
 _MAX_ATTEMPTS = 3
+# Covers a full day so the nightly preload keeps menus fast until the next one.
+_OPTIONS_CACHE_SECONDS = 26 * 60 * 60
 
 
 async def _wait_for_visible_locator(locator: Locator, timeout_ms: int) -> bool:
@@ -266,7 +268,7 @@ class PlaywrightBilancioClient:
         async with self._options_lock:
             now = asyncio.get_running_loop().time()
             cached = self._options_cache.get(cache_key)
-            if cached is not None and now - cached[0] < 6 * 60 * 60:
+            if cached is not None and now - cached[0] < _OPTIONS_CACHE_SECONDS:
                 return cached[1]
             options = tuple(
                 await self._with_page(operation, transaction_date=selected_date)

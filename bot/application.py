@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
+from datetime import time as day_time, timezone
 from pathlib import Path
 
 from telegram import (
@@ -27,7 +28,11 @@ from telegram.ext import (
 from bot.access import is_authorized_user
 from bot.receipt_workflow import ReceiptAnalyzer, ReceiptWorkflow
 from bot.retry_service import ExpenseRetryService
-from bilancio.client import BilancioClient, BilancioClientError
+from bilancio.client import (
+    BilancioClient,
+    BilancioClientError,
+    TransactionDirection,
+)
 from bilancio.playwright_client import ManualPortalLoginRequired
 from config import Settings
 from db.database import Database, StoredExpense
@@ -112,6 +117,17 @@ def create_application(
             interval=300,
             first=30,
             name="expense-retry-queue",
+        )
+        application.job_queue.run_once(
+            preload_options_job,
+            when=10,
+            name="portal-options-preload",
+        )
+        application.job_queue.run_daily(
+            preload_options_job,
+            time=day_time(hour=2, minute=30, tzinfo=timezone.utc),
+            name="portal-options-nightly-refresh",
+            data={"refresh": True},
         )
     application.add_handler(TypeHandler(Update, authorize_update), group=-1)
     application.add_handler(CommandHandler("start", start_command))
@@ -317,9 +333,17 @@ async def refresh_options_command(
         await update.message.reply_text("Il collegamento al portale non è configurato.")
         return
     await client.clear_options_cache()
+    job_queue = getattr(context.application, "job_queue", None)
+    if job_queue is not None:
+        job_queue.run_once(
+            preload_options_job,
+            when=1,
+            name="portal-options-manual-preload",
+        )
     await update.message.reply_text(
-        "🔄 Cache svuotata. Le prossime scelte saranno rilette dal portale "
-        "e potranno richiedere più tempo. Nessuna spesa è stata inserita.\n"
+        "🔄 Cache svuotata. Rileggo casse e tipologie dal portale in "
+        "sottofondo: per qualche minuto le scelte potranno essere più lente. "
+        "Nessuna spesa è stata inserita.\n"
         "Se avevi già aperto un elenco, usa /annulla e ricomincia."
     )
 
@@ -368,6 +392,40 @@ async def retry_queue_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     service: ExpenseRetryService | None = context.application.bot_data["retry_service"]
     if service is not None:
         await service.process_due(context.bot)
+
+
+async def preload_options_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    client: BilancioClient | None = context.application.bot_data["bilancio_client"]
+    if client is None:
+        return
+    job = getattr(context, "job", None)
+    data = getattr(job, "data", None)
+    if isinstance(data, dict) and data.get("refresh") is True:
+        await client.clear_options_cache()
+    await preload_portal_options(client)
+
+
+async def preload_portal_options(client: BilancioClient) -> int:
+    """Read accounts and Voci Scout types so Telegram menus open from cache."""
+    try:
+        accounts = await client.list_accounts()
+    except BilancioClientError as error:
+        logger.warning("Portal options preload failed: %s", type(error).__name__)
+        return 0
+    loaded = 0
+    for account in accounts:
+        for direction in TransactionDirection:
+            try:
+                await client.list_transaction_types(account, direction)
+            except BilancioClientError as error:
+                logger.warning(
+                    "Portal transaction types preload failed: %s",
+                    type(error).__name__,
+                )
+                continue
+            loaded += 1
+    logger.info("Portal options preloaded for %d account directions", loaded)
+    return loaded
 
 
 async def telegram_error_handler(

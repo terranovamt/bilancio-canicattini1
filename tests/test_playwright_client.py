@@ -307,7 +307,7 @@ class PlaywrightBilancioClientTests(unittest.IsolatedAsyncioTestCase):
                     )
             self.assertEqual(client._with_page.await_count, 22)
 
-    async def test_options_cache_expires_after_six_hours(self) -> None:
+    async def test_options_cache_expires_after_twenty_six_hours(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             client = self.make_client(Path(directory))
             client._with_page = AsyncMock(return_value=[PortalOption("account", "Cassa")])
@@ -315,7 +315,10 @@ class PlaywrightBilancioClientTests(unittest.IsolatedAsyncioTestCase):
             with patch("bilancio.playwright_client.asyncio.get_running_loop") as loop:
                 loop.return_value.time.return_value = 10.0
                 await client.list_accounts(transaction_date=selected)
-                loop.return_value.time.return_value = 10.0 + 6 * 60 * 60
+                loop.return_value.time.return_value = 10.0 + 25 * 60 * 60
+                await client.list_accounts(transaction_date=selected)
+                self.assertEqual(client._with_page.await_count, 1)
+                loop.return_value.time.return_value = 10.0 + 26 * 60 * 60
                 await client.list_accounts(transaction_date=selected)
             self.assertEqual(client._with_page.await_count, 2)
 

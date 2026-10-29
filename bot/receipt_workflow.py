@@ -40,6 +40,22 @@ _FIELD_PROMPTS = {
     "total_amount": "Non riesco a leggere l’importo totale. Scrivilo, per esempio 12,50.",
 }
 _EDIT_FIELDS = {"date", "merchant", "total_amount", "suggested_category"}
+_CALLBACK_STATES = {
+    "confirm": {"awaiting_confirmation"},
+    "edit": {"awaiting_confirmation"},
+    "manual_save": {"awaiting_manual_final_confirmation"},
+    "direction": {"awaiting_direction"},
+    "voice": {"awaiting_accounting_voice"},
+    "choose": {
+        "awaiting_account",
+        "awaiting_transaction_type",
+        "awaiting_unit",
+        "awaiting_category",
+    },
+    "no_category": {"awaiting_category"},
+}
+_STALE_CHOICE_TEXT = "Questa scelta non è più attiva."
+_BUSY_TEXT = "⏳ Sto ancora lavorando, attendi."
 
 
 class ReceiptAnalyzer(Protocol):
@@ -64,6 +80,7 @@ class ReceiptWorkflow:
         self._pending_store = pending_store
         self._archive = archive
         self._bilancio = bilancio_client
+        self._busy_users: set[int] = set()
 
     async def start_manual_expense(
         self,
@@ -83,15 +100,22 @@ class ReceiptWorkflow:
                 "alcuna spesa."
             )
             return
-        if await asyncio.to_thread(
+        if user.id in self._busy_users:
+            await message.reply_text(_BUSY_TEXT)
+            return
+        previous_state = await asyncio.to_thread(
             self._database.get_conversation_state,
             user.id,
-        ) is not None:
-            await message.reply_text(
-                "C’è già un’operazione in corso. Usa /annulla prima di iniziare "
-                "la prova manuale."
-            )
-            return
+        )
+        if previous_state is not None:
+            if not await self._is_manual_state(previous_state[1]):
+                await message.reply_text(
+                    "C’è già uno scontrino in lavorazione. Completalo oppure usa "
+                    "/annulla prima di iniziare la prova manuale."
+                )
+                return
+            await self.cancel_current(user.id)
+            await message.reply_text("Ho annullato la prova precedente rimasta aperta.")
 
         expense_id = uuid.uuid4().hex
         await asyncio.to_thread(
@@ -343,71 +367,100 @@ class ReceiptWorkflow:
         user = update.effective_user
         if query is None or user is None or query.data is None:
             return
-        await query.answer()
+        action, _, value = query.data.partition(":")
+        if action != "receipt":
+            await query.answer()
+            return
+        if user.id in self._busy_users:
+            await query.answer(_BUSY_TEXT)
+            return
         saved_state = await asyncio.to_thread(
             self._database.get_conversation_state, user.id
         )
         if saved_state is None:
-            await query.edit_message_text("Questa operazione non è più attiva.")
+            await query.answer("Questa operazione non è più attiva.")
             return
         state, state_data = saved_state
+        command = value.split(":", 1)[0]
+        allowed_states = _CALLBACK_STATES.get(command)
+        if command != "cancel" and (allowed_states is None or state not in allowed_states):
+            await query.answer(_STALE_CHOICE_TEXT)
+            return
+        await query.answer()
+        self._busy_users.add(user.id)
+        try:
+            await self._dispatch_callback(
+                update,
+                context,
+                query,
+                user.id,
+                state,
+                state_data,
+                value,
+            )
+        finally:
+            self._busy_users.discard(user.id)
+
+    async def _dispatch_callback(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        query: CallbackQuery,
+        user_id: int,
+        state: str,
+        state_data: dict[str, object],
+        value: str,
+    ) -> None:
         expense_id = state_data.get("expense_id")
         if not isinstance(expense_id, str):
             raise ValueError("Conversation state has no expense identifier")
         expense = await asyncio.to_thread(self._database.get_expense, expense_id)
         if expense is None:
-            await self._clear_state(user.id)
+            await self._clear_state(user_id)
             await query.edit_message_text(
                 "L’operazione non è più disponibile. Invia di nuovo lo scontrino."
             )
             return
 
-        action, _, value = query.data.partition(":")
-        if action != "receipt":
-            return
         if value.startswith("cancel"):
-            await self._cancel_pending(user.id, expense_id, expense.payload)
+            await self._cancel_pending(user_id, expense_id, expense.payload)
             await query.edit_message_text("Operazione annullata.")
         elif value.startswith("edit:"):
             field_name = value.split(":", 1)[1]
-            if state != "awaiting_confirmation" or field_name not in _EDIT_FIELDS:
+            if field_name not in _EDIT_FIELDS:
                 await query.edit_message_text("Questa modifica non è disponibile.")
                 return
             await self._save_state(
-                user.id,
+                user_id,
                 "awaiting_edit",
                 {"expense_id": expense_id, "edit_field": field_name},
             )
             await query.edit_message_text(self._prompt_for(field_name))
         elif value == "confirm":
-            if state != "awaiting_confirmation":
-                await query.edit_message_text("Controlla prima i dati richiesti.")
-                return
             if self._bilancio is None:
                 await query.edit_message_text(
                     "Il collegamento al portale non è ancora configurato. "
                     "Non è stato registrato nulla; lo scontrino resta in attesa."
                 )
                 return
+            await self._show_progress(query, "⏳ Leggo le casse dal portale AGESCI…")
             await self._begin_portal_selection(
-                user.id,
+                user_id,
                 expense_id,
                 expense.payload,
                 query,
                 context,
             )
         elif value == "manual_save":
-            if (
-                state != "awaiting_manual_final_confirmation"
-                or expense.payload.get("manual_entry") is not True
-            ):
+            if expense.payload.get("manual_entry") is not True:
                 await query.edit_message_text("Questa conferma non è più disponibile.")
                 return
             notes_text = state_data.get("portal_notes")
+            await self._show_progress(query, self._submission_progress_text())
             await self._submit_expense(
                 update,
                 context,
-                user.id,
+                user_id,
                 expense_id,
                 expense.payload,
                 state_data,
@@ -415,8 +468,9 @@ class ReceiptWorkflow:
             )
         elif value.startswith("direction:"):
             await self._select_direction(
-                user.id,
+                user_id,
                 expense_id,
+                expense.payload,
                 state,
                 state_data,
                 value.split(":", 1)[1],
@@ -425,8 +479,9 @@ class ReceiptWorkflow:
             )
         elif value.startswith("voice:"):
             await self._select_accounting_voice(
-                user.id,
+                user_id,
                 expense_id,
+                expense.payload,
                 state,
                 state_data,
                 value.split(":", 1)[1],
@@ -436,7 +491,7 @@ class ReceiptWorkflow:
         elif value.startswith("choose:"):
             await self._select_portal_option(
                 update,
-                user.id,
+                user_id,
                 expense_id,
                 expense.payload,
                 state,
@@ -446,18 +501,64 @@ class ReceiptWorkflow:
                 context,
             )
         elif value == "no_category":
-            if state != "awaiting_category":
-                await query.edit_message_text("Questa scelta non è più disponibile.")
-                return
             await self._complete_portal_selection(
                 update,
-                user.id,
+                user_id,
                 expense_id,
                 expense.payload,
                 state_data,
                 query,
                 context,
             )
+
+    async def _show_progress(self, query: CallbackQuery, text: str) -> None:
+        try:
+            await query.edit_message_text(text)
+        except TelegramError:
+            logger.warning("Could not show Telegram progress message")
+
+    def _submission_progress_text(self) -> str:
+        if self._settings.dry_run:
+            return "⏳ Eseguo la prova simulata sul portale… Non premere altri pulsanti."
+        return (
+            "⏳ Registro l’operazione nel portale e verifico il salvataggio… "
+            "Non premere altri pulsanti."
+        )
+
+    async def _is_manual_state(self, state_data: dict[str, object]) -> bool:
+        expense_id = state_data.get("expense_id")
+        if not isinstance(expense_id, str):
+            return True
+        expense = await asyncio.to_thread(self._database.get_expense, expense_id)
+        return expense is None or expense.payload.get("manual_entry") is True
+
+    async def _portal_read_failed(
+        self,
+        user_id: int,
+        expense_id: str,
+        payload: dict[str, object],
+        query: CallbackQuery,
+        subject: str,
+    ) -> None:
+        if payload.get("manual_entry") is True:
+            await self._cancel_pending(user_id, expense_id, payload)
+            await query.edit_message_text(
+                f"Non riesco a leggere {subject} dal portale. Ho annullato la prova "
+                "in automatico: non è stato inserito nulla. Riprova più tardi con "
+                "/testspesa."
+            )
+            return
+        await self._save_state(
+            user_id,
+            "awaiting_confirmation",
+            {"expense_id": expense_id},
+        )
+        await query.edit_message_text(
+            f"Non riesco a leggere {subject} dal portale. Non è stato inserito "
+            "nulla e lo scontrino resta salvato: premi Conferma per riprovare "
+            "oppure Annulla.",
+            reply_markup=self._confirmation_keyboard(),
+        )
 
     async def _begin_portal_selection(
         self,
@@ -483,14 +584,22 @@ class ReceiptWorkflow:
                 "per eventuali schermate diagnostiche.",
                 error,
             )
-            await query.edit_message_text(
-                "Non riesco a leggere le casse dal portale. Riprova più tardi."
+            await self._portal_read_failed(
+                user_id,
+                expense_id,
+                payload,
+                query,
+                "le casse",
             )
             return
         if not options:
             logger.warning("The portal returned no available accounts")
-            await query.edit_message_text(
-                "Il portale non mostra casse disponibili per questo utente."
+            await self._portal_read_failed(
+                user_id,
+                expense_id,
+                payload,
+                query,
+                "casse disponibili",
             )
             return
         data: dict[str, object] = {
@@ -508,6 +617,7 @@ class ReceiptWorkflow:
         self,
         user_id: int,
         expense_id: str,
+        payload: dict[str, object],
         state: str,
         state_data: dict[str, object],
         value: str,
@@ -528,6 +638,7 @@ class ReceiptWorkflow:
         await self._select_accounting_voice(
             user_id,
             expense_id,
+            payload,
             "awaiting_accounting_voice",
             state_data,
             "Voci Scout",
@@ -539,6 +650,7 @@ class ReceiptWorkflow:
         self,
         user_id: int,
         expense_id: str,
+        payload: dict[str, object],
         state: str,
         state_data: dict[str, object],
         accounting_voice: str,
@@ -562,6 +674,12 @@ class ReceiptWorkflow:
         account = self._option_from(state_data, "account")
         direction = TransactionDirection(direction_value)
         transaction_date = self._state_date(state_data)
+        await self._show_progress(
+            query,
+            f"⏳ Carico le tipologie di {direction.value} ({accounting_voice})… "
+            "La prima volta può richiedere fino a un minuto. "
+            "Non premere altri pulsanti.",
+        )
         try:
             options = await self._bilancio.list_transaction_types(
                 account,
@@ -578,13 +696,21 @@ class ReceiptWorkflow:
                 "per eventuali schermate diagnostiche.",
                 error,
             )
-            await query.edit_message_text(
-                "Non riesco a leggere le tipologie dal portale. Riprova più tardi."
+            await self._portal_read_failed(
+                user_id,
+                expense_id,
+                payload,
+                query,
+                "le tipologie",
             )
             return
         if not options:
-            await query.edit_message_text(
-                "Il portale non mostra tipologie disponibili per questa scelta."
+            await self._portal_read_failed(
+                user_id,
+                expense_id,
+                payload,
+                query,
+                "tipologie disponibili",
             )
             return
         state_data.update(
@@ -684,6 +810,7 @@ class ReceiptWorkflow:
                 reply_markup=self._manual_final_confirmation_keyboard(),
             )
             return
+        await self._show_progress(query, self._submission_progress_text())
         await self._submit_expense(
             update,
             context,
@@ -722,6 +849,7 @@ class ReceiptWorkflow:
                 reply_markup=self._manual_final_confirmation_keyboard(),
             )
             return
+        await self._show_progress(query, self._submission_progress_text())
         await self._submit_expense(
             update,
             context,

@@ -65,13 +65,16 @@ Il bot legge token e ID dal file `.env`; non inviare quel file o le sue credenzi
 
 All'avvio il bot registra il menu dei comandi Telegram: scrivendo `/` compaiono i suggerimenti. Invia `/start` per visualizzare anche la tastiera rapida e, per l'amministratore, i comandi riservati. Il messaggio iniziale indica se la modalità è simulata o reale.
 
-Le casse, tipologie, unità e categorie lette dal portale vengono conservate in memoria per sei ore. La cache distingue anno scout, cassa, entrata/uscita, voce, tipologia e unità, così non mescola elenchi dipendenti. La prima lettura resta legata ai tempi del portale; le successive non aprono il browser. Un riavvio azzera la cache. Usa `/aggiornaopzioni` (amministratore) per svuotarla prima della scadenza; se un menu era già aperto, annulla e ricomincia. Il salvataggio e la verifica nel portale restano sempre operazioni reali di browser, anche quando i menu provengono dalla cache.
+Le casse e le tipologie `Voci Scout` vengono lette dal portale in sottofondo circa 10 secondi dopo l'avvio del bot e di nuovo ogni notte alle 02:30 UTC. Restano in memoria per 26 ore, così durante la giornata i menu si aprono senza attendere il browser. La cache distingue anno scout, cassa, entrata/uscita, voce, tipologia e unità, così non mescola elenchi dipendenti. Se scegli un menu mentre la lettura iniziale è ancora in corso, il bot mostra un messaggio di attesa e completa la scelta appena possibile. Usa `/aggiornaopzioni` (amministratore) per svuotare la cache e rileggerla subito in sottofondo; se un menu era già aperto, annulla e ricomincia. Il salvataggio e la verifica nel portale restano sempre operazioni reali di browser, anche quando i menu provengono dalla cache.
 
 L’amministratore può usare `/testspesa` per inserire data, descrizione e importo direttamente in Telegram, senza scontrino e senza AI. Il bot chiede cassa e direzione, usa `Voci Scout` e mostra le tipologie disponibili per quella scelta. Imposta l’unità predefinita associata alla cassa, se nota; lascia la categoria vuota. Prima di un inserimento reale mostra un riepilogo e chiede conferma.
 
 - Con `DRY_RUN=true`, il portale non salva la spesa.
 - Con `DRY_RUN=false`, il pulsante finale inserisce davvero la spesa nel portale.
 - Usa `/annulla` per interrompere prima della conferma finale.
+- Durante le operazioni lente il messaggio diventa «⏳ …» e i pulsanti spariscono. Se tocchi di nuovo un pulsante vecchio, il bot lo ignora e mostra «Questa scelta non è più attiva».
+- Se il portale non risponde mentre il bot legge casse o tipologie, la prova manuale viene annullata in automatico, senza inserire nulla: puoi ripartire subito con `/testspesa`. Per uno scontrino, invece, il file resta salvato e il bot propone **Conferma** per riprovare oppure **Annulla**.
+- Un nuovo `/testspesa` annulla da solo una prova manuale rimasta aperta.
 - Se una conversazione iniziata prima di un aggiornamento mostra ancora i vecchi pulsanti per unità o categoria, usa `/annulla` e ricomincia con `/testspesa`.
 
 Per la prima prova usa una descrizione chiaramente riconoscibile e controlla con attenzione anno, conto, direzione, tipologia, unità predefinita e importo. Non condividere i dati della spesa in chat con altre persone.
