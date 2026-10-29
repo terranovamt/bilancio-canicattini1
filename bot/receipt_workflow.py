@@ -449,9 +449,15 @@ class ReceiptWorkflow:
             if state != "awaiting_category":
                 await query.edit_message_text("Questa scelta non è più disponibile.")
                 return
-            state_data["category"] = None
-            await self._ask_for_notes(user.id, state_data)
-            await query.edit_message_text("Scrivi una nota facoltativa oppure invia -.")
+            await self._complete_portal_selection(
+                update,
+                user.id,
+                expense_id,
+                expense.payload,
+                state_data,
+                query,
+                context,
+            )
 
     async def _begin_portal_selection(
         self,
@@ -605,6 +611,17 @@ class ReceiptWorkflow:
     ) -> None:
         if self._bilancio is None or state_data.get("expense_id") != expense_id:
             return
+        if state in {"awaiting_unit", "awaiting_category"}:
+            await self._complete_portal_selection(
+                update,
+                user_id,
+                expense_id,
+                payload,
+                state_data,
+                query,
+                context,
+            )
+            return
         try:
             index = int(index_text)
             options = self._deserialize_options(state_data.get("options"))
@@ -621,121 +638,98 @@ class ReceiptWorkflow:
             if isinstance(direction_value, str)
             else None
         )
-        transaction_date = self._state_date(state_data)
-        accounting_voice = str(state_data.get("accounting_voice", "Voci Scout"))
 
-        try:
-            if state == "awaiting_account":
-                state_data.update(account=self._serialize_option(selected))
-                await self._save_state(user_id, "awaiting_direction", state_data)
-                keyboard = InlineKeyboardMarkup(
+        if state == "awaiting_account":
+            state_data.update(account=self._serialize_option(selected))
+            await self._save_state(user_id, "awaiting_direction", state_data)
+            keyboard = InlineKeyboardMarkup(
+                [
                     [
-                        [
-                            InlineKeyboardButton(
-                                "Entrata", callback_data="receipt:direction:entrata"
-                            ),
-                            InlineKeyboardButton(
-                                "Uscita", callback_data="receipt:direction:uscita"
-                            ),
-                        ]
+                        InlineKeyboardButton(
+                            "Entrata", callback_data="receipt:direction:entrata"
+                        ),
+                        InlineKeyboardButton(
+                            "Uscita", callback_data="receipt:direction:uscita"
+                        ),
                     ]
-                )
-                await query.edit_message_text(
-                    "↔️ 2/3 · Entrata o uscita?",
-                    reply_markup=keyboard,
-                )
-                return
-            if direction is None:
-                await query.edit_message_text("Prima scegli entrata o uscita.")
-                return
-            transaction_type = self._option_from(state_data, "transaction_type") if state in {"awaiting_unit", "awaiting_category"} else selected
-            if state == "awaiting_transaction_type":
-                state_data.update(transaction_type=self._serialize_option(selected))
-                unit = default_unit_for_account(account)
-                state_data["unit"] = (
-                    self._serialize_option(unit)
-                    if unit is not None
-                    else None
-                )
-                state_data["category"] = None
-                state_data["portal_notes"] = None
-                if payload.get("manual_entry") is True:
-                    await self._save_state(
-                        user_id,
-                        "awaiting_manual_final_confirmation",
-                        state_data,
-                    )
-                    await query.edit_message_text(
-                        self._manual_final_confirmation_text(payload, state_data),
-                        reply_markup=self._manual_final_confirmation_keyboard(),
-                    )
-                    return
-                await self._submit_expense(
-                    update,
-                    context,
-                    user_id,
-                    expense_id,
-                    payload,
-                    state_data,
-                    "-",
-                )
-                return
-            elif state == "awaiting_unit":
-                state_data.update(unit=self._serialize_option(selected))
-                next_options = await self._bilancio.list_categories(
-                    account,
-                    direction,
-                    transaction_type,
-                    selected,
-                    transaction_date=transaction_date,
-                    accounting_voice=accounting_voice,
-                )
-                if not next_options:
-                    state_data.update(category=None)
-                    await self._ask_for_notes(user_id, state_data)
-                    await query.edit_message_text(
-                        "Il portale non mostra categorie. Scrivi una nota facoltativa "
-                        "oppure invia -."
-                    )
-                    return
-                next_state = "awaiting_category"
-                prompt = "📂 6/6 · Scegli la categoria:"
-            elif state == "awaiting_category":
-                state_data.update(category=self._serialize_option(selected))
-                await self._ask_for_notes(user_id, state_data)
-                await query.edit_message_text(
-                    "Scrivi una nota facoltativa oppure invia -."
-                )
-                return
-            else:
-                await query.edit_message_text("Questa scelta non è più disponibile.")
-                return
-        except BilancioClientError as error:
-            logger.error("Could not load portal options: %s", type(error).__name__)
-            debug_path = Path(self._settings.data_path) / "debug"
-            await self._notify_admin(
-                context,
-                f"Non riesco a leggere le opzioni AGESCI. Controlla {debug_path} "
-                "per eventuali schermate diagnostiche.",
-                error,
+                ]
             )
             await query.edit_message_text(
-                "Non riesco a leggere le opzioni dal portale. Riprova più tardi."
+                "↔️ 2/3 · Entrata o uscita?",
+                reply_markup=keyboard,
             )
             return
-        if not next_options:
+        if direction is None:
+            await query.edit_message_text("Prima scegli entrata o uscita.")
+            return
+        if state != "awaiting_transaction_type":
+            await query.edit_message_text("Questa scelta non è più disponibile.")
+            return
+
+        state_data.update(transaction_type=self._serialize_option(selected))
+        unit = default_unit_for_account(account)
+        state_data.update(
+            unit=self._serialize_option(unit) if unit is not None else None,
+            category=None,
+            portal_notes=None,
+        )
+        if payload.get("manual_entry") is True:
+            await self._save_state(
+                user_id,
+                "awaiting_manual_final_confirmation",
+                state_data,
+            )
             await query.edit_message_text(
-                "Il portale non mostra opzioni disponibili per questa scelta."
+                self._manual_final_confirmation_text(payload, state_data),
+                reply_markup=self._manual_final_confirmation_keyboard(),
             )
             return
-        state_data["options"] = self._serialize_options(next_options)
-        await self._save_state(user_id, next_state, state_data)
-        await query.edit_message_text(
-            prompt,
-            reply_markup=self._option_keyboard(
-                next_options,
-                include_no_category=next_state == "awaiting_category",
-            ),
+        await self._submit_expense(
+            update,
+            context,
+            user_id,
+            expense_id,
+            payload,
+            state_data,
+            "-",
+        )
+
+    async def _complete_portal_selection(
+        self,
+        update: Update,
+        user_id: int,
+        expense_id: str,
+        payload: dict[str, object],
+        state_data: dict[str, object],
+        query: CallbackQuery,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        account = self._option_from(state_data, "account")
+        unit = default_unit_for_account(account)
+        state_data.update(
+            unit=self._serialize_option(unit) if unit is not None else None,
+            category=None,
+            portal_notes=None,
+        )
+        if payload.get("manual_entry") is True:
+            await self._save_state(
+                user_id,
+                "awaiting_manual_final_confirmation",
+                state_data,
+            )
+            await query.edit_message_text(
+                self._manual_final_confirmation_text(payload, state_data),
+                reply_markup=self._manual_final_confirmation_keyboard(),
+            )
+            return
+        await self._submit_expense(
+            update,
+            context,
+            user_id,
+            expense_id,
+            payload,
+            state_data,
+            "-",
         )
 
     async def _submit_expense(

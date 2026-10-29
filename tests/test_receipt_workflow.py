@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from bilancio.client import (
+    BilancioClientError,
     PortalOption,
     PortalSubmissionResult,
     TransactionDirection,
@@ -306,6 +307,87 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(portal.submitted), 1)
         self.assertTrue(portal.submitted[0][1])
         self.assertTrue(portal.submitted[0][0].accounting_voice == "Voci Scout")
+
+    async def test_legacy_unit_prompt_skips_removed_portal_options(self) -> None:
+        portal = FakeBilancioClient()
+        portal.list_accounts = AsyncMock(
+            return_value=[PortalOption("account-1", "Cassa Co.ca")]
+        )
+        portal.list_categories = AsyncMock(
+            side_effect=BilancioClientError("Category options are unavailable")
+        )
+        workflow = ReceiptWorkflow(
+            settings=make_settings(),
+            database=self.database,
+            analyzer=None,
+            pending_store=PendingReceiptStore(self.root / "pending"),
+            archive=FileArchive(self.root / "archive"),
+            bilancio_client=portal,
+        )
+        user = SimpleNamespace(id=12345)
+        await workflow.start_manual_expense(
+            SimpleNamespace(
+                message=SimpleNamespace(reply_text=AsyncMock()),
+                effective_user=user,
+            ),
+            SimpleNamespace(),
+        )
+        await workflow.handle_text(
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    text="26/10/2026 | Prova legacy | 0,10",
+                    reply_text=AsyncMock(),
+                ),
+                effective_user=user,
+            ),
+            SimpleNamespace(),
+        )
+        for callback_data in (
+            "receipt:confirm",
+            "receipt:choose:0",
+            "receipt:direction:uscita",
+            "receipt:choose:0",
+        ):
+            query = self.make_query(callback_data)
+            await workflow.handle_callback(
+                SimpleNamespace(
+                    callback_query=query,
+                    effective_message=query.message,
+                    effective_user=user,
+                ),
+                SimpleNamespace(),
+            )
+
+        state = self.database.get_conversation_state(user.id)
+        assert state is not None
+        state_data = state[1]
+        state_data["options"] = [
+            {"value": "legacy-unit", "label": "Unità precedente"}
+        ]
+        self.database.save_conversation_state(
+            user.id,
+            "awaiting_unit",
+            state_data,
+        )
+
+        query = self.make_query("receipt:choose:0")
+        await workflow.handle_callback(
+            SimpleNamespace(
+                callback_query=query,
+                effective_message=query.message,
+                effective_user=user,
+            ),
+            SimpleNamespace(),
+        )
+
+        final_state = self.database.get_conversation_state(user.id)
+        self.assertEqual(final_state[0], "awaiting_manual_final_confirmation")
+        self.assertEqual(
+            final_state[1]["unit"],
+            {"value": "Gruppo G1", "label": "Gruppo G1"},
+        )
+        self.assertIsNone(final_state[1]["category"])
+        portal.list_categories.assert_not_awaited()
 
     async def test_confirmed_receipt_is_archived_and_submitted_in_dry_run(self) -> None:
         portal = FakeBilancioClient()

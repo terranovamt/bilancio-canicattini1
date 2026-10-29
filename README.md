@@ -72,6 +72,7 @@ L’amministratore può usare `/testspesa` per inserire data, descrizione e impo
 - Con `DRY_RUN=true`, il portale non salva la spesa.
 - Con `DRY_RUN=false`, il pulsante finale inserisce davvero la spesa nel portale.
 - Usa `/annulla` per interrompere prima della conferma finale.
+- Se una conversazione iniziata prima di un aggiornamento mostra ancora i vecchi pulsanti per unità o categoria, usa `/annulla` e ricomincia con `/testspesa`.
 
 Per la prima prova usa una descrizione chiaramente riconoscibile e controlla con attenzione anno, conto, direzione, tipologia, unità predefinita e importo. Non condividere i dati della spesa in chat con altre persone.
 
