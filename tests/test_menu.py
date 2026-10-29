@@ -1,4 +1,5 @@
 import asyncio
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -78,7 +79,7 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
                 self.portal.create_expense.assert_not_awaited()
 
     async def test_non_admin_cannot_forge_admin_buttons(self) -> None:
-        for action in ("admin", "manual", "income", "health", "options", "version", "update", "clean"):
+        for action in ("admin", "manual", "income", "health", "options", "version", "update", "clean", "test_on", "test_off"):
             with self.subTest(action=action):
                 update = self.update(action, user_id=67890)
                 await application.menu_callback(update, self.context)
@@ -87,6 +88,54 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
                 update.effective_message.reply_text.assert_not_awaited()
         self.assertIsNone(self.database.get_conversation_state(67890))
         self.portal.create_expense.assert_not_awaited()
+
+    async def test_mode_is_real_by_default_and_persists_until_admin_changes_it(self) -> None:
+        for action, expected in (("admin", False), ("test_on", True), ("test_on", True), ("test_off", False)):
+            with self.subTest(action=action, expected=expected):
+                update = self.update(action)
+                await application.menu_callback(update, self.context)
+                reopened = Database(self.root / "test.sqlite3")
+                reopened.initialize()
+                self.assertEqual(reopened.get_test_mode(default=False), expected)
+                rendered = update.callback_query.edit_message_text.await_args
+                self.assertIn(messages.MODE_TRIAL if expected else messages.MODE_REAL, rendered.args[0])
+                self.assertIn(
+                    "menu:test_off" if expected else "menu:test_on",
+                    self.callback_values(rendered.kwargs["reply_markup"]),
+                )
+                home = self.update("home", user_id=67890)
+                await application.menu_callback(home, self.context)
+                self.assertIn(
+                    messages.MODE_TRIAL if expected else messages.MODE_REAL,
+                    home.callback_query.edit_message_text.await_args.args[0],
+                )
+        self.portal.create_expense.assert_not_awaited()
+
+    async def test_mode_change_does_not_clear_active_entry(self) -> None:
+        await application.menu_callback(self.update("manual"), self.context)
+        before = self.database.get_conversation_state(12345)
+        await application.menu_callback(self.update("test_on"), self.context)
+        self.assertEqual(self.database.get_conversation_state(12345), before)
+        stored = self.database.get_expense(before[1]["expense_id"])
+        self.assertFalse(stored.payload["dry_run"])
+        self.portal.create_expense.assert_not_awaited()
+
+    async def test_explicit_real_choice_overrides_legacy_trial_configuration_after_restart(self) -> None:
+        self.assertTrue(self.database.get_test_mode(default=True))
+        await application.menu_callback(self.update("test_off"), self.context)
+        reopened = Database(self.root / "test.sqlite3")
+        reopened.initialize()
+        self.assertFalse(reopened.get_test_mode(default=True))
+
+    async def test_mode_change_failure_is_reported_without_claiming_success(self) -> None:
+        update = self.update("test_on")
+        with patch.object(self.database, "set_test_mode", side_effect=sqlite3.OperationalError("locked")):
+            with self.assertLogs("bot.application", level="ERROR"):
+                await application.menu_callback(update, self.context)
+        self.assertEqual(
+            update.callback_query.edit_message_text.await_args.args[0], messages.MODE_CHANGE_FAILED
+        )
+        self.assertFalse(self.database.get_test_mode(default=False))
 
     async def test_manual_buttons_start_real_workflow_without_saving(self) -> None:
         for action, direction in (("manual", None), ("income", "entrata")):
@@ -176,7 +225,7 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
     async def test_repeated_home_button_does_not_repeat_identical_edit(self) -> None:
         update = self.update("home")
         query = update.callback_query
-        query.message.text = application._home_text(self.settings, True)
+        query.message.text = application._home_text(False)
         query.message.reply_markup = application._home_keyboard(True)
         await application.menu_callback(update, self.context)
         query.answer.assert_awaited_once_with()

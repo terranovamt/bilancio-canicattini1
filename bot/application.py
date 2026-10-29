@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 from collections.abc import Awaitable, Sequence
 from datetime import date, datetime, time as day_time, timezone
 from pathlib import Path
@@ -204,7 +205,7 @@ def create_application(
     application.add_handler(CommandHandler("coda", queue_command))
     application.add_handler(CommandHandler("riprova", retry_command))
     application.add_handler(CommandHandler("entrata", manual_income_command))
-    application.add_handler(CommandHandler(["manual", "testspesa"], manual_expense_command))
+    application.add_handler(CommandHandler("manual", manual_expense_command))
     application.add_handler(CommandHandler("testbilancio", test_bilancio_command))
     application.add_handler(CommandHandler("aggiornaopzioni", refresh_options_command))
     application.add_handler(CommandHandler("aggiorna", update_command))
@@ -259,16 +260,19 @@ async def start_command(
         texts.HOME_BUTTON, reply_markup=ReplyKeyboardRemove()
     )
     await update.message.reply_text(
-        _home_text(settings, _is_admin(update, settings)),
+        _home_text(await _test_mode(context, settings)),
         reply_markup=_home_keyboard(_is_admin(update, settings)),
     )
 
 
-def _home_text(settings: Settings, admin: bool) -> str:
-    if not admin:
-        return texts.HOME_TEXT
-    mode = texts.MODE_TRIAL if settings.dry_run else texts.MODE_REAL
-    return f"{texts.HOME_TEXT}\n\n{mode}{texts.MENU_MODE_NOTICE}"
+async def _test_mode(context: ContextTypes.DEFAULT_TYPE, settings: Settings) -> bool:
+    database: Database = context.application.bot_data["database"]
+    return await asyncio.to_thread(database.get_test_mode, default=settings.dry_run)
+
+
+def _home_text(test_mode: bool) -> str:
+    mode = texts.MODE_TRIAL if test_mode else texts.MODE_REAL
+    return f"{texts.HOME_TEXT}\n\n{mode}"
 
 
 def _navigation_keyboard(*, admin: bool = False) -> InlineKeyboardMarkup:
@@ -298,8 +302,12 @@ def _home_keyboard(admin: bool) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
-def _admin_keyboard() -> InlineKeyboardMarkup:
+def _admin_keyboard(test_mode: bool = False) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            texts.MENU_TEST_OFF_BUTTON if test_mode else texts.MENU_TEST_ON_BUTTON,
+            callback_data="menu:test_off" if test_mode else "menu:test_on",
+        )],
         [InlineKeyboardButton(texts.MENU_HEALTH_BUTTON, callback_data="menu:health")],
         [InlineKeyboardButton(texts.MENU_OPTIONS_BUTTON, callback_data="menu:options")],
         [InlineKeyboardButton(texts.MENU_VERSION_BUTTON, callback_data="menu:version")],
@@ -337,12 +345,14 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     settings: Settings = context.application.bot_data["settings"]
     admin = _is_admin(update, settings)
     action = str(query.data).removeprefix("menu:")
-    if action in {"admin", "manual", "income", "health", "options", "version", "update", "clean"} and not admin:
+    if action in {"admin", "manual", "income", "health", "options", "version", "update", "clean", "test_on", "test_off"} and not admin:
         await query.answer(texts.ADMIN_ONLY)
         return
     await query.answer()
     if action == "home":
-        await _edit_menu_screen(query, _home_text(settings, admin), _home_keyboard(admin))
+        await _edit_menu_screen(
+            query, _home_text(await _test_mode(context, settings)), _home_keyboard(admin)
+        )
     elif action == "help":
         await _edit_menu_screen(
             query,
@@ -352,7 +362,26 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     elif action == "receipt":
         await _edit_menu_screen(query, texts.MENU_RECEIPT, _navigation_keyboard())
     elif action == "admin":
-        await _edit_menu_screen(query, texts.MENU_ADMIN, _admin_keyboard())
+        test_mode = await _test_mode(context, settings)
+        await _edit_menu_screen(
+            query, texts.MENU_ADMIN + "\n\n" + (texts.MODE_TRIAL if test_mode else texts.MODE_REAL),
+            _admin_keyboard(test_mode),
+        )
+    elif action in {"test_on", "test_off"}:
+        database: Database = context.application.bot_data["database"]
+        enabled = action == "test_on"
+        try:
+            await asyncio.to_thread(database.set_test_mode, enabled)
+        except sqlite3.Error as error:
+            logger.error("Could not change test mode: %s", type(error).__name__)
+            await query.edit_message_text(texts.MODE_CHANGE_FAILED, reply_markup=_navigation_keyboard(admin=True))
+            return
+        logger.info("Test mode changed: enabled=%s", enabled)
+        await _edit_menu_screen(
+            query,
+            texts.MODE_CHANGED.format(mode=texts.MODE_TRIAL if enabled else texts.MODE_REAL),
+            _admin_keyboard(enabled),
+        )
     elif action == "version":
         status = await asyncio.to_thread(_version_status, context, settings)
         keyboard = InlineKeyboardMarkup([
@@ -419,9 +448,6 @@ async def update_command(
     if not _is_admin(update, settings):
         await message.reply_text(texts.ADMIN_ONLY)
         return
-    if not settings.dry_run:
-        await message.reply_text(texts.UPDATE_LIVE_MODE, reply_markup=_navigation_keyboard(admin=True))
-        return
     store = _update_store(context, settings)
     if await asyncio.to_thread(store.read_check) is None:
         await message.reply_text(texts.UPDATE_NOT_CONFIGURED, reply_markup=_navigation_keyboard(admin=True))
@@ -455,9 +481,6 @@ async def update_callback(
         return
     if query.data != "admin:update:yes":
         await query.edit_message_text(texts.UPDATE_CANCELLED, reply_markup=_navigation_keyboard(admin=True))
-        return
-    if not settings.dry_run:
-        await query.edit_message_text(texts.UPDATE_LIVE_MODE, reply_markup=_navigation_keyboard(admin=True))
         return
     store = _update_store(context, settings)
     try:

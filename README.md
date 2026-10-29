@@ -1,6 +1,6 @@
 # Archivio spese AGESCI via Telegram
 
-Progetto per un bot Telegram privato: riceve una foto o un PDF, corregge e analizza la ricevuta con un modello visivo locale, chiede conferma e conserva il file sul NAS. Le opzioni per la registrazione AGESCI devono essere lette dal portale e mostrate nel bot.
+Progetto per un bot Telegram privato: riceve una foto o un PDF, corregge e analizza la ricevuta con un modello visivo locale, raccoglie i dati e conserva il file sul NAS. Le opzioni per la registrazione AGESCI vengono lette dal portale e mostrate nel bot.
 
 ## Stato attuale
 
@@ -8,13 +8,15 @@ Il bot, l'analisi locale, l'archivio, SQLite, la coda dei ritentativi e il clien
 
 È disponibile anche `bilancio/csv_import.py` per importare CSV con classificazioni AGESCI. L'import completato comprendeva 112 movimenti: 80 entrate e 32 uscite. Due uscite già presenti sono state escluse dal nuovo invio; le altre 110 sono state elaborate e verificate nel registro. Due timeout di autenticazione hanno interrotto i primi blocchi, poi ripresi senza reinviare le righe già verificate. Il verificatore riconosce l'unità `Gruppo G1` anche quando il registro la mostra come `G1`.
 
-La modalità `DRY_RUN=true` è quella predefinita e non salva gli scontrini sul portale. Eccezione: i comandi amministratore `/entrata` e `/manual` inseriscono operazioni manuali reali, dopo conferma finale, anche in modalità prova. `/manual` permette entrate e uscite senza ricevuta. Per ogni nuova registrazione reale da scontrino o CSV, usa `DRY_RUN=false` solo per il processo autorizzato e dopo aver controllato i dati e il numero di righe. La ricevuta viene archiviata sul NAS e non viene allegata alla registrazione web.
+Il comportamento predefinito è **REALE** (`DRY_RUN=false`): l'ultima scelta contabile salva e verifica l'operazione nel portale, senza «Va bene» o «Salva davvero». Vale per scontrini, `/entrata` e `/manual`; quest'ultimo permette entrate e uscite senza ricevuta. Per non salvare, l'amministratore deve scegliere esplicitamente **Amministrazione → Attiva modalità prova**. La ricevuta viene archiviata sul NAS e non allegata alla registrazione web. L'importatore CSV mantiene le proprie protezioni: simulazione predefinita, `--apply`, conteggio e conferma digitata per gli import reali.
+
+La modalità scelta dall'amministratore vale per tutti i nuovi inserimenti, fino alla disattivazione, anche dopo un riavvio. È conservata nel database e prevale su `DRY_RUN`; in assenza di una scelta usa il valore di `.env`, ora reale per impostazione predefinita. **Per un NAS già configurato con `DRY_RUN=true`, dopo l'aggiornamento premi «Torna ai salvataggi reali» una volta**: il programma non modifica automaticamente `.env`. Ogni operazione conserva la modalità iniziale, anche nei ritentativi; le vecchie code senza modalità registrata vengono riprovate solo in simulazione, per non trasformare vecchie prove in inserimenti reali.
 
 L'analisi delle ricevute è prevista in locale con Ollama. Non è configurato l'invio delle immagini a un servizio AI online. Il modello locale va scelto dopo aver verificato la memoria e le prestazioni disponibili sul NAS.
 
 ## Componenti
 
-- `bot/`: comandi Telegram, accesso autorizzato, flusso di conferma e ritentativi. I testi e le etichette sono centralizzati in [`bot/messages.py`](bot/messages.py); gli esempi sono nel [catalogo dei messaggi](docs/PREVIEW_MESSAGGI_TELEGRAM.md).
+- `bot/`: comandi Telegram, accesso autorizzato, inserimenti e ritentativi. I testi e le etichette sono centralizzati in [`bot/messages.py`](bot/messages.py); gli esempi sono nel [catalogo dei messaggi](docs/PREVIEW_MESSAGGI_TELEGRAM.md).
 - `vision/`: correzione locale dell'immagine, schema dei dati e client Ollama.
 - `storage/`: conservazione temporanea e archivio permanente delle ricevute.
 - `db/`: spese, stati, duplicati e coda SQLite.
@@ -63,7 +65,7 @@ Il Doctor lavora su richiesta o quando il Manager rileva incoerenze rilevanti: n
 1. Crea `.env` copiando `.env.example`.
 2. Inserisci lì token, ID autorizzati e credenziali: non inviarli in chat e non inserirli in GitHub.
 3. Lascia vuoto `LOCAL_VISION_MODEL` finché non è stato scelto un modello compatibile con il NAS.
-4. Mantieni `DRY_RUN=true`.
+4. Per l'uso normale lascia `DRY_RUN=false`; per una prova imposta esplicitamente `DRY_RUN=true` e verifica che Telegram mostri **Modalità PROVA**. Una scelta salvata nel menu Amministrazione prevale su questa variabile.
 
 Il file `.env`, le ricevute, il database e i modelli locali sono esclusi sia da Git sia dal contesto di creazione dell'immagine Docker.
 
@@ -101,18 +103,18 @@ Per un'entrata senza ricevuta, l'amministratore può premere **💰 Nuova entrat
 1. Inserisci data, descrizione e importo quando richiesti.
 2. Controlla il riepilogo; puoi correggere i dati prima di continuare.
 3. Scegli cassa e tipologia: la direzione è già Entrata.
-4. Verifica tutti i dati e premi **✅ Salva davvero** solo se vuoi registrare l'entrata reale. Questo comando ignora `DRY_RUN`.
+4. L'ultima tipologia avvia subito il salvataggio, senza conferma aggiuntiva. Per una prova senza salvataggio attiva prima **Modalità PROVA** da Amministrazione.
 
 Per inserire a mano un'entrata **o un'uscita senza ricevuta**, l'amministratore può premere **✍️ Inserisci a mano** (oppure scrivere `/manual`):
 
 1. Inserisci data, descrizione e importo quando richiesti; non vengono proposti importi di prova.
-2. Controlla i dati e premi **✅ Va bene**.
-3. Scegli cassa, **Entrata** o **Uscita**, poi la tipologia.
-4. Controlla il riepilogo e premi **✅ Salva davvero** solo se vuoi registrare l'operazione reale. Anche questo comando ignora `DRY_RUN`.
+2. Controlla i dati e correggili con i pulsanti prima di scegliere la cassa.
+3. Scegli cassa, **Entrata** o **Uscita**, poi la tipologia: questa ultima scelta avvia il salvataggio senza un'altra conferma.
+4. Attendi l'esito verificato. Se la modalità prova era attiva all'inizio, non viene salvato nulla nel portale.
 
-Il vecchio `/testspesa` funziona come alias di `/manual`, ma non compare più nel menu.
+Il vecchio `/testspesa` è stato rimosso per non confondere una prova con un inserimento reale: usa **Inserisci a mano** e scegli la modalità desiderata in Amministrazione.
 
-Inviando una foto o un PDF, invece, la direzione è già **Uscita**. Se l'AI locale non riesce a leggerlo, anche per timeout, ricevi un avviso e puoi compilare data, descrizione e importo a mano, poi scegliere cassa e tipologia senza dover selezionare di nuovo Uscita. File e stato per il recupero manuale vengono conservati prima di avviare l'AI. L'attesa totale dell'analisi è limitata da `LOCAL_VISION_TIMEOUT_SECONDS`. Il file resta temporaneamente sul NAS: compare nell'archivio `scontrini` solo quando confermi l'operazione e il bot lo archivia con i dati e la cassa scelti. `/annulla` elimina la copia temporanea, non le ricevute già archiviate. La compilazione a mano di una ricevuta non cambia `DRY_RUN`: resta una prova se la modalità prova è attiva. Questo percorso è disponibile agli stessi utenti autorizzati che possono inviare scontrini, anche se il modello non è configurato. Fuori dal percorso manuale dell'amministratore, un'uscita senza file resta bloccata, anche nei ritentativi della coda.
+Inviando una foto o un PDF, invece, la direzione è già **Uscita**. Se l'AI locale non riesce a leggerlo, anche per timeout, ricevi un avviso e puoi compilare data, descrizione e importo a mano, poi scegliere cassa e tipologia senza dover selezionare di nuovo Uscita. File e stato per il recupero manuale vengono conservati prima di avviare l'AI. L'attesa totale dell'analisi è limitata da `LOCAL_VISION_TIMEOUT_SECONDS`. Il file resta temporaneamente sul NAS: compare nell'archivio `scontrini` quando completi l'ultima scelta contabile, con i dati e la cassa scelti. `/annulla` elimina la copia temporanea, non le ricevute già archiviate. La compilazione a mano mantiene la modalità con cui hai inviato la ricevuta. Questo percorso è disponibile agli stessi utenti autorizzati che possono inviare scontrini, anche se il modello non è configurato. Fuori dal percorso manuale dell'amministratore, un'uscita senza file resta bloccata, anche nei ritentativi della coda.
 
 ### Menu e opzioni contabili
 
@@ -120,13 +122,13 @@ Per usare il bot non occorre ricordare i comandi:
 
 1. Su Telegram premi **Avvia**, oppure invia `/start` una volta. La vecchia tastiera con gli slash viene rimossa.
 2. Scegli un pulsante sotto il messaggio: **📷 Nuovo scontrino**, **📊 Riepilogo**, **📋 Ultime operazioni**, **⏳ Operazioni in attesa** o **❓ Aiuto**.
-3. Se sei amministratore, trovi anche **✍️ Inserisci a mano**, **💰 Nuova entrata** e **⚙️ Amministrazione**. La modalità prova/reale resta indicata e gli inserimenti manuali richiedono sempre la conferma finale.
+3. Se sei amministratore, trovi anche **✍️ Inserisci a mano**, **💰 Nuova entrata** e **⚙️ Amministrazione**. La modalità prova/reale è indicata per tutti; gli inserimenti manuali seguono la stessa modalità degli scontrini.
 4. Usa **🏠 Menu principale** per tornare alla schermata iniziale. Negli strumenti amministratore trovi anche **⬅️ Indietro**. Il menu non cancella i dati di un inserimento già aperto.
 5. Per interrompere un inserimento premi **Annulla** nel suo messaggio, oppure **✖️ Annulla operazione** nel menu principale.
 
-In **Amministrazione** trovi verifica del collegamento, aggiornamento casse e tipologie, versione e aggiornamenti del bot, pulizia della cronologia. Aprire questi strumenti non esegue salvataggi, installazioni o pulizie: le operazioni che le richiedevano mantengono le proprie conferme. Versione attiva e disponibile si consultano da **Versione e aggiornamenti**.
+In **Amministrazione** trovi modalità prova, verifica del collegamento, aggiornamento casse e tipologie, versione e aggiornamenti del bot, pulizia della cronologia. **Attiva modalità prova** disabilita i salvataggi nel portale per tutti i nuovi inserimenti; **Torna ai salvataggi reali** ripristina il funzionamento normale. Installazione degli aggiornamenti e pulizia mantengono le proprie conferme. Versione attiva e disponibile si consultano da **Versione e aggiornamenti**.
 
-Le schermate del menu, l'aiuto e `/start` possono rispondere durante l'analisi AI o le attese del portale; le azioni che modificano dati restano elaborate una alla volta per evitare sovrapposizioni. Restano possibili i normali tempi di risposta della rete Telegram. I comandi scritti rimangono disponibili come alternativa, compresi `/help`, `/manual` e il vecchio alias `/testspesa`.
+Le schermate del menu, l'aiuto e `/start` possono rispondere durante l'analisi AI o le attese del portale; le azioni che modificano dati restano elaborate una alla volta per evitare sovrapposizioni. Restano possibili i normali tempi di risposta della rete Telegram. I comandi scritti rimangono disponibili come alternativa, compresi `/help`, `/manual` e `/entrata`.
 
 ### Avvisi Git ogni 10 minuti
 
@@ -134,7 +136,7 @@ L'attività DSM **Bilancio - controllo aggiornamenti**, in modalità `controlla`
 
 1. Quando ricevi **È disponibile una nuova versione del bot**, premi **🔄 Installa aggiornamento**, oppure invia `/aggiorna`.
 2. Controlla che nessuno stia registrando una spesa e premi **Sì, installa** solo se vuoi procedere. Aprire l'avviso non installa nulla.
-3. La richiesta viene eseguita al successivo controllo NAS, normalmente entro 10 minuti. L'aggiornamento resta bloccato in modalità reale: occorre `DRY_RUN=true`, come già previsto.
+3. La richiesta viene eseguita al successivo controllo NAS, normalmente entro 10 minuti. Funziona anche in modalità reale, senza cambiare la modalità degli inserimenti.
 4. Attendi il messaggio con l'esito e consulta **Versione e aggiornamenti** per verificare la versione attiva.
 
 Una versione già annunciata non viene notificata di nuovo a ogni controllo o dopo un riavvio: il codice dell'ultima versione notificata è conservato sul volume dati. Se Telegram non riceve il messaggio, il bot ritenta alla lettura successiva. Un controllo Git fallito non genera avvisi di novità usando il risultato vecchio rimasto in cache; l'errore resta visibile nella schermata della versione.
@@ -149,8 +151,8 @@ Nel passaggio delle tipologie il bot mostra prima le 6 più usate per quella cas
 
 I percorsi manuali usano `Voci Scout` e le tipologie disponibili per cassa e direzione. Impostano l'unità predefinita associata alla cassa; se il portale non offre alcuna unità («No results»), lasciano l'unità vuota e non la mostrano nel riepilogo. La categoria resta vuota.
 
-- `/manual` e `/entrata` salvano **sempre davvero** nel portale, dopo conferma finale, anche con `DRY_RUN=true`: quell'impostazione vale solo per gli scontrini.
-- Usa `/annulla` o il pulsante **Annulla** per interrompere prima della conferma finale.
+- `/manual` e `/entrata` salvano davvero per impostazione predefinita; rispettano la modalità prova come gli scontrini.
+- Usa `/annulla` o il pulsante **Annulla** prima di scegliere l'ultima tipologia per interrompere senza salvare.
 - Se il salvataggio non viene verificato, il bot non riprova da solo: controlla nel portale e ripeti `/manual` o `/entrata` solo se l'operazione non c'è.
 - Durante le operazioni lente compare un messaggio di attesa e i pulsanti spariscono. Se tocchi di nuovo un pulsante vecchio, il bot lo ignora e mostra «Questo pulsante non è più attivo».
 - Se il portale non risponde mentre il bot legge casse o tipologie, i dati manuali restano conservati: premi **✅ Va bene** per riprovare oppure **Annulla**. Per uno scontrino, il file resta salvato e il bot propone **✅ Sì, è giusto** per riprovare oppure **Annulla**.

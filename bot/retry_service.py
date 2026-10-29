@@ -140,13 +140,18 @@ class ExpenseRetryService:
                     str(archived.path),
                 )
 
+            if "dry_run" not in stored.payload:
+                logger.warning("Queued expense has no stored mode; using test mode")
+            dry_run = stored.payload.get("dry_run", True)
+            if not isinstance(dry_run, bool):
+                raise ValueError("Expense mode must be a boolean")
             result = await self._bilancio.create_expense(
                 portal_expense,
-                dry_run=self._settings.dry_run,
+                dry_run=dry_run,
             )
             if not result.verified:
                 raise BilancioClientError("Portal result could not be verified")
-            if self._settings.dry_run and not result.dry_run:
+            if dry_run and not result.dry_run:
                 await self._mark_failed(entry.expense_id)
                 await self._notify_admin(
                     bot,

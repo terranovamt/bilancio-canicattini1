@@ -17,6 +17,8 @@ MENU_HELP = (
     "❓ Come funziona\n\n"
     "📷 Nuovo scontrino: invia una foto o un PDF, controlla i dati e scegli "
     "cassa e tipologia. Se non riesco a leggerlo, ti chiedo i dati a mano.\n\n"
+    "L’ultima tipologia avvia subito la registrazione, senza altre conferme. "
+    "Solo in modalità PROVA non salvo nel portale.\n\n"
     "📊 Riepilogo: consulta i saldi delle casse.\n"
     "📋 Ultime operazioni: controlla le tue registrazioni.\n"
     "⏳ Operazioni in attesa: consulta gli elementi da riprovare o verificare.\n\n"
@@ -26,12 +28,13 @@ MENU_HELP = (
 MENU_ADMIN_HELP = (
     "\n\n✍️ Inserisci a mano: registra un’entrata o un’uscita senza foto.\n"
     "💰 Nuova entrata: registra un’entrata senza foto.\n"
-    "⚠️ Queste operazioni salvano davvero, anche in modalità prova, "
-    "solo dopo la conferma finale «Salva davvero»."
+    "Scegliendo l’ultima tipologia registri subito, senza altre conferme.\n"
+    "🧪 In Amministrazione puoi attivare o disattivare la modalità prova."
 )
 MENU_RECEIPT = (
     "📷 Nuovo scontrino\n\nInvia qui una foto o un PDF della ricevuta. "
-    "Lo conserverò e ti farò controllare i dati prima di continuare."
+    "Lo conserverò e ti farò controllare i dati prima di scegliere la cassa. "
+    "L’ultima tipologia avvia la registrazione senza altre conferme."
 )
 MENU_ADMIN = "⚙️ Strumenti amministratore\n\nScegli un’operazione."
 MENU_UNKNOWN = "Questo pulsante non è disponibile. Torna al menu principale."
@@ -50,12 +53,15 @@ MENU_OPTIONS_BUTTON = "🔄 Aggiorna casse e tipologie"
 MENU_VERSION_BUTTON = "🔖 Versione e aggiornamenti"
 MENU_CLEAN_BUTTON = "🧹 Pulisci cronologia"
 MENU_UPDATE_BUTTON = "🔄 Installa aggiornamento"
-MENU_MODE_NOTICE = (
-    "\n\n⚠️ Gli inserimenti manuali salvano davvero solo dopo «Salva davvero», "
-    "anche in modalità prova."
+MENU_TEST_ON_BUTTON = "🧪 Attiva modalità prova"
+MENU_TEST_OFF_BUTTON = "✅ Torna ai salvataggi reali"
+MODE_CHANGED = (
+    "{mode}\n\nLa scelta vale per tutti i nuovi inserimenti, fino a quando la cambi, "
+    "anche dopo un riavvio. Le operazioni già iniziate mantengono la loro modalità."
 )
+MODE_CHANGE_FAILED = "❌ Non riesco a cambiare modalità. Non ho modificato l’impostazione: riprova."
 MODE_TRIAL = "🧪 Modalità PROVA: non viene salvato nulla nel portale."
-MODE_REAL = "⚠️ Modalità REALE: le spese confermate vengono salvate nel portale."
+MODE_REAL = "✅ Modalità REALE: scegliendo l’ultima tipologia salvo nel portale, senza altre conferme."
 COMMAND_START = "Apri il menu del bot"
 COMMAND_HELP = "Guida e comandi"
 COMMAND_LATEST = "Le tue ultime spese"
@@ -122,10 +128,6 @@ UPDATE_ALREADY_REQUESTED = (
     "⏳ C'è già una richiesta in attesa: il NAS la esegue al prossimo controllo."
 )
 UPDATE_CANCELLED = "Ok, nessun aggiornamento."
-UPDATE_LIVE_MODE = (
-    "⚠️ Il bot è in modalità REALE: l'aggiornamento automatico è bloccato. "
-    "Riporta prima DRY_RUN=true."
-)
 UPDATE_NOT_CONFIGURED = (
     "ℹ️ Il controllo automatico non è attivo sul NAS: la richiesta non verrebbe eseguita. "
     "Aggiorna con il comando manuale."
@@ -150,7 +152,7 @@ RECEIPT_TRANSFER_FAILED = (
     "da Telegram. L'analisi non è iniziata e non ho registrato nulla. "
     "Attendi un momento e invia di nuovo il file."
 )
-RECEIPT_CONFIRMATION = "Ecco cosa ho letto, è tutto giusto?"
+RECEIPT_DETAILS = "Ecco i dati dell’operazione. Puoi correggerli prima di scegliere la cassa."
 LOW_CONFIDENCE = "⚠️ Non sono sicuro di aver letto bene: controlla con attenzione."
 MISSING_DATE = "Non sono riuscito a leggere la data. Me la scrivi? (es. 29/10/2026)"
 MISSING_MERCHANT = "Non sono riuscito a leggere il negozio. Come si chiama?"
@@ -165,20 +167,18 @@ MANUAL_AMOUNT = "💶 Qual è l'importo? (es. 12,50)"
 MANUAL_DESCRIPTION = "Prova Telegram"
 MANUAL_CONFIRMATION = (
     "✍️ Operazione a mano, senza ricevuta\n\n{details}\n\n"
-    "Va bene così o vuoi cambiare qualcosa?\n"
-    "⚠️ Verrà salvata davvero nel portale: prima ti chiedo un'ultima conferma."
+    "Puoi cambiare i dati prima di scegliere la cassa e la tipologia."
 )
 MANUAL_START = (
     "✍️ Inseriamo un’entrata o un’uscita senza ricevuta: data, descrizione e importo, "
-    "poi cassa, direzione e tipologia. Dopo la conferma finale sarà salvata davvero "
-    "nel portale, anche in modalità prova. Puoi interrompere con il pulsante Annulla.\n\n{prompt}"
+    "poi cassa, direzione e tipologia. L’ultima scelta avvia subito la registrazione, "
+    "senza altre conferme. Puoi interrompere con il pulsante Annulla.\n\n{prompt}"
 )
 INCOME_START = (
     "✍️ Inseriamo un’entrata senza ricevuta: data, descrizione e importo, "
-    "poi cassa e tipologia. Dopo la conferma finale sarà salvata davvero "
-    "nel portale, anche in modalità prova. Puoi interrompere con il pulsante Annulla.\n\n{prompt}"
+    "poi cassa e tipologia. L’ultima scelta avvia subito la registrazione, "
+    "senza altre conferme. Puoi interrompere con il pulsante Annulla.\n\n{prompt}"
 )
-MANUAL_FINAL = "Ultimo controllo prima di salvare:\n\n{details}\n\n⚠️ Se confermi, la spesa viene salvata DAVVERO nel portale."
 MANUAL_FAILED = (
     "❌ Non sono riuscito a salvare la spesa e non riproverò da solo.\n\n"
     "{details}\n\n👉 Controlla nel portale se compare. Se non c'è, riparti dal menu "
@@ -216,7 +216,6 @@ SAVE_PROGRESS = (
 TRIAL_PROGRESS = (
     "🧪 Faccio la prova nel portale (non salvo nulla)… " "Un attimo, non premere altro."
 )
-SAVE_BUTTON = "✅ Salva davvero"
 MANUAL_CONFIRM_BUTTON = "✅ Va bene"
 RECEIPT_CONFIRM_BUTTON = "✅ Sì, è giusto"
 DATE_BUTTON = EDIT_DATE_BUTTON = "📅 Data"
@@ -495,7 +494,7 @@ def receipt_confirmation(payload: Mapping[str, object], confidence: float) -> st
     category = safe_text(payload.get("suggested_category"))
     if category:
         details += "\n" + CATEGORY_LINE.format(value=category)
-    text = f"{RECEIPT_CONFIRMATION}\n\n{details}"
+    text = f"{RECEIPT_DETAILS}\n\n{details}"
     if confidence < 0.7:
         text += f"\n\n{LOW_CONFIDENCE}"
     return text

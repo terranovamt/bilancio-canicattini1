@@ -68,7 +68,7 @@ class UpdateScriptTests(unittest.TestCase):
             '    [ "${MOCK_PS_FAIL:-0}" = "0" ] || exit 1\n'
             '    if [ "${MOCK_BOT_STOPPED:-0}" = "0" ]; then printf "test-container\\n"; fi ;;\n'
             '  "compose exec "*) printf "%s\\n" "${MOCK_RUNNING_DRY_RUN:-true}" ;;\n'
-            '  "compose run "*) [ "${MOCK_CONFIG_REAL:-0}" = "0" ] ;;\n'
+            '  "compose run "*) [ "${MOCK_CONFIG_FAIL:-0}" = "0" ] ;;\n'
             '  "compose build "*) [ "${MOCK_BUILD_FAIL:-0}" = "0" ] ;;\n'
             '  "compose ps -a -q bot")\n'
             '    if [ "${MOCK_NO_CONTAINER:-0}" = "0" ]; then printf "test-container\\n"; fi ;;\n'
@@ -146,11 +146,10 @@ class UpdateScriptTests(unittest.TestCase):
         self.assertEqual(self.install_status()["result"], "ok")
         self.assertFalse((self.target / ".update.lock").exists())
 
-    def test_refuses_live_running_bot(self) -> None:
+    def test_updates_live_running_bot_without_changing_mode(self) -> None:
         result = self.run_update(MOCK_RUNNING_DRY_RUN="false")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("modalita REALE", result.stderr)
-        self.assertFalse((self.target / ".update-backups").exists())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Aggiornamento installato", result.stdout)
         self.assert_private_files_preserved()
 
     def test_stopped_bot_updates_without_exec_and_checks_next_configuration(self) -> None:
@@ -162,8 +161,8 @@ class UpdateScriptTests(unittest.TestCase):
         self.assertIn("compose up -d --no-deps --force-recreate bot", calls)
         self.assert_private_files_preserved()
 
-    def test_stopped_bot_with_live_next_configuration_is_rejected(self) -> None:
-        result = self.run_update(MOCK_BOT_STOPPED="1", MOCK_CONFIG_REAL="1")
+    def test_stopped_bot_with_invalid_next_configuration_is_rejected(self) -> None:
+        result = self.run_update(MOCK_BOT_STOPPED="1", MOCK_CONFIG_FAIL="1")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("prossimo avvio", result.stderr)
         self.assertFalse((self.target / ".update-backups").exists())
@@ -176,8 +175,8 @@ class UpdateScriptTests(unittest.TestCase):
         self.assertFalse((self.target / ".update-backups").exists())
         self.assert_private_files_preserved()
 
-    def test_refuses_live_configuration_for_next_start(self) -> None:
-        result = self.run_update(MOCK_CONFIG_REAL="1")
+    def test_refuses_invalid_configuration_for_next_start(self) -> None:
+        result = self.run_update(MOCK_CONFIG_FAIL="1")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("prossimo avvio", result.stderr)
         self.assertFalse((self.target / ".update-backups").exists())
@@ -232,10 +231,10 @@ class UpdateScriptTests(unittest.TestCase):
         self.assertEqual(self.install_status()["reason"], "rollback")
         self.assert_code_is("old\n")
 
-    def test_live_mode_refusal_is_recorded_for_telegram(self) -> None:
-        result = self.run_update(MOCK_RUNNING_DRY_RUN="false")
+    def test_configuration_refusal_is_recorded_for_telegram(self) -> None:
+        result = self.run_update(MOCK_CONFIG_FAIL="1")
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(self.install_status()["reason"], "live_mode")
+        self.assertEqual(self.install_status()["reason"], "config")
 
     def test_git_revision_is_built_into_image_and_recorded(self) -> None:
         if shutil.which("git") is None:

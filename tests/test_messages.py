@@ -86,14 +86,14 @@ class TelegramMessagesTests(unittest.TestCase):
             self.assertIn("29/10", row)
             self.assertIn("12,50 €", row)
 
-    def test_manual_confirmation_warns_about_real_save(self) -> None:
+    def test_manual_help_explains_direct_save_and_explicit_test_mode(self) -> None:
         payload = {**self.payload, "manual_entry": True}
         details = ReceiptWorkflow._operation_details(payload, self.selections)
         self.assertIn("📝 Negozio esempio", details)
         self.assertNotIn("🏪", details)
-        text = messages.MANUAL_FINAL.format(details=details)
-        self.assertIn("salvata DAVVERO nel portale", text)
-        self.assertEqual(messages.SAVE_BUTTON, "✅ Salva davvero")
+        self.assertIn("senza altre conferme", messages.MENU_ADMIN_HELP)
+        self.assertIn("modalità prova", messages.MENU_ADMIN_HELP)
+        self.assertNotIn("anche in modalità prova", messages.MANUAL_START)
 
     def test_user_messages_do_not_include_internal_paths_or_technical_terms(self) -> None:
         rendered = (

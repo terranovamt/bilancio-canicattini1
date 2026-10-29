@@ -42,6 +42,7 @@ def make_settings() -> Settings:
             "BOT_TOKEN": "test-token-placeholder",
             "ALLOWED_USER_IDS": "12345",
             "ADMIN_USER_ID": "12345",
+            "DRY_RUN": "true",
         }
     )
 
@@ -169,6 +170,8 @@ class ExpenseRetryServiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_real_retry_success_identifies_the_expense(self) -> None:
         self.create_queued_expense()
+        stored = self.database.get_expense("expense-1")
+        self.database.update_expense_payload("expense-1", {**stored.payload, "dry_run": False})
         bot = FakeBot()
         service = ExpenseRetryService(
             settings=replace(make_settings(), dry_run=False),
@@ -180,6 +183,52 @@ class ExpenseRetryServiceTests(unittest.IsolatedAsyncioTestCase):
         result = await service.process_due(bot)
         self.assertEqual((result.succeeded, result.trials), (1, 0))
         self.assertEqual(bot.messages[0][1], "✅ Salvata: Negozio, 12,50 € (26/10).")
+
+    async def test_legacy_queue_without_mode_cannot_become_real_by_default(self) -> None:
+        self.create_queued_expense()
+        portal = FakeRetryPortal()
+        service = ExpenseRetryService(
+            settings=replace(make_settings(), dry_run=False), database=self.database,
+            bilancio_client=portal, archive=FileArchive(self.root / "archive"),
+            pending_store=PendingReceiptStore(self.root / "pending"),
+        )
+        with self.assertLogs("bot.retry_service", level="WARNING"):
+            result = await service.process_due(FakeBot())
+        self.assertTrue(portal.received_expenses[0][1])
+        self.assertEqual(result.trials, 1)
+
+    async def test_queued_trial_remains_trial_after_real_mode_and_restart(self) -> None:
+        self.create_queued_expense()
+        stored = self.database.get_expense("expense-1")
+        self.database.update_expense_payload("expense-1", {**stored.payload, "dry_run": True})
+        self.database.set_test_mode(False)
+        reopened = Database(self.root / "bot.sqlite3")
+        reopened.initialize()
+        portal = FakeRetryPortal()
+        service = ExpenseRetryService(
+            settings=replace(make_settings(), dry_run=False), database=reopened,
+            bilancio_client=portal, archive=FileArchive(self.root / "archive"),
+            pending_store=PendingReceiptStore(self.root / "pending"),
+        )
+        result = await service.process_due(FakeBot())
+        self.assertTrue(portal.received_expenses[0][1])
+        self.assertEqual((result.succeeded, result.trials), (1, 1))
+        self.assertEqual(reopened.get_expense("expense-1").status, "dry_run")
+
+    async def test_queued_real_entry_remains_real_after_test_mode(self) -> None:
+        self.create_queued_expense()
+        stored = self.database.get_expense("expense-1")
+        self.database.update_expense_payload("expense-1", {**stored.payload, "dry_run": False})
+        self.database.set_test_mode(True)
+        portal = FakeRetryPortal()
+        service = ExpenseRetryService(
+            settings=make_settings(), database=self.database, bilancio_client=portal,
+            archive=FileArchive(self.root / "archive"),
+            pending_store=PendingReceiptStore(self.root / "pending"),
+        )
+        result = await service.process_due(FakeBot())
+        self.assertFalse(portal.received_expenses[0][1])
+        self.assertEqual((result.succeeded, result.trials), (1, 0))
 
     def create_queued_expense(self, *, with_unit: bool = True) -> None:
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")

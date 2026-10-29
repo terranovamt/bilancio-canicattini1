@@ -4,7 +4,7 @@ Catalogo aggiornato il 29 ottobre 2026 dai testi centralizzati in [bot/messages.
 
 I dati sono inventati; casse, tipologie e unità sono esempi, non elenchi reali. I percorsi diagnostici usano segnaposto e sono visibili solo all'amministratore. I pulsanti sono indicati tra parentesi quadre.
 
-Non eseguire `/manual`, `/entrata` o `/pulisci` su dati reali per provare questi messaggi: `/manual` e `/entrata` salvano davvero dopo conferma anche con `DRY_RUN=true`; `/pulisci` cancella la cronologia locale dopo conferma. `/testspesa` resta un alias di `/manual`.
+Per provare questi messaggi attiva prima **Modalità PROVA** da Amministrazione e controlla l'indicatore. Nell'uso normale scontrini, `/manual` e `/entrata` salvano davvero all'ultima tipologia, senza conferma aggiuntiva. `/pulisci` cancella la cronologia locale dopo conferma. `/testspesa` è stato rimosso.
 
 ## A. Avvio e aiuto
 
@@ -14,6 +14,8 @@ Non eseguire `/manual`, `/entrata` o `/pulisci` su dati reali per provare questi
 👋 Ciao! Qui tieni in ordine le spese.
 
 📷 Mandami una foto o un PDF dello scontrino, oppure scegli cosa fare con i pulsanti qui sotto.
+
+✅ Modalità REALE: scegliendo l’ultima tipologia salvo nel portale, senza altre conferme.
 ```
 
 ```text
@@ -27,12 +29,11 @@ I pulsanti sono sotto il messaggio. All'avvio la vecchia tastiera con i comandi 
 
 ### 2 · Avvio — amministratore
 
-Il testo dell'utente viene completato con la modalità attiva e l'avviso sulle operazioni manuali:
+La modalità è indicata per tutti. Se l'amministratore ha attivato la prova, l'indicatore diventa:
 
 ```text
 🧪 Modalità PROVA: non viene salvato nulla nel portale.
 
-⚠️ Gli inserimenti manuali salvano davvero solo dopo «Salva davvero», anche in modalità prova.
 ```
 
 ```text
@@ -47,6 +48,7 @@ Il testo dell'utente viene completato con la modalità attiva e l'avviso sulle o
 La schermata Amministrazione contiene:
 
 ```text
+[🧪 Attiva modalità prova]
 [🔌 Verifica collegamento]
 [🔄 Aggiorna casse e tipologie]
 [🔖 Versione e aggiornamenti]
@@ -56,12 +58,16 @@ La schermata Amministrazione contiene:
 
 Versione attiva e disponibile vengono mostrate nella schermata **Versione e aggiornamenti**, con **Installa aggiornamento**, **Indietro** e **Menu principale**. Il pulsante di installazione apre la conferma, non installa subito. La pulizia mantiene la propria conferma.
 
+In prova il primo pulsante diventa **✅ Torna ai salvataggi reali**. La scelta resta nel database anche dopo il riavvio e vale per tutti i nuovi inserimenti; quelli già iniziati mantengono la loro modalità.
+
 ### 3 · Aiuto
 
 ```text
 ❓ Come funziona
 
 📷 Nuovo scontrino: invia una foto o un PDF, controlla i dati e scegli cassa e tipologia. Se non riesco a leggerlo, ti chiedo i dati a mano.
+
+L’ultima tipologia avvia subito la registrazione, senza altre conferme. Solo in modalità PROVA non salvo nel portale.
 
 📊 Riepilogo: consulta i saldi delle casse.
 📋 Ultime operazioni: controlla le tue registrazioni.
@@ -75,10 +81,11 @@ Per l'amministratore si aggiunge:
 ```text
 ✍️ Inserisci a mano: registra un’entrata o un’uscita senza foto.
 💰 Nuova entrata: registra un’entrata senza foto.
-⚠️ Queste operazioni salvano davvero, anche in modalità prova, solo dopo la conferma finale «Salva davvero».
+Scegliendo l’ultima tipologia registri subito, senza altre conferme.
+🧪 In Amministrazione puoi attivare o disattivare la modalità prova.
 ```
 
-Le schermate hanno **Menu principale**; gli strumenti amministratore hanno anche **Indietro**. Il ritorno al menu non cancella un inserimento. I moduli conservano i pulsanti di correzione, conferma e annullamento riportati sotto, con in più il ritorno al menu. Le schermate informative sono accessibili durante le attese dell'AI o del portale; salvataggi e altre azioni che cambiano dati restano sequenziali.
+Le schermate hanno **Menu principale**; gli strumenti amministratore hanno anche **Indietro**. Il ritorno al menu non cancella un inserimento. I moduli conservano correzione e annullamento, non conferme aggiuntive. Le schermate informative sono accessibili durante le attese dell'AI o del portale; salvataggi e altre azioni che cambiano dati restano sequenziali.
 
 ## B. Inserimento da scontrino
 
@@ -91,19 +98,13 @@ Le schermate hanno **Menu principale**; gli strumenti amministratore hanno anche
 ### 5 · Controllo dei dati
 
 ```text
-Ecco cosa ho letto, è tutto giusto?
+Ecco i dati dell’operazione. Puoi correggerli prima di scegliere la cassa.
 
 📅 29/10/2026
 🏪 Negozio esempio
 💶 12,50 €
-🏷️ Alimentari
-```
 
-```text
-[✅ Sì, è giusto]
-[📅 Data] [💶 Importo]
-[🏪 Negozio] [🏷️ Categoria]
-[Annulla]
+✅ Modalità REALE: scegliendo l’ultima tipologia salvo nel portale, senza altre conferme.
 ```
 
 Solo sotto il 70% si aggiunge questo avviso, senza percentuali:
@@ -153,12 +154,18 @@ Che categoria vuoi? Scrivi "-" per lasciarla vuota.
 ```
 
 ```text
-🏦 Da quale cassa è uscita la spesa? (1 di 3)
+🏦 Quale cassa vuoi usare? (1 di 3)
+
+✅ Modalità REALE: scegliendo l’ultima tipologia salvo nel portale, senza altre conferme.
 ```
 
 ```text
 [Cassa esempio A]
 [Cassa esempio B]
+[📅 Data] [💶 Importo] [✏️ Descrizione]
+[🏷️ Categoria]
+[Annulla]
+[🏠 Menu principale]
 ```
 
 ### 8 · Entrata o uscita
@@ -258,37 +265,33 @@ I campi vuoti non compaiono. La riga 👥 manca anche quando il portale non offr
 `/entrata` chiede tutti i dati, senza precompilare importi o descrizioni:
 
 ```text
-✍️ Inseriamo un’entrata senza ricevuta: data, descrizione e importo, poi cassa e tipologia. Dopo la conferma finale sarà salvata davvero nel portale, anche in modalità prova. Puoi interrompere con il pulsante Annulla.
+✍️ Inseriamo un’entrata senza ricevuta: data, descrizione e importo, poi cassa e tipologia. L’ultima scelta avvia subito la registrazione, senza altre conferme. Puoi interrompere con il pulsante Annulla.
 
 📅 Qual è la data? (es. 29/10/2026)
+
+✅ Modalità REALE: scegliendo l’ultima tipologia salvo nel portale, senza altre conferme.
 ```
 
-`/manual` chiede tutti i dati e permette sia entrate sia uscite senza ricevuta; `/testspesa` ne è un alias:
+`/manual` chiede tutti i dati e permette sia entrate sia uscite senza ricevuta:
 
 ```text
-✍️ Inseriamo un’entrata o un’uscita senza ricevuta: data, descrizione e importo, poi cassa, direzione e tipologia. Dopo la conferma finale sarà salvata davvero nel portale, anche in modalità prova. Puoi interrompere con il pulsante Annulla.
+✍️ Inseriamo un’entrata o un’uscita senza ricevuta: data, descrizione e importo, poi cassa, direzione e tipologia. L’ultima scelta avvia subito la registrazione, senza altre conferme. Puoi interrompere con il pulsante Annulla.
 
 📅 Qual è la data? (es. 29/10/2026)
+
+✅ Modalità REALE: scegliendo l’ultima tipologia salvo nel portale, senza altre conferme.
 ```
 
 Dopo aver compilato i dati:
 
 ```text
-✍️ Operazione a mano, senza ricevuta
+Ecco i dati dell’operazione. Puoi correggerli prima di scegliere la cassa.
 
 📅 29/10/2026
 📝 Prova Telegram
 💶 0,10 €
 
-Va bene così o vuoi cambiare qualcosa?
-⚠️ Verrà salvata davvero nel portale: prima ti chiedo un'ultima conferma.
-```
-
-```text
-[✅ Va bene]
-[📅 Data] [💶 Importo]
-[✏️ Descrizione]
-[Annulla]
+✅ Modalità REALE: scegliendo l’ultima tipologia salvo nel portale, senza altre conferme.
 ```
 
 ```text
@@ -303,24 +306,9 @@ Va bene così o vuoi cambiare qualcosa?
 💶 Qual è l'importo? (es. 12,50)
 ```
 
-### 14 · Conferma finale manuale
+### 14 · Ultima scelta manuale
 
-```text
-Ultimo controllo prima di salvare:
-
-📅 29/10/2026
-📝 Prova Telegram
-💶 0,10 € (uscita)
-🏦 Cassa esempio
-🏷️ Tipologia esempio
-👥 Unità esempio
-
-⚠️ Se confermi, la spesa viene salvata DAVVERO nel portale.
-```
-
-```text
-[✅ Salva davvero] [Annulla]
-```
+Non compare una conferma finale. Scegliendo la tipologia si passa direttamente al messaggio di salvataggio o prova in corso e poi all'esito verificato.
 
 ### 15 · Inserimento manuale completato
 
@@ -540,7 +528,6 @@ Il bot si riavvia per circa un minuto: controlla che nessuno stia registrando un
 Se il comando non può procedere:
 
 ```text
-⚠️ Il bot è in modalità REALE: l'aggiornamento automatico è bloccato. Riporta prima DRY_RUN=true.
 ℹ️ Il controllo automatico non è attivo sul NAS: la richiesta non verrebbe eseguita. Aggiorna con il comando manuale.
 ⏳ C'è già una richiesta in attesa: il NAS la esegue al prossimo controllo.
 ```

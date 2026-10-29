@@ -171,6 +171,12 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("entrata", {command.command for command in USER_COMMANDS})
 
     def make_context(self, **bot_data: object):
+        if "database" not in bot_data:
+            temporary = tempfile.TemporaryDirectory()
+            self.addCleanup(temporary.cleanup)
+            database = Database(Path(temporary.name) / "test.sqlite3")
+            database.initialize()
+            bot_data["database"] = database
         return SimpleNamespace(application=SimpleNamespace(bot_data=bot_data))
 
     async def test_unauthorized_update_is_stopped_and_logged_without_user_id(self) -> None:
@@ -196,7 +202,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         text = message.reply_text.await_args.args[0]
         self.assertIn("Mandami", text)
         self.assertIn("scontrino", text)
-        self.assertIn("PROVA", text)
+        self.assertIn("REALE", text)
         keyboard = message.reply_text.await_args.kwargs["reply_markup"]
         buttons = [button for row in keyboard.inline_keyboard for button in row]
         self.assertIn("menu:manual", [button.callback_data for button in buttons])
@@ -236,7 +242,8 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
             button.callback_data for row in keyboard.inline_keyboard for button in row
         ])
         text = message.reply_text.await_args.args[0]
-        for admin_detail in ("/testspesa", "/pulisci", "/aggiornaopzioni", "SIMULATA", "REALE"):
+        self.assertIn("REALE", text)
+        for admin_detail in ("/testspesa", "/pulisci", "/aggiornaopzioni", "SIMULATA"):
             self.assertNotIn(admin_detail, text)
 
     async def test_refresh_options_invalidates_cache_without_submission(self) -> None:
@@ -688,6 +695,8 @@ class UpdateCommandTests(unittest.IsolatedAsyncioTestCase):
         self.update_dir = self.data / "update"
         self.update_dir.mkdir(parents=True)
         self.user = SimpleNamespace(id=12345)
+        self.database = Database(self.data / "test.sqlite3")
+        self.database.initialize()
 
     def settings(self, dry_run: str = "true") -> Settings:
         return Settings.from_env(
@@ -706,6 +715,7 @@ class UpdateCommandTests(unittest.IsolatedAsyncioTestCase):
             application=SimpleNamespace(
                 bot_data={
                     "settings": settings or self.settings(),
+                    "database": self.database,
                     "running_version": RunningVersion(
                         revision="a" * 40, committed_at=None, subject="Attuale"
                     ),
@@ -770,7 +780,7 @@ class UpdateCommandTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse((self.update_dir / "request").exists())
 
-    async def test_update_is_admin_only_and_blocked_in_live_mode(self) -> None:
+    async def test_update_is_admin_only_and_keeps_confirmation_in_live_mode(self) -> None:
         self.write_check("b" * 40)
         message = SimpleNamespace(reply_text=AsyncMock())
         await update_command(
@@ -782,7 +792,8 @@ class UpdateCommandTests(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(message=message, effective_user=self.user),
             self.context(self.settings(dry_run="false")),
         )
-        self.assertEqual(message.reply_text.await_args.args[0], texts.UPDATE_LIVE_MODE)
+        self.assertIn("Vuoi installare", message.reply_text.await_args.args[0])
+        self.assertFalse((self.update_dir / "request").exists())
         query = SimpleNamespace(
             data="admin:update:yes", answer=AsyncMock(), edit_message_text=AsyncMock()
         )
@@ -790,7 +801,7 @@ class UpdateCommandTests(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(callback_query=query, effective_user=self.user),
             self.context(self.settings(dry_run="false")),
         )
-        self.assertFalse((self.update_dir / "request").exists())
+        self.assertTrue((self.update_dir / "request").exists())
 
     async def test_update_without_nas_check_is_not_requested(self) -> None:
         message = SimpleNamespace(reply_text=AsyncMock())

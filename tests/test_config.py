@@ -19,7 +19,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.data_path, "/data")
         self.assertEqual(settings.storage_path, "/scontrini")
         self.assertEqual(settings.timezone, "Europe/Rome")
-        self.assertTrue(settings.dry_run)
+        self.assertFalse(settings.dry_run)
         self.assertEqual(settings.local_vision_url, "http://ollama:11434")
         self.assertIsNone(settings.local_vision_model)
         self.assertEqual(settings.local_vision_timeout_seconds, 180)
@@ -63,6 +63,10 @@ class SettingsTests(unittest.TestCase):
         self.environ["DRY_RUN"] = "false"
 
         self.assertFalse(Settings.from_env(self.environ).dry_run)
+
+    def test_trial_requires_explicit_configuration(self) -> None:
+        self.environ["DRY_RUN"] = "true"
+        self.assertTrue(Settings.from_env(self.environ).dry_run)
 
     def test_rejects_invalid_boolean(self) -> None:
         self.environ["DRY_RUN"] = "sometimes"

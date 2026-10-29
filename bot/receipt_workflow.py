@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Protocol
 import uuid
 
-from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.error import NetworkError, TelegramError
 from telegram.ext import ContextTypes
 
@@ -55,7 +55,7 @@ _MANUAL_EDIT_PROMPTS = {
 }
 _CALLBACK_STATES = {
     "confirm": {"awaiting_confirmation"},
-    "edit": {"awaiting_confirmation"},
+    "edit": {"awaiting_confirmation", "awaiting_account"},
     "manual_save": {"awaiting_manual_final_confirmation"},
     "direction": {"awaiting_direction"},
     "voice": {"awaiting_accounting_voice"},
@@ -106,7 +106,7 @@ class ReceiptWorkflow:
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
         *,
-        collect_data: bool = False,
+        collect_data: bool = True,
         direction: TransactionDirection | None = TransactionDirection.INCOME,
     ) -> None:
         message = getattr(update, "effective_message", None) or update.message
@@ -140,6 +140,7 @@ class ReceiptWorkflow:
         expense_id = uuid.uuid4().hex
         payload: dict[str, object] = {
             "manual_entry": True,
+            "dry_run": await self._current_test_mode(),
             "direction": direction.value if direction is not None else None,
             "date": date.today().isoformat(),
             "merchant": _MANUAL_DEFAULT_DESCRIPTION,
@@ -163,7 +164,7 @@ class ReceiptWorkflow:
         if collect_data:
             intro = texts.MANUAL_START if direction is None else texts.INCOME_START
             await message.reply_text(
-                intro.format(prompt=_MANUAL_EDIT_PROMPTS["date"]),
+                intro.format(prompt=_MANUAL_EDIT_PROMPTS["date"]) + "\n\n" + self._mode_text(payload),
                 reply_markup=self._navigation_keyboard(cancel=True),
             )
             return
@@ -240,6 +241,7 @@ class ReceiptWorkflow:
             )
             return
 
+        dry_run = await self._current_test_mode()
         created = await asyncio.to_thread(
             self._database.create_expense,
             expense_id=pending.receipt_id,
@@ -249,6 +251,7 @@ class ReceiptWorkflow:
                 **ReceiptData(confidence=0).model_dump(mode="json"),
                 "pending_path": str(pending.path),
                 "source_name": file_name,
+                "dry_run": dry_run,
             },
         )
         if not created:
@@ -285,6 +288,7 @@ class ReceiptWorkflow:
                 **ReceiptData(confidence=0).model_dump(mode="json"),
                 "pending_path": str(pending.path),
                 "source_name": file_name,
+                "dry_run": dry_run,
             }
             await asyncio.to_thread(
                 self._database.update_expense_payload, pending.receipt_id, data
@@ -311,6 +315,7 @@ class ReceiptWorkflow:
             **receipt.model_dump(mode="json"),
             "pending_path": str(pending.path),
             "source_name": file_name,
+            "dry_run": dry_run,
         }
         await asyncio.to_thread(
             self._database.update_expense_payload,
@@ -326,10 +331,7 @@ class ReceiptWorkflow:
                 _FIELD_PROMPTS[missing[0]], reply_markup=self._navigation_keyboard(cancel=True)
             )
             return
-        await message.reply_text(
-            self._confirmation_text(receipt),
-            reply_markup=self._confirmation_keyboard(),
-        )
+        await self._offer_accounts(user.id, pending.receipt_id, data, message, context)
 
     async def handle_text(
         self,
@@ -370,11 +372,7 @@ class ReceiptWorkflow:
                 expense_id,
                 updated,
             )
-            await self._save_state(user.id, "awaiting_confirmation", state_data)
-            await message.reply_text(
-                self._manual_confirmation_text(updated),
-                reply_markup=self._manual_confirmation_keyboard(),
-            )
+            await self._offer_accounts(user.id, expense_id, updated, message, context)
             return
         if state == "awaiting_receipt_data":
             field_name = self._next_missing_field(expense.payload)
@@ -383,23 +381,6 @@ class ReceiptWorkflow:
             if field_name not in _EDIT_FIELDS:
                 raise ValueError("Conversation state contains an unsupported edit field")
         elif state == "awaiting_notes":
-            if expense.payload.get("manual_entry") is True:
-                state_data["portal_notes"] = (
-                    None if message.text.strip() == "-" else message.text.strip()
-                )
-                await self._save_state(
-                    user.id,
-                    "awaiting_manual_final_confirmation",
-                    state_data,
-                )
-                await message.reply_text(
-                    self._manual_final_confirmation_text(
-                        expense.payload,
-                        state_data,
-                    ),
-                    reply_markup=self._manual_final_confirmation_keyboard(),
-                )
-                return
             await self._submit_expense(
                 update,
                 context,
@@ -443,17 +424,7 @@ class ReceiptWorkflow:
                 reply_markup=self._navigation_keyboard(cancel=True),
             )
             return
-        await self._save_state(user.id, "awaiting_confirmation", state_data)
-        if updated.get("manual_entry") is True:
-            await message.reply_text(
-                self._manual_confirmation_text(updated),
-                reply_markup=self._manual_confirmation_keyboard(),
-            )
-            return
-        await message.reply_text(
-            self._confirmation_text(receipt),
-            reply_markup=self._confirmation_keyboard(),
-        )
+        await self._offer_accounts(user.id, expense_id, updated, message, context)
 
     async def handle_callback(
         self,
@@ -625,8 +596,51 @@ class ReceiptWorkflow:
             logger.warning("Could not show Telegram progress message")
 
     def _uses_dry_run(self, payload: dict[str, object]) -> bool:
-        # Manual admin entries are always real; DRY_RUN applies to receipts.
-        return self._settings.dry_run and payload.get("manual_entry") is not True
+        value = payload.get("dry_run", self._settings.dry_run)
+        if not isinstance(value, bool):
+            raise ValueError("Expense mode must be a boolean")
+        return value
+
+    async def _current_test_mode(self) -> bool:
+        return await asyncio.to_thread(
+            self._database.get_test_mode, default=self._settings.dry_run
+        )
+
+    def _mode_text(self, payload: dict[str, object]) -> str:
+        return texts.MODE_TRIAL if self._uses_dry_run(payload) else texts.MODE_REAL
+
+    @staticmethod
+    async def _selection_reply(
+        target: CallbackQuery | Message,
+        text: str,
+        *,
+        reply_markup: InlineKeyboardMarkup,
+    ) -> None:
+        if isinstance(target, Message) or hasattr(target, "reply_text"):
+            await target.reply_text(text, reply_markup=reply_markup)
+        else:
+            await target.edit_message_text(text, reply_markup=reply_markup)
+
+    async def _offer_accounts(
+        self,
+        user_id: int,
+        expense_id: str,
+        payload: dict[str, object],
+        message: Message,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        receipt = self._receipt_from_payload(payload)
+        summary = texts.receipt_confirmation(payload, receipt.confidence)
+        summary += "\n\n" + self._mode_text(payload)
+        await message.reply_text(summary)
+        if self._bilancio is None:
+            await self._save_state(user_id, "awaiting_confirmation", {"expense_id": expense_id})
+            await message.reply_text(
+                texts.PORTAL_UNAVAILABLE_RECEIPT,
+                reply_markup=self._manual_confirmation_keyboard(),
+            )
+            return
+        await self._begin_portal_selection(user_id, expense_id, payload, message, context)
 
     def _submission_progress_text(self, dry_run: bool) -> str:
         if dry_run:
@@ -647,7 +661,7 @@ class ReceiptWorkflow:
         user_id: int,
         expense_id: str,
         payload: dict[str, object],
-        query: CallbackQuery,
+        query: CallbackQuery | Message,
         subject: str,
     ) -> None:
         await self._save_state(
@@ -656,7 +670,8 @@ class ReceiptWorkflow:
             {"expense_id": expense_id},
         )
         manual = payload.get("manual_entry") is True
-        await query.edit_message_text(
+        await self._selection_reply(
+            query,
             (texts.PORTAL_MANUAL_READ_FAILED if manual else texts.PORTAL_READ_FAILED).format(
                 subject=subject
             ),
@@ -671,7 +686,7 @@ class ReceiptWorkflow:
         user_id: int,
         expense_id: str,
         payload: dict[str, object],
-        query: CallbackQuery,
+        query: CallbackQuery | Message,
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
         if self._bilancio is None:
@@ -718,9 +733,22 @@ class ReceiptWorkflow:
             "options": self._serialize_options(options),
         }
         await self._save_state(user_id, "awaiting_account", data)
-        await query.edit_message_text(
-            texts.ACCOUNT_PROMPT,
-            reply_markup=self._option_keyboard(options),
+        edit_rows = [
+            [
+                InlineKeyboardButton(texts.EDIT_DATE_BUTTON, callback_data="receipt:edit:date"),
+                InlineKeyboardButton(texts.EDIT_AMOUNT_BUTTON, callback_data="receipt:edit:total_amount"),
+                InlineKeyboardButton(texts.DESCRIPTION_BUTTON, callback_data="receipt:edit:merchant"),
+            ],
+        ]
+        if payload.get("manual_entry") is not True:
+            edit_rows.append([
+                InlineKeyboardButton(texts.EDIT_CATEGORY_BUTTON, callback_data="receipt:edit:suggested_category")
+            ])
+        edit_rows.append([InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")])
+        await self._selection_reply(
+            query,
+            texts.ACCOUNT_PROMPT + "\n\n" + self._mode_text(payload),
+            reply_markup=self._option_keyboard(options, extra_rows=edit_rows),
         )
 
     async def _select_direction(
@@ -995,17 +1023,6 @@ class ReceiptWorkflow:
             category=None,
             portal_notes=None,
         )
-        if payload.get("manual_entry") is True:
-            await self._save_state(
-                user_id,
-                "awaiting_manual_final_confirmation",
-                state_data,
-            )
-            await query.edit_message_text(
-                self._manual_final_confirmation_text(payload, state_data),
-                reply_markup=self._manual_final_confirmation_keyboard(),
-            )
-            return
         await self._show_progress(query, self._submission_progress_text(self._uses_dry_run(payload)))
         await self._submit_expense(
             update,
@@ -1034,17 +1051,6 @@ class ReceiptWorkflow:
             category=None,
             portal_notes=None,
         )
-        if payload.get("manual_entry") is True:
-            await self._save_state(
-                user_id,
-                "awaiting_manual_final_confirmation",
-                state_data,
-            )
-            await query.edit_message_text(
-                self._manual_final_confirmation_text(payload, state_data),
-                reply_markup=self._manual_final_confirmation_keyboard(),
-            )
-            return
         await self._show_progress(query, self._submission_progress_text(self._uses_dry_run(payload)))
         await self._submit_expense(
             update,
@@ -1165,6 +1171,7 @@ class ReceiptWorkflow:
                 accounting_voice=str(state_data.get("accounting_voice", "Voci Scout")),
             )
             payload.update(
+                dry_run=self._uses_dry_run(payload),
                 account=self._serialize_option(account),
                 direction=direction.value,
                 transaction_type=self._serialize_option(transaction_type),
@@ -1401,12 +1408,6 @@ class ReceiptWorkflow:
             return document.file_id, filename, document.file_size
         return None, None, None
 
-    @staticmethod
-    def _confirmation_text(receipt: ReceiptData) -> str:
-        return texts.receipt_confirmation(
-            receipt.model_dump(mode="json"), receipt.confidence
-        )
-
     @classmethod
     def _parse_manual_entry(
         cls,
@@ -1457,15 +1458,6 @@ class ReceiptWorkflow:
             ]
         )
 
-    def _manual_final_confirmation_text(
-        self,
-        payload: dict[str, object],
-        state_data: dict[str, object],
-    ) -> str:
-        return (
-            texts.MANUAL_FINAL.format(details=self._operation_details(payload, state_data))
-        )
-
     @staticmethod
     def _operation_details(
         payload: dict[str, object],
@@ -1474,22 +1466,6 @@ class ReceiptWorkflow:
         unit_left_empty: bool = False,
     ) -> str:
         return texts.operation_details(payload, state_data, unit_left_empty=unit_left_empty)
-
-    @staticmethod
-    def _manual_final_confirmation_keyboard() -> InlineKeyboardMarkup:
-        button_text = texts.SAVE_BUTTON
-        return InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        button_text,
-                        callback_data="receipt:manual_save",
-                    )
-                ],
-                [InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")],
-                [InlineKeyboardButton(texts.HOME_BUTTON, callback_data="menu:home")],
-            ]
-        )
 
     @staticmethod
     def _confirmation_keyboard() -> InlineKeyboardMarkup:

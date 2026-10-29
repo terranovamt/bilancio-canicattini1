@@ -4,7 +4,7 @@ Questa guida parte da un PC Windows e da un NAS con DSM 7.2. I nomi dei pulsanti
 
 Lo scopo iniziale è avviare il bot e provare una spesa simulata. Solo dopo si installa il modello per leggere le foto.
 
-**Durante tutta questa guida lascia `DRY_RUN=true`: il bot può leggere e compilare il portale AGESCI, ma non deve salvare spese reali.** Un'eventuale prova reale va autorizzata separatamente.
+**Questa guida descrive prove esplicite: imposta `DRY_RUN=true` e verifica su Telegram «Modalità PROVA» prima di iniziare.** Se il bot ha già una scelta salvata, usa **Amministrazione → Attiva modalità prova**: la scelta nel menu prevale su `.env`. Nell'uso normale il default è reale e l'ultima tipologia salva senza conferma aggiuntiva. Non eseguire prove reali senza autorizzazione.
 
 ## 1. Che cosa stiamo installando
 
@@ -399,24 +399,20 @@ Un container acceso non basta: la risposta Telegram conferma anche che il bot ri
 
 ## 12. Su Telegram: inserisci un'entrata a mano (solo amministratore)
 
-`/entrata` permette all'amministratore di inserire un'entrata senza foto e senza AI. **Salva davvero nel portale**, anche se `DRY_RUN=true`: quell'impostazione vale solo per gli scontrini. Prima del salvataggio il bot chiede sempre un'ultima conferma. Non usarlo per una prova simulata.
+**Nuova entrata** (oppure `/entrata`) permette all'amministratore di inserire un'entrata senza foto e senza AI. Nell'uso normale salva davvero, senza conferma finale; in modalità prova non salva. Per seguire questa guida controlla prima che il menu mostri **Modalità PROVA**.
 
 1. Invia `/entrata`.
 2. Scrivi data, descrizione e importo quando il bot li chiede.
 3. Controlla il riepilogo e, se serve, cambia i valori con **📅 Data**, **💶 Importo** o **✏️ Descrizione**.
-4. Premi **✅ Va bene**.
-5. Scegli la cassa.
-6. Premi **Entrata**: senza allegato non è disponibile Uscita.
-7. Scegli la tipologia: compaiono prima le più usate; premi **➕ Altre tipologie** se quella giusta non c'è. Unità e categoria vengono impostate dal bot.
-8. Leggi il riepilogo completo e verifica data, anno scout, descrizione, importo, cassa e tipologia.
-9. Premi **✅ Salva davvero** solo se tutto è corretto; altrimenti premi **Annulla**.
-10. Attendi l'esito: il messaggio «⏳ Registro l'operazione nel portale…» viene sostituito da «✅ Operazione registrata e verificata», con il riepilogo di tutti i dati inseriti (data, descrizione, importo, cassa, operazione, tipologia, unità e categoria).
+4. Scegli la cassa. La direzione è già Entrata.
+5. Scegli la tipologia: compaiono prima le più usate; premi **Mostra altre** se quella giusta non c'è. Questa scelta avvia subito la simulazione o il salvataggio secondo la modalità iniziale. Unità e categoria vengono impostate dal bot.
+6. Attendi l'esito: in prova deve comparire **Prova riuscita! Nel portale non è stato salvato nulla**; in reale **Spesa salvata e verificata nel portale**.
 
-Se compare «❌ Non sono riuscito a registrare e verificare la spesa manuale», il bot non riprova da solo: apri il portale e controlla se la spesa c'è. Ripeti `/testspesa` solo se non compare, per evitare doppioni.
+Se compare «❌ Non sono riuscito a salvare la spesa e non riproverò da solo», apri il portale e controlla se la spesa c'è. Ripeti l'inserimento solo se non compare, per evitare doppioni.
 
-Puoi interrompere prima della conferma finale con `/annulla`.
+Puoi interrompere prima dell'ultima scelta contabile con **Annulla**.
 
-Il vecchio `/testspesa` resta disponibile con i valori iniziali «Prova Telegram» e 0,10 €, modificabili. Anche questo comando permette solo entrate senza ricevuta e salva davvero dopo conferma. Per un'uscita invia prima una ricevuta: se l'AI non la legge, il bot conserva il file temporaneo e ti chiede di compilare i dati a mano. Il file entra nell'archivio `scontrini` quando confermi l'operazione; prima rimane in attesa. `/annulla` elimina la copia temporanea. La compilazione manuale di uno scontrino rispetta `DRY_RUN`.
+**Inserisci a mano** (`/manual`) permette sia entrate sia uscite senza ricevuta, chiedendo tutti i dati; `/testspesa` non è più disponibile. Una foto/PDF imposta invece Uscita automaticamente: se l'AI non la legge, il bot conserva il file temporaneo e ti chiede i dati a mano. Il file entra nell'archivio `scontrini` all'ultima scelta contabile; prima rimane in attesa. **Annulla** elimina la copia temporanea. Tutti i percorsi rispettano la modalità con cui sono iniziati.
 
 ### Tempi dei menu e aggiornamento delle opzioni
 
@@ -507,18 +503,17 @@ sudo docker compose logs --tail=100 bot | grep -F "Receipt Telegram transfer fai
 
 Condividi soltanto la riga trovata: contiene il passaggio (`get_file`, `download` o `progress_message`) e il tipo di errore, non il contenuto del documento. I tempi massimi di connessione sono 30 secondi e quelli di attesa dei dati per recupero e download sono 120 secondi; sono separati dal timeout del modello AI. Se il log mostra ancora `Unhandled Telegram update error`, il problema potrebbe essere in un altro passaggio oppure il NAS potrebbe usare una versione precedente.
 
-1. Verifica che `.env` contenga ancora `DRY_RUN=true`.
+1. Verifica su Telegram **Modalità PROVA**; se serve attivala da Amministrazione prima di inviare la foto.
 2. Scegli una foto di prova leggibile, evitando documenti con dati personali non necessari.
 3. Invia al bot la foto come immagine, non come PDF per questa prima verifica.
 4. Attendi l'analisi senza inviare ripetutamente la stessa foto.
 5. Controlla data, descrizione e importo estratti.
 6. Correggi i dati errati seguendo le domande del bot.
 7. Completa le scelte contabili.
-8. Verifica che il riepilogo sia **SIMULATO**.
-9. Conferma soltanto la simulazione.
-10. Dopo la risposta finale, apri `scontrini` in File Station e cerca il documento nella sottocartella dell'anno e del mese.
+8. L'ultima tipologia avvia la prova senza conferme aggiuntive: verifica il messaggio **Prova riuscita! Nel portale non è stato salvato nulla**.
+9. Dopo la risposta finale, apri `scontrini` in File Station e cerca il documento nella sottocartella dell'anno e del mese.
 
-La ricevuta viene archiviata quando confermi i dati e completi le scelte contabili, e non viene allegata all'operazione AGESCI. Se l'analisi fallisce, un unico avviso spiega che il file è conservato temporaneamente: puoi inserire data, descrizione e importo a mano e continuare, sempre in modalità prova per gli scontrini se `DRY_RUN=true`. Se il NAS diventa troppo lento, fermati: non sostituire il modello con un servizio online senza una decisione esplicita.
+La ricevuta viene archiviata quando completi le scelte contabili, e non viene allegata all'operazione AGESCI. Se l'analisi fallisce, un avviso spiega che il file è conservato temporaneamente: puoi inserire data, descrizione e importo a mano e continuare mantenendo la modalità iniziale. Se il NAS diventa troppo lento, fermati: non sostituire il modello con un servizio online senza una decisione esplicita.
 
 ## 15. Come fermare, riavviare e aggiornare
 
@@ -585,7 +580,7 @@ Non importa in quale cartella si trovi il terminale: il comando usa percorsi com
 
 - Non copia, stampa o modifica `.env`.
 - Non sostituisce `data`, `scontrini` o `ollama-data` e non cambia i loro proprietari o permessi.
-- Funziona anche se il bot e spento: verifica la configurazione del prossimo avvio tramite un container temporaneo che esegue soltanto il controllo, non il bot. Richiede sempre `DRY_RUN=true`. Se il bot e acceso, verifica anche la modalita del processo corrente. Se rileva la modalita reale o non puo completare i controlli, si ferma.
+- Funziona anche se il bot e spento: verifica la configurazione del prossimo avvio tramite un container temporaneo che esegue soltanto il controllo, non il bot. Consente sia la modalita reale sia la prova; non riscrive `.env` o la scelta salvata nel database. Se non puo completare i controlli, si ferma.
 - Conserva i vecchi file del programma in `.update-backups`, dentro il progetto; questa cartella e esclusa da Git e dall'immagine Docker.
 - Se la costruzione fallisce, non ricrea il container: se il precedente era acceso resta acceso; se era spento resta spento. Anche i file del programma su disco vengono riportati alla versione precedente.
 - Dopo la ricreazione controlla il container e il database. Se il nuovo container non diventa sano entro tre minuti, ripristina da solo file e immagine precedenti e lo segnala con **ERRORE**. La risposta a `/start` resta necessaria per verificare Telegram: per l'amministratore mostra anche la **Versione attiva** (con lo ZIP compare «non indicata», perché manca Git).
@@ -594,7 +589,7 @@ Il backup automatico riguarda solo il programma, **non e un backup del database 
 
 Se compare **ERRORE**, non cancellare dati e non ripetere comandi di pulizia. Comunica soltanto il messaggio necessario, dopo aver rimosso informazioni private. Se manca `aggiorna.sh`, stai usando un vecchio ZIP: procurati il nuovo pacchetto.
 
-Prima di passare in futuro a una prova reale, controlla `/coda`: il bot ritenta automaticamente le operazioni in attesa. Cambiare globalmente `DRY_RUN` può coinvolgere anche quelle, non soltanto la nuova prova. Non abilitare la modalità reale per aggirare un errore della simulazione.
+Prima di tornare ai salvataggi reali controlla **Operazioni in attesa**: il bot ritenta automaticamente quelle in coda, mantenendo la modalità iniziale di ciascuna. Le vecchie code senza modalità memorizzata vengono riprovate solo in simulazione. La scelta in Amministrazione riguarda i nuovi inserimenti; resta attiva fino a quando la cambi, anche dopo i riavvii. Non abilitare la modalità reale per aggirare un errore della simulazione.
 
 Non eliminare database o ricevute per ripartire. Non usare comandi di pulizia Docker o cancellazione dei volumi come tentativo generico di risoluzione.
 

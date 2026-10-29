@@ -89,11 +89,31 @@ class Database:
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS bot_mode (
+                    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                    test_mode INTEGER NOT NULL CHECK (test_mode IN (0, 1))
+                );
+
                 CREATE INDEX IF NOT EXISTS retry_queue_due_idx
                     ON retry_queue(next_attempt_at);
                 CREATE INDEX IF NOT EXISTS expenses_user_created_idx
                     ON expenses(telegram_user_id, created_at DESC);
                 """
+            )
+
+    def get_test_mode(self, *, default: bool) -> bool:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT test_mode FROM bot_mode WHERE singleton = 1"
+            ).fetchone()
+        return default if row is None else bool(row[0])
+
+    def set_test_mode(self, enabled: bool) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                "INSERT INTO bot_mode (singleton, test_mode) VALUES (1, ?) "
+                "ON CONFLICT(singleton) DO UPDATE SET test_mode = excluded.test_mode",
+                (int(enabled),),
             )
 
     def contains_file_hash(self, sha256: str) -> bool:

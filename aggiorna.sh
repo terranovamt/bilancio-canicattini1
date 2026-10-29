@@ -189,17 +189,12 @@ cd "$target_dir"
 docker compose config --quiet || abort config "Configurazione installata non valida."
 running_bot=$(docker compose ps --status running -q bot) \
     || abort "" "Non riesco a verificare lo stato del bot."
-if [ -n "$running_bot" ]; then
-    dry_run=$(docker compose exec -T bot python -c \
-        'from config import Settings; print("true" if Settings.from_env().dry_run else "false")') \
-        || abort "" "Non riesco a verificare la modalita del bot in esecuzione."
-    [ "$dry_run" = "true" ] || abort live_mode "Il bot e in modalita REALE: fermati e concorda prima l'aggiornamento."
-else
+if [ -z "$running_bot" ]; then
     printf 'Il bot e spento: verifico la configurazione del prossimo avvio senza avviare il bot.\n'
 fi
 docker compose run --rm --no-deps --entrypoint python bot -c \
-    'from config import Settings; assert Settings.from_env().dry_run, "DRY_RUN must be true before updating"' \
-    || abort live_mode "La configurazione del prossimo avvio non e una simulazione valida."
+    'from config import Settings; Settings.from_env()' \
+    || abort config "La configurazione del prossimo avvio non e valida."
 
 # Keep the current image under a rollback tag: the build moves the normal tag.
 rollback_image=""

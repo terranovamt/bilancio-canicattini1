@@ -172,7 +172,7 @@ class Settings:
             data_path=_optional_text(source, "DATA_PATH") or "/data",
             storage_path=_optional_text(source, "STORAGE_PATH") or "/scontrini",
             timezone=_optional_text(source, "TZ") or "Europe/Rome",
-            dry_run=_parse_boolean(source.get("DRY_RUN", ""), "DRY_RUN", True),
+            dry_run=_parse_boolean(source.get("DRY_RUN", ""), "DRY_RUN", False),
             puid=_optional_non_negative_integer(source, "PUID"),
             pgid=_optional_non_negative_integer(source, "PGID"),
             local_vision_timeout_seconds=_positive_integer(
