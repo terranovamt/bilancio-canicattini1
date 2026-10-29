@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+from telegram.error import NetworkError, TimedOut
+
 from bilancio.client import (
     BilancioClientError,
     PortalOption,
@@ -15,6 +17,7 @@ from bilancio.client import (
     default_unit_for_account,
 )
 from bot.receipt_workflow import ReceiptWorkflow
+from bot import messages as texts
 from config import Settings
 from db.database import Database
 from storage.archive import FileArchive
@@ -159,6 +162,57 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         assert state is not None
         self.assertEqual(state[0], "awaiting_receipt_data")
         self.assertIn("29/10/2026", message.reply_text.await_args.args[0])
+
+    async def test_telegram_transfer_failure_does_not_start_analysis_or_store_files(self) -> None:
+        for stage in ("get_file", "download", "progress_message"):
+            for error_type in (TimedOut, NetworkError):
+                with self.subTest(stage=stage, error=error_type.__name__):
+                    message, update, context = self.make_photo_update(b"receipt")
+                    if stage == "get_file":
+                        context.bot.get_file.side_effect = error_type("private detail")
+                    elif stage == "download":
+                        context.bot.get_file.return_value.download_as_bytearray.side_effect = (
+                            error_type("private detail")
+                        )
+                    else:
+                        message.reply_text.side_effect = [
+                            error_type("private detail"), None
+                        ]
+                    with self.assertLogs("bot.receipt_workflow", level="WARNING") as logs:
+                        await self.workflow.receive_receipt(update, context)
+
+                    self.assertIn(stage, logs.output[0])
+                    self.assertNotIn("private detail", "\n".join(logs.output))
+                    self.assertEqual(
+                        message.reply_text.await_args.args[0],
+                        texts.RECEIPT_TRANSFER_FAILED,
+                    )
+                    self.assertFalse(hasattr(self.analyzer, "received_bytes"))
+                    self.assertIsNone(self.database.get_conversation_state(12345))
+                    self.assertFalse(list((self.root / "pending").glob("*")))
+
+        message, update, context = self.make_photo_update(b"receipt")
+        await self.workflow.receive_receipt(update, context)
+        self.assertIsNotNone(self.database.get_conversation_state(12345))
+        context.bot.get_file.assert_awaited_once_with(
+            "telegram-file-id", connect_timeout=30, read_timeout=120
+        )
+        context.bot.get_file.return_value.download_as_bytearray.assert_awaited_once_with(
+            connect_timeout=30, read_timeout=120
+        )
+
+    async def test_logs_failure_to_notify_transfer_error_without_private_details(self) -> None:
+        message, update, context = self.make_photo_update(b"receipt")
+        context.bot.get_file.side_effect = TimedOut("private detail")
+        message.reply_text.side_effect = TimedOut("private notification")
+
+        with self.assertLogs("bot.receipt_workflow", level="WARNING") as logs:
+            await self.workflow.receive_receipt(update, context)
+
+        self.assertEqual(len(logs.output), 2)
+        self.assertIn("Could not notify receipt transfer failure", logs.output[1])
+        self.assertNotIn("private", "\n".join(logs.output))
+        self.assertFalse(hasattr(self.analyzer, "received_bytes"))
 
     async def test_rejects_repeated_file_hash(self) -> None:
         message, update, context = self.make_photo_update(b"same receipt")

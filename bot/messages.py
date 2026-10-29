@@ -111,6 +111,11 @@ STATUS_REVIEW = "⚠️ da controllare"
 STATUS_WORKING = "⏳ in corso"
 
 RECEIPT_PROGRESS = "📷 Ricevuto! Lo leggo subito…"
+RECEIPT_TRANSFER_FAILED = (
+    "⚠️ Non sono riuscito a completare il trasferimento della foto o del PDF "
+    "da Telegram. L'analisi non è iniziata e non ho registrato nulla. "
+    "Attendi un momento e invia di nuovo il file."
+)
 RECEIPT_CONFIRMATION = "Ecco cosa ho letto, è tutto giusto?"
 LOW_CONFIDENCE = "⚠️ Non sono sicuro di aver letto bene: controlla con attenzione."
 MISSING_DATE = "Non sono riuscito a leggere la data. Me la scrivi? (es. 29/10/2026)"

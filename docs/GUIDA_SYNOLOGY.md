@@ -466,6 +466,14 @@ Il download usa Internet, ma il modello analizza poi le immagini sul NAS. Non se
 
 ## 14. Su Telegram: prova una foto
 
+Se compare «Non sono riuscito a completare il trasferimento», l'analisi AI non è iniziata e non è stata registrata alcuna spesa. Attendi un momento e invia di nuovo il file. Se il problema si ripete, dalla cartella del progetto nel terminale SSH esegui:
+
+```sh
+sudo docker compose logs --tail=100 bot | grep -F "Receipt Telegram transfer failed"
+```
+
+Condividi soltanto la riga trovata: contiene il passaggio (`get_file`, `download` o `progress_message`) e il tipo di errore, non il contenuto del documento. I tempi massimi di connessione sono 30 secondi e quelli di attesa dei dati per recupero e download sono 120 secondi; sono separati dal timeout del modello AI. Se il log mostra ancora `Unhandled Telegram update error`, il problema potrebbe essere in un altro passaggio oppure il NAS potrebbe usare una versione precedente.
+
 1. Verifica che `.env` contenga ancora `DRY_RUN=true`.
 2. Scegli una foto di prova leggibile, evitando documenti con dati personali non necessari.
 3. Invia al bot la foto come immagine, non come PDF per questa prima verifica.

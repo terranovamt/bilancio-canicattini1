@@ -10,7 +10,7 @@ from typing import Protocol
 import uuid
 
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.error import TelegramError
+from telegram.error import NetworkError, TelegramError
 from telegram.ext import ContextTypes
 
 from bilancio.client import (
@@ -188,9 +188,37 @@ class ReceiptWorkflow:
             await message.reply_text(texts.FILE_TOO_LARGE)
             return
 
+        stage = "get_file"
         try:
-            telegram_file = await context.bot.get_file(file_id)
-            file_bytes = bytes(await telegram_file.download_as_bytearray())
+            telegram_file = await context.bot.get_file(
+                file_id, connect_timeout=30, read_timeout=120
+            )
+            stage = "download"
+            file_bytes = bytes(
+                await telegram_file.download_as_bytearray(
+                    connect_timeout=30, read_timeout=120
+                )
+            )
+            stage = "progress_message"
+            await message.reply_text(
+                texts.RECEIPT_PROGRESS, connect_timeout=30, read_timeout=30
+            )
+        except NetworkError as error:
+            logger.warning(
+                "Receipt Telegram transfer failed at %s: %s",
+                stage,
+                type(error).__name__,
+            )
+            try:
+                await message.reply_text(texts.RECEIPT_TRANSFER_FAILED)
+            except TelegramError as notification_error:
+                logger.warning(
+                    "Could not notify receipt transfer failure: %s",
+                    type(notification_error).__name__,
+                )
+            return
+
+        try:
             pending = await asyncio.to_thread(
                 self._pending_store.save,
                 file_bytes,
@@ -217,7 +245,6 @@ class ReceiptWorkflow:
             )
             return
 
-        await message.reply_text(texts.RECEIPT_PROGRESS)
         try:
             receipt = await self._analyzer.analyze(file_bytes, file_name)
         except (LocalVisionError, ReceiptParseError) as error:
