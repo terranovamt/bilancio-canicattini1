@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from bot import messages as texts
+
 import asyncio
 import logging
 import sqlite3
@@ -134,8 +136,7 @@ class ExpenseRetryService:
                 await self._mark_failed(entry.expense_id)
                 await self._notify_admin(
                     bot,
-                    "La modalità di prova non è stata rispettata. "
-                    "Verifica il portale prima di riprovare.",
+                    texts.ADMIN_TRIAL_UNCONFIRMED,
                 )
                 return "failed"
         except (
@@ -154,13 +155,11 @@ class ExpenseRetryService:
                 await self._notify_user(
                     bot,
                     stored.telegram_user_id,
-                    "Non sono riuscito a completare la spesa dopo i nuovi tentativi. "
-                    "L’ho lasciata in coda per la verifica dell’amministratore.",
+                    texts.RETRY_EXHAUSTED,
                 )
                 await self._notify_admin(
                     bot,
-                    "Una spesa è rimasta in coda dopo i tentativi automatici. "
-                    "Usa /coda per controllarla.",
+                    texts.ADMIN_RETRY_EXHAUSTED,
                 )
                 return "failed"
 
@@ -190,10 +189,9 @@ class ExpenseRetryService:
             bot,
             stored.telegram_user_id,
             (
-                "Nuovo tentativo completato in modalità prova: "
-                "il portale non ha salvato la spesa."
+                texts.RETRY_TRIAL
                 if result.dry_run
-                else "Spesa registrata e verificata nel portale."
+                else texts.RETRY_SAVED
             ),
         )
         return "succeeded"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from bot import messages as texts
+
 import asyncio
 import logging
 import re
@@ -35,15 +37,15 @@ from vision.receipt_schema import (
 logger = logging.getLogger(__name__)
 
 _FIELD_PROMPTS = {
-    "date": "Non riesco a leggere la data. Scrivila come GG/MM/AAAA.",
-    "merchant": "Non riesco a leggere il negoziante. Scrivine il nome.",
-    "total_amount": "Non riesco a leggere l’importo totale. Scrivilo, per esempio 12,50.",
+    "date": texts.MISSING_DATE,
+    "merchant": texts.MISSING_MERCHANT,
+    "total_amount": texts.MISSING_AMOUNT,
 }
 _EDIT_FIELDS = {"date", "merchant", "total_amount", "suggested_category"}
 _MANUAL_EDIT_PROMPTS = {
-    "date": "📅 Scrivi la data dell’operazione (GG/MM/AAAA).",
-    "merchant": "✏️ Scrivi la descrizione dell’operazione.",
-    "total_amount": "💶 Scrivi l’importo, per esempio 12,50.",
+    "date": texts.MANUAL_DATE,
+    "merchant": texts.MANUAL_MERCHANT,
+    "total_amount": texts.MANUAL_AMOUNT,
 }
 _CALLBACK_STATES = {
     "confirm": {"awaiting_confirmation"},
@@ -60,13 +62,13 @@ _CALLBACK_STATES = {
     "no_category": {"awaiting_category"},
     "more_types": {"awaiting_transaction_type"},
 }
-_STALE_CHOICE_TEXT = "Questa scelta non è più attiva."
-_BUSY_TEXT = "⏳ Sto ancora lavorando, attendi."
+_STALE_CHOICE_TEXT = texts.STALE_BUTTON
+_BUSY_TEXT = texts.BUSY
 
 
 def _safe_text(value: str) -> str:
     return " ".join(value.split())[:200]
-_MANUAL_DEFAULT_DESCRIPTION = "Prova Telegram"
+_MANUAL_DEFAULT_DESCRIPTION = texts.MANUAL_DESCRIPTION
 _MANUAL_DEFAULT_AMOUNT = "0.10"
 _TOP_TYPES_COUNT = 6
 
@@ -105,12 +107,11 @@ class ReceiptWorkflow:
         if message is None or user is None:
             return
         if user.id != self._settings.admin_user_id:
-            await message.reply_text("Comando riservato all’amministratore.")
+            await message.reply_text(texts.ADMIN_ONLY)
             return
         if self._bilancio is None:
             await message.reply_text(
-                "Il collegamento al portale non è configurato. Non ho creato "
-                "alcuna spesa."
+                texts.PORTAL_UNAVAILABLE_MANUAL
             )
             return
         if user.id in self._busy_users:
@@ -123,12 +124,11 @@ class ReceiptWorkflow:
         if previous_state is not None:
             if not await self._is_manual_state(previous_state[1]):
                 await message.reply_text(
-                    "C’è già uno scontrino in lavorazione. Completalo oppure usa "
-                    "/annulla prima di iniziare la prova manuale."
+                    texts.MANUAL_RECEIPT_ACTIVE
                 )
                 return
             await self.cancel_current(user.id)
-            await message.reply_text("Ho annullato la prova precedente rimasta aperta.")
+            await message.reply_text(texts.MANUAL_PREVIOUS_CANCELLED)
 
         expense_id = uuid.uuid4().hex
         payload: dict[str, object] = {
@@ -166,24 +166,23 @@ class ReceiptWorkflow:
             return
         if self._analyzer is None:
             await message.reply_text(
-                "L’analisi locale non è ancora configurata. Riprova più tardi."
+                texts.ANALYZER_UNAVAILABLE
             )
             return
         if await asyncio.to_thread(
             self._database.get_conversation_state, user.id
         ) is not None:
             await message.reply_text(
-                "C’è già un’operazione in corso. Usa /annulla prima di inviare "
-                "un altro scontrino."
+                texts.RECEIPT_ALREADY_ACTIVE
             )
             return
 
         file_id, file_name, file_size = self._message_file(message)
         if file_id is None or file_name is None:
-            await message.reply_text("Invia una foto o un documento PDF.")
+            await message.reply_text(texts.SEND_RECEIPT)
             return
         if file_size is not None and file_size > MAX_PENDING_RECEIPT_BYTES:
-            await message.reply_text("Il file supera il limite di 20 MB.")
+            await message.reply_text(texts.FILE_TOO_LARGE)
             return
 
         try:
@@ -197,8 +196,7 @@ class ReceiptWorkflow:
         except (OSError, ValueError) as error:
             logger.warning("Could not store incoming receipt: %s", type(error).__name__)
             await message.reply_text(
-                "Non riesco a conservare questo file. Controlla che sia una foto "
-                "o un PDF valido e riprova."
+                texts.FILE_UNREADABLE
             )
             return
 
@@ -212,25 +210,23 @@ class ReceiptWorkflow:
         if not created:
             await asyncio.to_thread(self._pending_store.delete, pending.path)
             await message.reply_text(
-                "Questo file è già stato ricevuto: non lo elaboro una seconda volta."
+                texts.RECEIPT_DUPLICATE
             )
             return
 
-        await message.reply_text("Sto controllando lo scontrino in locale…")
+        await message.reply_text(texts.RECEIPT_PROGRESS)
         try:
             receipt = await self._analyzer.analyze(file_bytes, file_name)
         except (LocalVisionError, ReceiptParseError) as error:
             logger.warning("Receipt analysis failed: %s", type(error).__name__)
             await self._notify_admin(
                 context,
-                "L’analisi locale di una ricevuta non è riuscita.",
+                texts.ADMIN_ANALYSIS_FAILED,
             )
             await asyncio.to_thread(self._database.delete_expense, pending.receipt_id)
             await asyncio.to_thread(self._pending_store.delete, pending.path)
             await message.reply_text(
-                "Non sono riuscito ad analizzare lo scontrino. Il file non è stato "
-                "inviato a servizi online; controlla che il modello locale sia "
-                "disponibile e riprova."
+                texts.ANALYSIS_FAILED
             )
             return
 
@@ -278,7 +274,7 @@ class ReceiptWorkflow:
         if expense is None:
             await self._clear_state(user.id)
             await message.reply_text(
-                "L’operazione non è più disponibile. Invia di nuovo lo scontrino."
+                texts.STALE_OPERATION
             )
             return
 
@@ -287,8 +283,7 @@ class ReceiptWorkflow:
                 updated = self._parse_manual_entry(expense.payload, message.text)
             except ValueError:
                 await message.reply_text(
-                    "Formato non valido. Scrivi data, descrizione e importo "
-                    "separati da |, per esempio 26/10/2026 | Prova Telegram | 1,00."
+                    texts.MANUAL_FORMAT
                 )
                 return
             await asyncio.to_thread(
@@ -338,7 +333,7 @@ class ReceiptWorkflow:
             return
         else:
             await message.reply_text(
-                "Usa i pulsanti del messaggio precedente oppure /annulla."
+                texts.USE_BUTTONS
             )
             return
 
@@ -390,7 +385,7 @@ class ReceiptWorkflow:
             self._database.get_conversation_state, user.id
         )
         if saved_state is None:
-            await query.answer("Questa operazione non è più attiva.")
+            await query.answer(texts.STALE_ACTION)
             return
         state, state_data = saved_state
         command = value.split(":", 1)[0]
@@ -430,17 +425,17 @@ class ReceiptWorkflow:
         if expense is None:
             await self._clear_state(user_id)
             await query.edit_message_text(
-                "L’operazione non è più disponibile. Invia di nuovo lo scontrino."
+                texts.STALE_OPERATION
             )
             return
 
         if value.startswith("cancel"):
             await self._cancel_pending(user_id, expense_id, expense.payload)
-            await query.edit_message_text("Operazione annullata.")
+            await query.edit_message_text(texts.CANCELLED)
         elif value.startswith("edit:"):
             field_name = value.split(":", 1)[1]
             if field_name not in _EDIT_FIELDS:
-                await query.edit_message_text("Questa modifica non è disponibile.")
+                await query.edit_message_text(texts.STALE_EDIT)
                 return
             await self._save_state(
                 user_id,
@@ -456,11 +451,10 @@ class ReceiptWorkflow:
         elif value == "confirm":
             if self._bilancio is None:
                 await query.edit_message_text(
-                    "Il collegamento al portale non è ancora configurato. "
-                    "Non è stato registrato nulla; lo scontrino resta in attesa."
+                    texts.PORTAL_UNAVAILABLE_RECEIPT
                 )
                 return
-            await self._show_progress(query, "⏳ Leggo le casse dal portale AGESCI…")
+            await self._show_progress(query, texts.ACCOUNTS_PROGRESS)
             await self._begin_portal_selection(
                 user_id,
                 expense_id,
@@ -470,7 +464,7 @@ class ReceiptWorkflow:
             )
         elif value == "manual_save":
             if expense.payload.get("manual_entry") is not True:
-                await query.edit_message_text("Questa conferma non è più disponibile.")
+                await query.edit_message_text(texts.STALE_CONFIRMATION)
                 return
             notes_text = state_data.get("portal_notes")
             await self._show_progress(
@@ -545,10 +539,9 @@ class ReceiptWorkflow:
 
     def _submission_progress_text(self, dry_run: bool) -> str:
         if dry_run:
-            return "⏳ Eseguo la prova simulata sul portale… Non premere altri pulsanti."
+            return texts.TRIAL_PROGRESS
         return (
-            "⏳ Registro l’operazione nel portale e verifico il salvataggio… "
-            "Non premere altri pulsanti."
+            texts.SAVE_PROGRESS
         )
 
     async def _is_manual_state(self, state_data: dict[str, object]) -> bool:
@@ -569,9 +562,7 @@ class ReceiptWorkflow:
         if payload.get("manual_entry") is True:
             await self._cancel_pending(user_id, expense_id, payload)
             await query.edit_message_text(
-                f"Non riesco a leggere {subject} dal portale. Ho annullato la prova "
-                "in automatico: non è stato inserito nulla. Riprova più tardi con "
-                "/testspesa."
+                texts.PORTAL_MANUAL_READ_FAILED.format(value0=subject)
             )
             return
         await self._save_state(
@@ -580,9 +571,7 @@ class ReceiptWorkflow:
             {"expense_id": expense_id},
         )
         await query.edit_message_text(
-            f"Non riesco a leggere {subject} dal portale. Non è stato inserito "
-            "nulla e lo scontrino resta salvato: premi Conferma per riprovare "
-            "oppure Annulla.",
+            texts.PORTAL_READ_FAILED.format(value0=subject),
             reply_markup=self._confirmation_keyboard(),
         )
 
@@ -606,8 +595,7 @@ class ReceiptWorkflow:
             debug_path = Path(self._settings.data_path) / "debug"
             await self._notify_admin(
                 context,
-                f"Non riesco a leggere le casse AGESCI. Controlla {debug_path} "
-                "per eventuali schermate diagnostiche.",
+                texts.ADMIN_ACCOUNTS_FAILED.format(value0=debug_path),
                 error,
             )
             await self._portal_read_failed(
@@ -615,7 +603,7 @@ class ReceiptWorkflow:
                 expense_id,
                 payload,
                 query,
-                "le casse",
+                texts.ACCOUNTS_SUBJECT,
             )
             return
         if not options:
@@ -625,7 +613,7 @@ class ReceiptWorkflow:
                 expense_id,
                 payload,
                 query,
-                "casse disponibili",
+                texts.AVAILABLE_ACCOUNTS,
             )
             return
         data: dict[str, object] = {
@@ -635,7 +623,7 @@ class ReceiptWorkflow:
         }
         await self._save_state(user_id, "awaiting_account", data)
         await query.edit_message_text(
-            "🏦 1/3 · Scegli la cassa:",
+            texts.ACCOUNT_PROMPT,
             reply_markup=self._option_keyboard(options),
         )
 
@@ -657,7 +645,7 @@ class ReceiptWorkflow:
         ):
             return
         if value not in {direction.value for direction in TransactionDirection}:
-            await query.edit_message_text("Direzione non valida.")
+            await query.edit_message_text(texts.INVALID_DIRECTION)
             return
         state_data["direction"] = value
         await self._save_state(user_id, "awaiting_accounting_voice", state_data)
@@ -688,23 +676,21 @@ class ReceiptWorkflow:
             or state_data.get("expense_id") != expense_id
             or self._bilancio is None
         ):
-            await query.edit_message_text("Questa scelta non è più disponibile.")
+            await query.edit_message_text(texts.STALE_SELECTION)
             return
         if accounting_voice not in {"Voci Scout", "Voci Ministero"}:
-            await query.edit_message_text("Questa scelta non è valida.")
+            await query.edit_message_text(texts.INVALID_SELECTION)
             return
         direction_value = state_data.get("direction")
         if not isinstance(direction_value, str):
-            await query.edit_message_text("Prima scegli entrata o uscita.")
+            await query.edit_message_text(texts.CHOOSE_DIRECTION)
             return
         account = self._option_from(state_data, "account")
         direction = TransactionDirection(direction_value)
         transaction_date = self._state_date(state_data)
         await self._show_progress(
             query,
-            f"⏳ Carico le tipologie di {direction.value} ({accounting_voice})… "
-            "La prima volta può richiedere fino a un minuto. "
-            "Non premere altri pulsanti.",
+            texts.TYPE_PROGRESS.format(value0=direction.value, value1=accounting_voice),
         )
         try:
             options = await self._bilancio.list_transaction_types(
@@ -718,8 +704,7 @@ class ReceiptWorkflow:
             debug_path = Path(self._settings.data_path) / "debug"
             await self._notify_admin(
                 context,
-                f"Non riesco a leggere le tipologie AGESCI. Controlla {debug_path} "
-                "per eventuali schermate diagnostiche.",
+                texts.ADMIN_TYPES_FAILED.format(value0=debug_path),
                 error,
             )
             await self._portal_read_failed(
@@ -727,7 +712,7 @@ class ReceiptWorkflow:
                 expense_id,
                 payload,
                 query,
-                "le tipologie",
+                texts.TYPES_SUBJECT,
             )
             return
         if not options:
@@ -736,7 +721,7 @@ class ReceiptWorkflow:
                 expense_id,
                 payload,
                 query,
-                "tipologie disponibili",
+                texts.AVAILABLE_TYPES,
             )
             return
         state_data.update(
@@ -753,13 +738,13 @@ class ReceiptWorkflow:
         await self._save_state(user_id, "awaiting_transaction_type", state_data)
         hidden = len(options) - len(top_indices)
         title = (
-            "🏷️ 3/3 · Scegli la tipologia (le più usate):"
+            texts.TYPE_POPULAR
             if hidden
-            else "🏷️ 3/3 · Scegli la tipologia:"
+            else texts.TYPE_ALL
         )
         extra_rows = (
             [[InlineKeyboardButton(
-                f"➕ Altre tipologie ({hidden})",
+                texts.MORE_TYPES_BUTTON.format(value0=hidden),
                 callback_data="receipt:more_types",
             )]]
             if hidden
@@ -801,11 +786,11 @@ class ReceiptWorkflow:
         top = state_data.get("top_indices")
         shown = set(top) if isinstance(top, list) else set()
         await query.edit_message_text(
-            "🏷️ 3/3 · Altre tipologie:",
+            texts.TYPE_MORE,
             reply_markup=self._option_keyboard(
                 options,
                 indices=[index for index in range(len(options)) if index not in shown],
-                extra_rows=[[InlineKeyboardButton("Annulla", callback_data="receipt:cancel")]],
+                extra_rows=[[InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")]],
             ),
         )
 
@@ -841,7 +826,7 @@ class ReceiptWorkflow:
                 raise IndexError
             selected = options[index]
         except (TypeError, ValueError, IndexError):
-            await query.edit_message_text("Questa opzione non è più disponibile.")
+            await query.edit_message_text(texts.STALE_OPTION)
             return
         account = self._option_from(state_data, "account") if state != "awaiting_account" else selected
         direction_value = state_data.get("direction")
@@ -858,24 +843,24 @@ class ReceiptWorkflow:
                 [
                     [
                         InlineKeyboardButton(
-                            "Entrata", callback_data="receipt:direction:entrata"
+                            texts.INCOME, callback_data="receipt:direction:entrata"
                         ),
                         InlineKeyboardButton(
-                            "Uscita", callback_data="receipt:direction:uscita"
+                            texts.EXPENSE, callback_data="receipt:direction:uscita"
                         ),
                     ]
                 ]
             )
             await query.edit_message_text(
-                "↔️ 2/3 · Entrata o uscita?",
+                texts.DIRECTION_PROMPT,
                 reply_markup=keyboard,
             )
             return
         if direction is None:
-            await query.edit_message_text("Prima scegli entrata o uscita.")
+            await query.edit_message_text(texts.CHOOSE_DIRECTION)
             return
         if state != "awaiting_transaction_type":
-            await query.edit_message_text("Questa scelta non è più disponibile.")
+            await query.edit_message_text(texts.STALE_SELECTION)
             return
 
         state_data.update(transaction_type=self._serialize_option(selected))
@@ -973,8 +958,7 @@ class ReceiptWorkflow:
 
         if self._bilancio is None:
             await send(
-                "Il collegamento al portale non è ancora configurato. Non è stato "
-                "registrato nulla; lo scontrino resta in attesa."
+                texts.PORTAL_UNAVAILABLE_RECEIPT
             )
             return
         try:
@@ -1070,9 +1054,7 @@ class ReceiptWorkflow:
                 )
                 await self._clear_state(user_id)
                 await send(
-                    "Il portale non ha confermato la modalità di prova. Per sicurezza "
-                    "non ripeterò l’operazione: avvisa l’amministratore e controlla "
-                    "il portale prima di riprovare."
+                    texts.TRIAL_UNCONFIRMED
                 )
                 return
         except (BilancioClientError, OSError, ValueError, KeyError) as error:
@@ -1086,17 +1068,12 @@ class ReceiptWorkflow:
                 )
                 await self._clear_state(user_id)
                 await send(
-                    "❌ Non sono riuscito a registrare e verificare la spesa manuale. "
-                    "Non la riproverò in automatico.\n\n"
-                    f"{self._operation_details(payload, state_data)}\n\n"
-                    "Controlla nel portale se compare: se non c’è, ripeti /testspesa."
-                    f"\nDiagnostica: {debug_path}"
+                    texts.MANUAL_FAILED.format(value0=self._operation_details(payload, state_data), value1=debug_path)
                 )
                 return
             await self._notify_admin(
                 context,
-                "Non ho potuto verificare una registrazione AGESCI. "
-                f"Controlla {debug_path} e /coda.",
+                texts.ADMIN_UNVERIFIED.format(value0=debug_path),
                 error if isinstance(error, BilancioClientError) else None,
             )
             next_attempt = (
@@ -1135,14 +1112,12 @@ class ReceiptWorkflow:
                         pending_path,
                     )
                 await send(
-                    "Non ho potuto verificare la registrazione. La ricevuta è "
-                    "conservata sul NAS e l’operazione è in coda per un nuovo tentativo."
+                    texts.SUBMISSION_QUEUED
                 )
             else:
                 await self._clear_state(user_id)
                 await send(
-                    "Non ho potuto completare l’operazione. Lo scontrino resta "
-                    "conservato; avvisa l’amministratore."
+                    texts.SUBMISSION_FAILED
                 )
             return
 
@@ -1164,20 +1139,19 @@ class ReceiptWorkflow:
         )
         already_present = result.confirmation_id == "existing-entry"
         if result.dry_run:
-            title = "🧪 Prova completata: il portale NON ha salvato l’operazione."
+            title = texts.TRIAL_SAVED
         elif already_present:
             title = (
-                "ℹ️ Operazione già presente nel portale: non l’ho inserita "
-                "una seconda volta."
+                texts.ALREADY_PRESENT
             )
         elif payload.get("manual_entry") is True:
-            title = "✅ Operazione registrata e verificata nel portale."
+            title = texts.MANUAL_SAVED
         else:
-            title = "✅ Spesa registrata e verificata nel portale."
+            title = texts.RECEIPT_SAVED
         footer = (
-            "Inserimento manuale: nessuno scontrino archiviato."
+            texts.MANUAL_FOOTER
             if payload.get("manual_entry") is True
-            else "La ricevuta è stata archiviata sul NAS."
+            else texts.RECEIPT_FOOTER
         )
         await send(f"{title}\n\n{details}\n\n{footer}")
 
@@ -1196,7 +1170,7 @@ class ReceiptWorkflow:
     ) -> None:
         diagnostic_path = error.diagnostic_path if error is not None else None
         if diagnostic_path:
-            message = f"{message} Diagnostica locale: {Path(diagnostic_path).name}."
+            message = texts.ADMIN_DIAGNOSTIC.format(value0=message, value1=Path(diagnostic_path).name)
         try:
             await context.bot.send_message(
                 chat_id=self._settings.admin_user_id,
@@ -1288,27 +1262,21 @@ class ReceiptWorkflow:
 
     @staticmethod
     def _confirmation_text(receipt: ReceiptData) -> str:
-        date_text = receipt.date.isoformat() if receipt.date else "mancante"
+        date_text = receipt.date.isoformat() if receipt.date else texts.MISSING_VALUE
         amount_text = (
             f"{receipt.total_amount} {receipt.currency or ''}".strip()
             if receipt.total_amount is not None
-            else "mancante"
+            else texts.MISSING_VALUE
         )
-        merchant = receipt.merchant or "mancante"
-        category = receipt.suggested_category or "non indicata"
+        merchant = receipt.merchant or texts.MISSING_VALUE
+        category = receipt.suggested_category or texts.NO_CATEGORY_VALUE
         warning = (
-            "\nLa lettura è incerta: controlla con attenzione."
+            texts.LOW_CONFIDENCE
             if receipt.confidence < 0.7
             else ""
         )
         return (
-            "Controlla i dati letti:\n"
-            f"Data: {date_text}\n"
-            f"Negoziante: {merchant}\n"
-            f"Importo: {amount_text}\n"
-            f"Categoria suggerita: {category}\n"
-            f"Affidabilità: {receipt.confidence:.0%}{warning}\n\n"
-            "La ricevuta sarà conservata sul NAS, non allegata al portale."
+            texts.RECEIPT_CONFIRMATION.format(value0=date_text, value1=merchant, value2=amount_text, value3=category, value4=receipt.confidence, value5=warning)
         )
 
     @classmethod
@@ -1344,26 +1312,20 @@ class ReceiptWorkflow:
                 pass
         amount = str(payload["total_amount"]).replace(".", ",")
         return (
-            "✍️ Spesa manuale · senza foto e senza AI\n\n"
-            f"Data: {transaction_date}\n"
-            f"Descrizione: {payload['merchant']}\n"
-            f"Importo: {amount} EUR\n\n"
-            "Premi Conferma per usare questi valori oppure modificali con i pulsanti.\n"
-            "⚠️ Inserimento REALE nel portale: prima di salvare ti chiederò "
-            "un’ultima conferma."
+            texts.MANUAL_CONFIRMATION.format(value0=transaction_date, value1=payload['merchant'], value2=amount)
         )
 
     @staticmethod
     def _manual_confirmation_keyboard() -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("✅ Conferma", callback_data="receipt:confirm")],
+                [InlineKeyboardButton(texts.MANUAL_CONFIRM_BUTTON, callback_data="receipt:confirm")],
                 [
-                    InlineKeyboardButton("📅 Data", callback_data="receipt:edit:date"),
-                    InlineKeyboardButton("💶 Importo", callback_data="receipt:edit:total_amount"),
+                    InlineKeyboardButton(texts.DATE_BUTTON, callback_data="receipt:edit:date"),
+                    InlineKeyboardButton(texts.AMOUNT_BUTTON, callback_data="receipt:edit:total_amount"),
                 ],
-                [InlineKeyboardButton("✏️ Descrizione", callback_data="receipt:edit:merchant")],
-                [InlineKeyboardButton("Annulla", callback_data="receipt:cancel")],
+                [InlineKeyboardButton(texts.DESCRIPTION_BUTTON, callback_data="receipt:edit:merchant")],
+                [InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")],
             ]
         )
 
@@ -1373,9 +1335,7 @@ class ReceiptWorkflow:
         state_data: dict[str, object],
     ) -> str:
         return (
-            "Ultimo controllo prima di procedere:\n"
-            f"{self._operation_details(payload, state_data)}\n\n"
-            "ATTENZIONE: premendo il pulsante inserirai DAVVERO la spesa nel portale."
+            texts.MANUAL_FINAL.format(value0=self._operation_details(payload, state_data))
         )
 
     @staticmethod
@@ -1389,7 +1349,7 @@ class ReceiptWorkflow:
             data = state_data.get(key)
             if isinstance(data, dict) and isinstance(data.get("label"), str):
                 return _safe_text(data["label"])
-            return "nessuna"
+            return texts.NONE_VALUE
 
         transaction_date = payload.get("date")
         if isinstance(transaction_date, str):
@@ -1399,32 +1359,23 @@ class ReceiptWorkflow:
                 pass
         amount = str(payload.get("total_amount", "?")).replace(".", ",")
         direction = (
-            "Entrata"
+            texts.INCOME
             if state_data.get("direction") == TransactionDirection.INCOME.value
-            else "Uscita"
+            else texts.EXPENSE
         )
         unit = (
-            "nessuna (il portale non ne offre per questo anno)"
+            texts.NO_UNITS
             if unit_left_empty
             else label("unit")
         )
         notes = state_data.get("portal_notes")
         return (
-            f"📅 Data: {transaction_date}\n"
-            f"📝 Descrizione: {_safe_text(str(payload.get('merchant', '')))}\n"
-            f"💶 Importo: {amount} EUR\n"
-            f"🏦 Cassa: {label('account')}\n"
-            f"↕️ Operazione: {direction}\n"
-            f"📂 Voci: {state_data.get('accounting_voice', 'Voci Scout')}\n"
-            f"🏷️ Tipologia: {label('transaction_type')}\n"
-            f"👥 Unità: {unit}\n"
-            f"🗂️ Categoria: {label('category')}\n"
-            f"🗒️ Note: {_safe_text(notes) if isinstance(notes, str) and notes else 'nessuna'}"
+            texts.OPERATION_DETAILS.format(value0=transaction_date, value1=_safe_text(str(payload.get('merchant', ''))), value2=amount, value3=label('account'), value4=direction, value5=state_data.get('accounting_voice', 'Voci Scout'), value6=label('transaction_type'), value7=unit, value8=label('category'), value9=_safe_text(notes) if isinstance(notes, str) and notes else 'nessuna')
         )
 
     @staticmethod
     def _manual_final_confirmation_keyboard() -> InlineKeyboardMarkup:
-        button_text = "✅ CONFERMA INSERIMENTO REALE"
+        button_text = texts.SAVE_BUTTON
         return InlineKeyboardMarkup(
             [
                 [
@@ -1433,7 +1384,7 @@ class ReceiptWorkflow:
                         callback_data="receipt:manual_save",
                     )
                 ],
-                [InlineKeyboardButton("Annulla", callback_data="receipt:cancel")],
+                [InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")],
             ]
         )
 
@@ -1441,16 +1392,16 @@ class ReceiptWorkflow:
     def _confirmation_keyboard() -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("Conferma", callback_data="receipt:confirm")],
+                [InlineKeyboardButton(texts.RECEIPT_CONFIRM_BUTTON, callback_data="receipt:confirm")],
                 [
-                    InlineKeyboardButton("Modifica data", callback_data="receipt:edit:date"),
-                    InlineKeyboardButton("Modifica importo", callback_data="receipt:edit:total_amount"),
+                    InlineKeyboardButton(texts.EDIT_DATE_BUTTON, callback_data="receipt:edit:date"),
+                    InlineKeyboardButton(texts.EDIT_AMOUNT_BUTTON, callback_data="receipt:edit:total_amount"),
                 ],
                 [
-                    InlineKeyboardButton("Modifica negoziante", callback_data="receipt:edit:merchant"),
-                    InlineKeyboardButton("Cambia categoria", callback_data="receipt:edit:suggested_category"),
+                    InlineKeyboardButton(texts.EDIT_MERCHANT_BUTTON, callback_data="receipt:edit:merchant"),
+                    InlineKeyboardButton(texts.EDIT_CATEGORY_BUTTON, callback_data="receipt:edit:suggested_category"),
                 ],
-                [InlineKeyboardButton("Annulla", callback_data="receipt:cancel")],
+                [InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")],
             ]
         )
 
@@ -1472,7 +1423,7 @@ class ReceiptWorkflow:
             rows.append(
                 [
                     InlineKeyboardButton(
-                        "Senza categoria",
+                        texts.NO_CATEGORY_BUTTON,
                         callback_data="receipt:no_category",
                     )
                 ]
@@ -1541,7 +1492,7 @@ class ReceiptWorkflow:
     @staticmethod
     def _prompt_for(field_name: str) -> str:
         if field_name == "suggested_category":
-            return "Scrivi la categoria oppure - per non indicarla."
+            return texts.EDIT_CATEGORY
         return _FIELD_PROMPTS[field_name]
 
     @staticmethod

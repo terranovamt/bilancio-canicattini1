@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from bot import messages as texts
+
 import asyncio
 import logging
 from collections.abc import Sequence
@@ -50,39 +52,27 @@ from storage.pending import PendingReceiptStore
 logger = logging.getLogger(__name__)
 
 USER_HELP_TEXT = (
-    "📋 Comandi disponibili\n\n"
-    "/start - inizia a usare il bot\n"
-    "/help - mostra questo aiuto\n"
-    "/ultime - mostra le ultime 10 spese\n"
-    "/riepilogo - saldi delle casse e andamento dal portale\n"
-    "/annulla - annulla l’operazione in corso\n"
-    "/coda - mostra le spese in attesa o da verificare\n"
-    "/riprova - ritenta le spese in coda"
+    texts.USER_HELP
 )
 ADMIN_HELP_TEXT = (
-    f"{USER_HELP_TEXT}\n\n"
-    "🔧 Amministratore\n"
-    "/testspesa - inserisce davvero una spesa a mano (senza foto)\n"
-    "/testbilancio - controlla il portale\n"
-    "/aggiornaopzioni - rilegge casse e tipologie AGESCI\n"
-    "/pulisci - svuota coda, ultime spese e log"
+    texts.ADMIN_HELP.format(value0=USER_HELP_TEXT)
 )
 
 USER_COMMANDS = (
-    BotCommand("start", "Apri il menu del bot"),
-    BotCommand("help", "Guida e comandi"),
-    BotCommand("ultime", "Le tue ultime spese"),
-    BotCommand("riepilogo", "Saldi delle casse e andamento"),
-    BotCommand("annulla", "Annulla l’operazione in corso"),
-    BotCommand("coda", "Operazioni in attesa"),
-    BotCommand("riprova", "Ritenta le operazioni in coda"),
+    BotCommand("start", texts.COMMAND_START),
+    BotCommand("help", texts.COMMAND_HELP),
+    BotCommand("ultime", texts.COMMAND_LATEST),
+    BotCommand("riepilogo", texts.COMMAND_SUMMARY),
+    BotCommand("annulla", texts.COMMAND_CANCEL),
+    BotCommand("coda", texts.COMMAND_QUEUE),
+    BotCommand("riprova", texts.COMMAND_RETRY),
 )
 ADMIN_COMMANDS = (
     *USER_COMMANDS,
-    BotCommand("testspesa", "Inserisci davvero una spesa a mano"),
-    BotCommand("testbilancio", "Verifica il collegamento AGESCI"),
-    BotCommand("aggiornaopzioni", "Rileggi casse e tipologie dal portale"),
-    BotCommand("pulisci", "Svuota coda, ultime spese e log"),
+    BotCommand("testspesa", texts.COMMAND_MANUAL),
+    BotCommand("testbilancio", texts.COMMAND_HEALTH),
+    BotCommand("aggiornaopzioni", texts.COMMAND_REFRESH),
+    BotCommand("pulisci", texts.COMMAND_CLEAN),
 )
 
 
@@ -206,25 +196,15 @@ async def start_command(
             ADMIN_COMMANDS,
             scope=BotCommandScopeChat(chat_id=settings.admin_user_id),
         )
-        mode = "🧪 Scontrini in modalità SIMULATA: nessun salvataggio sul portale." if settings.dry_run else (
-            "⚠️ Scontrini in modalità REALE: la conferma finale salva sul portale."
+        mode = texts.MODE_TRIAL if settings.dry_run else (
+            texts.MODE_REAL
         )
         text = (
-            "🧾 Archivio spese · amministratore\n\n"
-            "📷 Inviami la foto o il PDF di uno scontrino.\n"
-            "✍️ /testspesa inserisce DAVVERO una spesa a mano, dopo un’ultima conferma.\n"
-            "📊 /riepilogo mostra i saldi delle casse e l’andamento.\n"
-            "🔄 /aggiornaopzioni rilegge casse e tipologie dal portale.\n"
-            "🧹 /pulisci svuota coda, ultime spese e log.\n\n"
-            f"{mode}"
+            texts.ADMIN_START.format(value0=mode)
         )
     else:
         text = (
-            "🧾 Benvenuto nel tuo archivio spese!\n\n"
-            "📷 Inviami la foto o il PDF di uno scontrino.\n"
-            "Prima di procedere ti mostrerò i dati da controllare.\n"
-            "📊 /riepilogo mostra i saldi delle casse e l’andamento.\n\n"
-            "Scegli un comando qui sotto oppure scrivi / per aprire i suggerimenti."
+            texts.USER_START
         )
     await update.message.reply_text(
         text,
@@ -257,9 +237,9 @@ async def cancel_command(
     workflow: ReceiptWorkflow = context.application.bot_data["receipt_workflow"]
     was_cancelled = await workflow.cancel_current(update.effective_user.id)
     if was_cancelled:
-        await update.message.reply_text("Operazione annullata.")
+        await update.message.reply_text(texts.CANCELLED)
     else:
-        await update.message.reply_text("Non c’è un’operazione in corso da annullare.")
+        await update.message.reply_text(texts.NOTHING_TO_CANCEL)
 
 
 async def receive_receipt(
@@ -303,7 +283,7 @@ async def latest_expenses_command(
         if expense.status in _STATUS_LABELS
     ][:10]
     if not expenses:
-        await update.message.reply_text("Non ci sono ancora spese registrate.")
+        await update.message.reply_text(texts.LATEST_EMPTY)
         return
     await update.message.reply_text(_format_recent_expenses(expenses))
 
@@ -320,15 +300,12 @@ async def queue_command(
         update.effective_user.id,
     )
     if not expenses:
-        await update.message.reply_text("Non ci sono spese in coda.")
+        await update.message.reply_text(texts.QUEUE_EMPTY)
         return
-    lines = ["Spese da ritentare o verificare:"]
+    lines = [texts.QUEUE_HEADER]
     for expense in expenses:
         lines.append(
-            f"{_safe_field(expense.payload.get('date'))} · "
-            f"{_safe_field(expense.payload.get('merchant'))} · "
-            f"{_safe_field(expense.payload.get('total_amount'))} · "
-            f"{'in coda' if expense.status == 'queued' else 'da verificare'}"
+            texts.QUEUE_ROW.format(value0=_safe_field(expense.payload.get('date')), value1=_safe_field(expense.payload.get('merchant')), value2=_safe_field(expense.payload.get('total_amount')), value3='in coda' if expense.status == 'queued' else 'da verificare')
         )
     await update.message.reply_text("\n".join(lines))
 
@@ -342,7 +319,7 @@ async def retry_command(
     service: ExpenseRetryService | None = context.application.bot_data["retry_service"]
     if service is None:
         await update.message.reply_text(
-            "Il collegamento al portale non è ancora configurato."
+            texts.PORTAL_UNAVAILABLE
         )
         return
     database: Database = context.application.bot_data["database"]
@@ -351,15 +328,14 @@ async def retry_command(
         update.effective_user.id,
     )
     if requested == 0:
-        await update.message.reply_text("Non ci sono spese da ritentare.")
+        await update.message.reply_text(texts.NOTHING_TO_RETRY)
         return
     summary = await service.process_due(
         context.bot,
         telegram_user_id=update.effective_user.id,
     )
     await update.message.reply_text(
-        f"Tentativo completato: {summary.succeeded} riuscite, "
-        f"{summary.pending} ancora in attesa, {summary.failed} da verificare."
+        texts.RETRY_DONE.format(value0=summary.succeeded, value1=summary.pending, value2=summary.failed)
     )
 
 
@@ -379,11 +355,11 @@ async def refresh_options_command(
         return
     settings: Settings = context.application.bot_data["settings"]
     if update.effective_user.id != settings.admin_user_id:
-        await update.message.reply_text("Comando riservato all’amministratore.")
+        await update.message.reply_text(texts.ADMIN_ONLY)
         return
     client: BilancioClient | None = context.application.bot_data["bilancio_client"]
     if client is None:
-        await update.message.reply_text("Il collegamento al portale non è configurato.")
+        await update.message.reply_text(texts.PORTAL_NOT_CONFIGURED)
         return
     await client.clear_options_cache()
     job_queue = getattr(context.application, "job_queue", None)
@@ -395,42 +371,40 @@ async def refresh_options_command(
             data={"notify_chat_id": update.effective_user.id},
         )
     await update.message.reply_text(
-        "🔄 Rileggo casse e tipologie dal portale in sottofondo. "
-        "Ti scrivo appena ho finito. Nessuna spesa viene inserita."
+        texts.REFRESH_PROGRESS
     )
 
 
 _SUMMARY_RUNNING_KEY = "ledger_summary_running"
 _SUMMARY_FAILED_TEXT = (
-    "❌ Non riesco a leggere i saldi dal portale. Riprova più tardi."
+    texts.SUMMARY_FAILED
 )
 
 
 def _summary_progress_text(start_year: int) -> str:
     return (
-        f"⏳ Leggo saldi e operazioni dell’anno {scout_year_name(start_year)} "
-        "dal portale…\nCi vuole circa un minuto. Non modifico nulla."
+        texts.SUMMARY_PROGRESS.format(value0=scout_year_name(start_year))
     )
 
 
 def _summary_keyboard(start_year: int, today: date) -> InlineKeyboardMarkup:
     buttons = [
         InlineKeyboardButton(
-            f"⬅️ Anno {scout_year_name(start_year - 1)}",
+            texts.PREVIOUS_YEAR.format(value0=scout_year_name(start_year - 1)),
             callback_data=f"summary:{start_year - 1}",
         )
     ]
     if start_year < scout_year_start(today):
         buttons.append(
             InlineKeyboardButton(
-                f"Anno {scout_year_name(start_year + 1)} ➡️",
+                texts.NEXT_YEAR.format(value0=scout_year_name(start_year + 1)),
                 callback_data=f"summary:{start_year + 1}",
             )
         )
     return InlineKeyboardMarkup(
         [
             buttons,
-            [InlineKeyboardButton("🔄 Aggiorna", callback_data=f"summary:{start_year}")],
+            [InlineKeyboardButton(texts.REFRESH_BUTTON, callback_data=f"summary:{start_year}")],
         ]
     )
 
@@ -458,10 +432,10 @@ async def summary_command(
     if update.message is None:
         return
     if context.application.bot_data.get("bilancio_client") is None:
-        await update.message.reply_text("Il collegamento al portale non è configurato.")
+        await update.message.reply_text(texts.PORTAL_NOT_CONFIGURED)
         return
     if context.application.bot_data.get(_SUMMARY_RUNNING_KEY):
-        await update.message.reply_text("⏳ Sto già preparando un riepilogo, attendi.")
+        await update.message.reply_text(texts.SUMMARY_BUSY)
         return
     start_year = scout_year_start(date.today())
     progress = await update.message.reply_text(_summary_progress_text(start_year))
@@ -490,10 +464,10 @@ async def summary_callback(
         await query.answer()
         return
     if context.application.bot_data.get("bilancio_client") is None:
-        await query.answer("Il collegamento al portale non è configurato.")
+        await query.answer(texts.PORTAL_NOT_CONFIGURED)
         return
     if context.application.bot_data.get(_SUMMARY_RUNNING_KEY):
-        await query.answer("⏳ Sto già preparando un riepilogo, attendi.")
+        await query.answer(texts.SUMMARY_BUSY)
         return
     await query.answer()
     await query.edit_message_text(_summary_progress_text(start_year))
@@ -551,12 +525,12 @@ async def test_bilancio_command(
         return
     settings: Settings = context.application.bot_data["settings"]
     if update.effective_user.id != settings.admin_user_id:
-        await update.message.reply_text("Comando riservato all’amministratore.")
+        await update.message.reply_text(texts.ADMIN_ONLY)
         return
     client: BilancioClient | None = context.application.bot_data["bilancio_client"]
     if client is None:
         await update.message.reply_text(
-            "Il collegamento al portale non è ancora configurato."
+            texts.PORTAL_UNAVAILABLE
         )
         return
     try:
@@ -565,21 +539,18 @@ async def test_bilancio_command(
         logger.error("AGESCI manual login is required")
         debug_path = Path(settings.data_path) / "debug"
         await update.message.reply_text(
-            "Il portale richiede una verifica manuale, per esempio un codice "
-            "aggiuntivo. Non ho inserito spese. La diagnostica, se presente, "
-            f"è in {debug_path} ({Path(error.diagnostic_path).name if error.diagnostic_path else 'nessun file'})."
+            texts.HEALTH_MANUAL.format(value0=debug_path, value1=Path(error.diagnostic_path).name if error.diagnostic_path else 'nessun file')
         )
         return
     except BilancioClientError as error:
         logger.error("AGESCI health check failed: %s", type(error).__name__)
         debug_path = Path(settings.data_path) / "debug"
         await update.message.reply_text(
-            "Non riesco ad accedere al portale o ad aprire il modulo. "
-            f"Non ho inserito spese. Controlla {debug_path} per la diagnostica."
+            texts.HEALTH_FAILED.format(value0=debug_path)
         )
         return
     await update.message.reply_text(
-        "Controllo completato: accesso e modulo disponibili. Non ho inserito spese."
+        texts.HEALTH_OK
     )
 
 
@@ -643,24 +614,22 @@ def _format_preload_summary(
 ) -> str:
     if summary is None:
         return (
-            "❌ Aggiornamento opzioni non riuscito: non riesco a leggere le casse "
-            "dal portale. Riprova più tardi."
+            texts.REFRESH_FAILED
         )
     accounts: dict[str, dict[TransactionDirection, int | None]] = {}
     for label, direction, count in summary:
         accounts.setdefault(label, {})[direction] = count
 
     def describe(count: int | None) -> str:
-        return "errore" if count is None else str(count)
+        return texts.UNREAD_COUNT if count is None else str(count)
 
-    lines = [f"✅ Opzioni aggiornate: {len(accounts)} casse."]
+    lines = [texts.REFRESH_DONE.format(value0=len(accounts))]
     for label, directions in accounts.items():
         lines.append(
-            f"• {label}: entrate {describe(directions.get(TransactionDirection.INCOME))}, "
-            f"uscite {describe(directions.get(TransactionDirection.EXPENSE))}"
+            texts.REFRESH_ROW.format(value0=label, value1=describe(directions.get(TransactionDirection.INCOME)), value2=describe(directions.get(TransactionDirection.EXPENSE)))
         )
     if any(count is None for _, _, count in summary):
-        lines.append("Alcune tipologie non sono state lette: verranno rilette alla scelta.")
+        lines.append(texts.REFRESH_PARTIAL)
     return "\n".join(lines)
 
 
@@ -672,16 +641,14 @@ async def clean_command(
         return
     settings: Settings = context.application.bot_data["settings"]
     if not _is_admin(update, settings):
-        await update.message.reply_text("Comando riservato all’amministratore.")
+        await update.message.reply_text(texts.ADMIN_ONLY)
         return
     await update.message.reply_text(
-        "🧹 Vuoi svuotare coda, ultime spese, operazioni aperte, log e "
-        "diagnostica del bot?\n"
-        "Non cancello nulla nel portale AGESCI e non tocco le ricevute archiviate.",
+        texts.CLEAN_PROMPT,
         reply_markup=InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("Sì, pulisci tutto", callback_data="admin:clean:yes")],
-                [InlineKeyboardButton("No", callback_data="admin:clean:no")],
+                [InlineKeyboardButton(texts.CLEAN_YES, callback_data="admin:clean:yes")],
+                [InlineKeyboardButton(texts.CLEAN_NO, callback_data="admin:clean:no")],
             ]
         ),
     )
@@ -699,7 +666,7 @@ async def clean_callback(
     if not _is_admin(update, settings):
         return
     if query.data != "admin:clean:yes":
-        await query.edit_message_text("Pulizia annullata.")
+        await query.edit_message_text(texts.CLEAN_CANCELLED)
         return
     database: Database = context.application.bot_data["database"]
     counts = await asyncio.to_thread(database.clear_history)
@@ -712,10 +679,7 @@ async def clean_callback(
     await asyncio.to_thread(_truncate_logs, data_path / "logs")
     logger.info("Local history cleared by the administrator")
     await query.edit_message_text(
-        "🧹 Pulizia completata.\n"
-        f"Spese eliminate: {counts['expenses']} (di cui in coda: {counts['retries']}).\n"
-        f"File temporanei e diagnostici eliminati: {removed_files}.\n"
-        "Log svuotati. Le ricevute archiviate e il portale non sono stati toccati."
+        texts.CLEAN_DONE.format(value0=counts['expenses'], value1=counts['retries'], value2=removed_files)
     )
 
 
@@ -754,12 +718,12 @@ async def telegram_error_handler(
     await notify_admin(
         context,
         settings,
-        "Si è verificato un errore durante l’elaborazione di un messaggio.",
+        texts.UNEXPECTED_ERROR,
     )
 
 
 def _format_recent_expenses(expenses: Sequence[StoredExpense]) -> str:
-    lines = ["Ultime spese:"]
+    lines = [texts.LATEST_HEADER]
     for expense in expenses:
         payload = expense.payload
         transaction_date = _safe_field(payload.get("date"))
@@ -772,24 +736,24 @@ def _format_recent_expenses(expenses: Sequence[StoredExpense]) -> str:
         )
         status = _STATUS_LABELS.get(expense.status, expense.status)
         lines.append(
-            f"{status} · {transaction_date} · {merchant} · {amount} {currency} · {account}"
+            texts.RECENT_ROW.format(value0=status, value1=transaction_date, value2=merchant, value3=amount, value4=currency, value5=account)
         )
     return "\n".join(lines)
 
 
 _STATUS_LABELS = {
-    "submitted": "✅ registrata",
-    "dry_run": "🧪 simulata",
-    "queued": "⏳ in coda, non registrata",
-    "failed": "❌ non registrata",
-    "confirmed": "⏳ in lavorazione",
+    "submitted": texts.STATUS_SAVED,
+    "dry_run": texts.STATUS_TRIAL,
+    "queued": texts.STATUS_QUEUED,
+    "failed": texts.STATUS_REVIEW,
+    "confirmed": texts.STATUS_WORKING,
 }
 
 
 def _safe_field(value: object) -> str:
     if value is None:
-        return "—"
-    return " ".join(str(value).split())[:80] or "—"
+        return texts.EMPTY_VALUE
+    return " ".join(str(value).split())[:80] or texts.EMPTY_VALUE
 
 
 async def notify_admin(
