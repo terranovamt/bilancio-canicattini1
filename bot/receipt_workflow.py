@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from bot import messages as texts
-
 import asyncio
 import logging
 import re
@@ -23,6 +21,7 @@ from bilancio.client import (
     TransactionDirection,
     default_unit_for_account,
 )
+from bot import messages as texts
 from config import Settings
 from db.database import Database
 from storage.archive import FileArchive
@@ -40,6 +39,12 @@ _FIELD_PROMPTS = {
     "date": texts.MISSING_DATE,
     "merchant": texts.MISSING_MERCHANT,
     "total_amount": texts.MISSING_AMOUNT,
+}
+_EDIT_PROMPTS = {
+    "date": texts.EDIT_DATE,
+    "merchant": texts.EDIT_MERCHANT,
+    "total_amount": texts.EDIT_AMOUNT,
+    "suggested_category": texts.EDIT_CATEGORY,
 }
 _EDIT_FIELDS = {"date", "merchant", "total_amount", "suggested_category"}
 _MANUAL_EDIT_PROMPTS = {
@@ -66,8 +71,6 @@ _STALE_CHOICE_TEXT = texts.STALE_BUTTON
 _BUSY_TEXT = texts.BUSY
 
 
-def _safe_text(value: str) -> str:
-    return " ".join(value.split())[:200]
 _MANUAL_DEFAULT_DESCRIPTION = texts.MANUAL_DESCRIPTION
 _MANUAL_DEFAULT_AMOUNT = "0.10"
 _TOP_TYPES_COUNT = 6
@@ -111,7 +114,7 @@ class ReceiptWorkflow:
             return
         if self._bilancio is None:
             await message.reply_text(
-                texts.PORTAL_UNAVAILABLE_MANUAL
+                texts.PORTAL_UNAVAILABLE
             )
             return
         if user.id in self._busy_users:
@@ -274,7 +277,7 @@ class ReceiptWorkflow:
         if expense is None:
             await self._clear_state(user.id)
             await message.reply_text(
-                texts.STALE_OPERATION
+                texts.STALE_BUTTON
             )
             return
 
@@ -340,7 +343,13 @@ class ReceiptWorkflow:
         try:
             updated = self._apply_user_value(expense.payload, field_name, message.text)
         except (ValueError, TypeError):
-            await message.reply_text(self._prompt_for(field_name))
+            if expense.payload.get("manual_entry") is True:
+                prompt = _MANUAL_EDIT_PROMPTS.get(field_name, self._prompt_for(field_name))
+            elif state == "awaiting_receipt_data":
+                prompt = _FIELD_PROMPTS[field_name]
+            else:
+                prompt = self._prompt_for(field_name)
+            await message.reply_text(prompt)
             return
         await asyncio.to_thread(
             self._database.update_expense_payload,
@@ -385,7 +394,7 @@ class ReceiptWorkflow:
             self._database.get_conversation_state, user.id
         )
         if saved_state is None:
-            await query.answer(texts.STALE_ACTION)
+            await query.answer(texts.STALE_BUTTON)
             return
         state, state_data = saved_state
         command = value.split(":", 1)[0]
@@ -425,7 +434,7 @@ class ReceiptWorkflow:
         if expense is None:
             await self._clear_state(user_id)
             await query.edit_message_text(
-                texts.STALE_OPERATION
+                texts.STALE_BUTTON
             )
             return
 
@@ -435,7 +444,7 @@ class ReceiptWorkflow:
         elif value.startswith("edit:"):
             field_name = value.split(":", 1)[1]
             if field_name not in _EDIT_FIELDS:
-                await query.edit_message_text(texts.STALE_EDIT)
+                await query.edit_message_text(texts.STALE_BUTTON)
                 return
             await self._save_state(
                 user_id,
@@ -464,7 +473,7 @@ class ReceiptWorkflow:
             )
         elif value == "manual_save":
             if expense.payload.get("manual_entry") is not True:
-                await query.edit_message_text(texts.STALE_CONFIRMATION)
+                await query.edit_message_text(texts.STALE_BUTTON)
                 return
             notes_text = state_data.get("portal_notes")
             await self._show_progress(
@@ -562,7 +571,7 @@ class ReceiptWorkflow:
         if payload.get("manual_entry") is True:
             await self._cancel_pending(user_id, expense_id, payload)
             await query.edit_message_text(
-                texts.PORTAL_MANUAL_READ_FAILED.format(value0=subject)
+                texts.PORTAL_MANUAL_READ_FAILED.format(subject=subject)
             )
             return
         await self._save_state(
@@ -571,7 +580,7 @@ class ReceiptWorkflow:
             {"expense_id": expense_id},
         )
         await query.edit_message_text(
-            texts.PORTAL_READ_FAILED.format(value0=subject),
+            texts.PORTAL_READ_FAILED.format(subject=subject),
             reply_markup=self._confirmation_keyboard(),
         )
 
@@ -595,7 +604,7 @@ class ReceiptWorkflow:
             debug_path = Path(self._settings.data_path) / "debug"
             await self._notify_admin(
                 context,
-                texts.ADMIN_ACCOUNTS_FAILED.format(value0=debug_path),
+                texts.ADMIN_ACCOUNTS_FAILED.format(folder=debug_path),
                 error,
             )
             await self._portal_read_failed(
@@ -613,7 +622,7 @@ class ReceiptWorkflow:
                 expense_id,
                 payload,
                 query,
-                texts.AVAILABLE_ACCOUNTS,
+                texts.ACCOUNTS_SUBJECT,
             )
             return
         data: dict[str, object] = {
@@ -645,7 +654,7 @@ class ReceiptWorkflow:
         ):
             return
         if value not in {direction.value for direction in TransactionDirection}:
-            await query.edit_message_text(texts.INVALID_DIRECTION)
+            await query.edit_message_text(texts.CHOOSE_DIRECTION)
             return
         state_data["direction"] = value
         await self._save_state(user_id, "awaiting_accounting_voice", state_data)
@@ -676,10 +685,10 @@ class ReceiptWorkflow:
             or state_data.get("expense_id") != expense_id
             or self._bilancio is None
         ):
-            await query.edit_message_text(texts.STALE_SELECTION)
+            await query.edit_message_text(texts.STALE_BUTTON)
             return
         if accounting_voice not in {"Voci Scout", "Voci Ministero"}:
-            await query.edit_message_text(texts.INVALID_SELECTION)
+            await query.edit_message_text(texts.STALE_BUTTON)
             return
         direction_value = state_data.get("direction")
         if not isinstance(direction_value, str):
@@ -690,7 +699,7 @@ class ReceiptWorkflow:
         transaction_date = self._state_date(state_data)
         await self._show_progress(
             query,
-            texts.TYPE_PROGRESS.format(value0=direction.value, value1=accounting_voice),
+            texts.TYPE_PROGRESS,
         )
         try:
             options = await self._bilancio.list_transaction_types(
@@ -704,7 +713,7 @@ class ReceiptWorkflow:
             debug_path = Path(self._settings.data_path) / "debug"
             await self._notify_admin(
                 context,
-                texts.ADMIN_TYPES_FAILED.format(value0=debug_path),
+                texts.ADMIN_TYPES_FAILED.format(folder=debug_path),
                 error,
             )
             await self._portal_read_failed(
@@ -721,7 +730,7 @@ class ReceiptWorkflow:
                 expense_id,
                 payload,
                 query,
-                texts.AVAILABLE_TYPES,
+                texts.TYPES_SUBJECT,
             )
             return
         state_data.update(
@@ -744,7 +753,7 @@ class ReceiptWorkflow:
         )
         extra_rows = (
             [[InlineKeyboardButton(
-                texts.MORE_TYPES_BUTTON.format(value0=hidden),
+                texts.MORE_TYPES_BUTTON.format(count=hidden),
                 callback_data="receipt:more_types",
             )]]
             if hidden
@@ -826,7 +835,7 @@ class ReceiptWorkflow:
                 raise IndexError
             selected = options[index]
         except (TypeError, ValueError, IndexError):
-            await query.edit_message_text(texts.STALE_OPTION)
+            await query.edit_message_text(texts.STALE_BUTTON)
             return
         account = self._option_from(state_data, "account") if state != "awaiting_account" else selected
         direction_value = state_data.get("direction")
@@ -860,7 +869,7 @@ class ReceiptWorkflow:
             await query.edit_message_text(texts.CHOOSE_DIRECTION)
             return
         if state != "awaiting_transaction_type":
-            await query.edit_message_text(texts.STALE_SELECTION)
+            await query.edit_message_text(texts.STALE_BUTTON)
             return
 
         state_data.update(transaction_type=self._serialize_option(selected))
@@ -1068,12 +1077,17 @@ class ReceiptWorkflow:
                 )
                 await self._clear_state(user_id)
                 await send(
-                    texts.MANUAL_FAILED.format(value0=self._operation_details(payload, state_data), value1=debug_path)
+                    texts.MANUAL_FAILED.format(details=self._operation_details(payload, state_data))
+                )
+                await self._notify_admin(
+                    context,
+                    texts.DIAGNOSTIC_DETAILS.format(path=debug_path),
+                    error if isinstance(error, BilancioClientError) else None,
                 )
                 return
             await self._notify_admin(
                 context,
-                texts.ADMIN_UNVERIFIED.format(value0=debug_path),
+                texts.ADMIN_UNVERIFIED.format(folder=debug_path),
                 error if isinstance(error, BilancioClientError) else None,
             )
             next_attempt = (
@@ -1144,16 +1158,9 @@ class ReceiptWorkflow:
             title = (
                 texts.ALREADY_PRESENT
             )
-        elif payload.get("manual_entry") is True:
-            title = texts.MANUAL_SAVED
         else:
             title = texts.RECEIPT_SAVED
-        footer = (
-            texts.MANUAL_FOOTER
-            if payload.get("manual_entry") is True
-            else texts.RECEIPT_FOOTER
-        )
-        await send(f"{title}\n\n{details}\n\n{footer}")
+        await send(f"{title}\n\n{details}")
 
     async def _ask_for_notes(
         self,
@@ -1170,7 +1177,7 @@ class ReceiptWorkflow:
     ) -> None:
         diagnostic_path = error.diagnostic_path if error is not None else None
         if diagnostic_path:
-            message = texts.ADMIN_DIAGNOSTIC.format(value0=message, value1=Path(diagnostic_path).name)
+            message = texts.ADMIN_DIAGNOSTIC.format(message=message, filename=Path(diagnostic_path).name)
         try:
             await context.bot.send_message(
                 chat_id=self._settings.admin_user_id,
@@ -1262,21 +1269,8 @@ class ReceiptWorkflow:
 
     @staticmethod
     def _confirmation_text(receipt: ReceiptData) -> str:
-        date_text = receipt.date.isoformat() if receipt.date else texts.MISSING_VALUE
-        amount_text = (
-            f"{receipt.total_amount} {receipt.currency or ''}".strip()
-            if receipt.total_amount is not None
-            else texts.MISSING_VALUE
-        )
-        merchant = receipt.merchant or texts.MISSING_VALUE
-        category = receipt.suggested_category or texts.NO_CATEGORY_VALUE
-        warning = (
-            texts.LOW_CONFIDENCE
-            if receipt.confidence < 0.7
-            else ""
-        )
-        return (
-            texts.RECEIPT_CONFIRMATION.format(value0=date_text, value1=merchant, value2=amount_text, value3=category, value4=receipt.confidence, value5=warning)
+        return texts.receipt_confirmation(
+            receipt.model_dump(mode="json"), receipt.confidence
         )
 
     @classmethod
@@ -1304,16 +1298,7 @@ class ReceiptWorkflow:
         return updated
 
     def _manual_confirmation_text(self, payload: dict[str, object]) -> str:
-        transaction_date = payload["date"]
-        if isinstance(transaction_date, str):
-            try:
-                transaction_date = date.fromisoformat(transaction_date).strftime("%d/%m/%Y")
-            except ValueError:
-                pass
-        amount = str(payload["total_amount"]).replace(".", ",")
-        return (
-            texts.MANUAL_CONFIRMATION.format(value0=transaction_date, value1=payload['merchant'], value2=amount)
-        )
+        return texts.MANUAL_CONFIRMATION.format(details=texts.operation_details(payload, {}))
 
     @staticmethod
     def _manual_confirmation_keyboard() -> InlineKeyboardMarkup:
@@ -1335,7 +1320,7 @@ class ReceiptWorkflow:
         state_data: dict[str, object],
     ) -> str:
         return (
-            texts.MANUAL_FINAL.format(value0=self._operation_details(payload, state_data))
+            texts.MANUAL_FINAL.format(details=self._operation_details(payload, state_data))
         )
 
     @staticmethod
@@ -1345,33 +1330,7 @@ class ReceiptWorkflow:
         *,
         unit_left_empty: bool = False,
     ) -> str:
-        def label(key: str) -> str:
-            data = state_data.get(key)
-            if isinstance(data, dict) and isinstance(data.get("label"), str):
-                return _safe_text(data["label"])
-            return texts.NONE_VALUE
-
-        transaction_date = payload.get("date")
-        if isinstance(transaction_date, str):
-            try:
-                transaction_date = date.fromisoformat(transaction_date).strftime("%d/%m/%Y")
-            except ValueError:
-                pass
-        amount = str(payload.get("total_amount", "?")).replace(".", ",")
-        direction = (
-            texts.INCOME
-            if state_data.get("direction") == TransactionDirection.INCOME.value
-            else texts.EXPENSE
-        )
-        unit = (
-            texts.NO_UNITS
-            if unit_left_empty
-            else label("unit")
-        )
-        notes = state_data.get("portal_notes")
-        return (
-            texts.OPERATION_DETAILS.format(value0=transaction_date, value1=_safe_text(str(payload.get('merchant', ''))), value2=amount, value3=label('account'), value4=direction, value5=state_data.get('accounting_voice', 'Voci Scout'), value6=label('transaction_type'), value7=unit, value8=label('category'), value9=_safe_text(notes) if isinstance(notes, str) and notes else 'nessuna')
-        )
+        return texts.operation_details(payload, state_data, unit_left_empty=unit_left_empty)
 
     @staticmethod
     def _manual_final_confirmation_keyboard() -> InlineKeyboardMarkup:
@@ -1491,9 +1450,7 @@ class ReceiptWorkflow:
 
     @staticmethod
     def _prompt_for(field_name: str) -> str:
-        if field_name == "suggested_category":
-            return texts.EDIT_CATEGORY
-        return _FIELD_PROMPTS[field_name]
+        return _EDIT_PROMPTS[field_name]
 
     @staticmethod
     def _apply_user_value(

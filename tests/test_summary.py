@@ -32,6 +32,26 @@ def ledger(label: str, entries: list[LedgerEntry], balance: str, *, complete: bo
 
 
 class SummaryFormatTests(unittest.TestCase):
+    def test_default_summary_shows_only_latest_operation_without_details(self) -> None:
+        sample = ledger(
+            "Cassa esempio",
+            [
+                entry(date(2026, 10, 1), "Saldo Iniziale Calcolato", income="100"),
+                entry(date(2026, 10, 2), "Vecchia spesa", expense="5"),
+                entry(date(2026, 10, 29), "Negozio esempio", expense="12.50"),
+            ],
+            "82.50",
+        )
+        text = "\n".join(format_ledger_summary([sample], 2026))
+        self.assertIn("💰 Saldo: 82,50 €", text)
+        self.assertIn("Entrate 0,00 € · uscite 17,50 €", text)
+        self.assertIn("Ultima operazione: 29/10 Negozio esempio -12,50 €", text)
+        for hidden in ("Saldo iniziale", "Andamento mensile", "Ultime operazioni", "Vecchia spesa"):
+            self.assertNotIn(hidden, text)
+        details = "\n".join(format_ledger_summary([sample], 2026, details=True))
+        for shown in ("Saldo iniziale", "Andamento mensile", "Ultime operazioni", "Vecchia spesa"):
+            self.assertIn(shown, details)
+
     def test_scout_year_boundaries(self) -> None:
         self.assertEqual(scout_year_start(date(2026, 9, 30)), 2025)
         self.assertEqual(scout_year_start(date(2026, 10, 1)), 2026)
@@ -61,17 +81,19 @@ class SummaryFormatTests(unittest.TestCase):
                     ledger("Cassa RS", [entry(date(2026, 10, 1), "Saldo Iniziale Calcolato", income="97.75")], "97.75"),
                 ],
                 2026,
+                details=True,
             )
         )
-        self.assertIn("Riepilogo bilancio 26-27", text)
-        self.assertIn("🏦 Cassa EG\n💰 Saldo attuale: 132,21 €", text)
-        self.assertIn("Saldo iniziale 100,00 € · entrate 50,00 € · uscite 17,79 €", text)
+        self.assertIn("Bilancio 26-27", text)
+        self.assertIn("🏦 Cassa EG\n💰 Saldo: 132,21 €", text)
+        self.assertIn("Entrate 50,00 € · uscite 17,79 €", text)
+        self.assertIn("Saldo iniziale: 100,00 €", text)
         self.assertIn("• Ottobre 2026: entrate 0,00 € · uscite 17,79 € → saldo 82,21 €", text)
         self.assertIn("• Novembre 2026: entrate 0,00 € · uscite 0,00 € → saldo 82,21 €", text)
         self.assertIn("• Dicembre 2026: entrate 50,00 € · uscite 0,00 € → saldo 132,21 €", text)
         self.assertLess(text.index("06/12 Quote: +50,00 €"), text.index("03/10 Ricordi: -17,79 €"))
-        self.assertIn("🏦 Cassa RS\n💰 Saldo attuale: 97,75 €", text)
-        self.assertIn("Nessuna operazione dall’inizio dell’anno.", text)
+        self.assertIn("🏦 Cassa RS\n💰 Saldo: 97,75 €", text)
+        self.assertIn("Nessuna operazione dall'inizio dell'anno.", text)
         self.assertNotIn("Saldo Iniziale Calcolato", text)
 
     def test_warns_when_portal_rows_are_partial(self) -> None:
@@ -86,7 +108,7 @@ class SummaryFormatTests(unittest.TestCase):
             ],
             2026,
         )[0]
-        self.assertIn("mostra 1 righe su 40", text)
+        self.assertIn("mostra solo 1 righe su 40", text)
 
     def test_splits_long_summaries_into_telegram_sized_messages(self) -> None:
         entries = [entry(date(2026, 10, 1), "Saldo Iniziale Calcolato")]
@@ -94,6 +116,7 @@ class SummaryFormatTests(unittest.TestCase):
         messages = format_ledger_summary(
             [ledger(f"Cassa {index}", entries, "-12") for index in range(12)],
             2026,
+            details=True,
         )
         self.assertGreater(len(messages), 1)
         self.assertTrue(all(len(message) <= 3800 for message in messages))

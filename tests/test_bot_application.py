@@ -25,12 +25,14 @@ from bot.application import (
     preload_portal_options,
     queue_command,
     refresh_options_command,
+    retry_command,
     start_command,
     summary_callback,
     summary_command,
     test_bilancio_command,
 )
 from bot.summary import scout_year_name as scout_year_name_for, scout_year_start
+from bot.retry_service import RetrySummary
 from datetime import date
 from decimal import Decimal
 from bilancio.client import (
@@ -78,11 +80,15 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         await start_command(update, context)
 
         text = message.reply_text.await_args.args[0]
-        self.assertIn("Inviami", text)
+        self.assertIn("Mandami", text)
         self.assertIn("scontrino", text)
-        self.assertIn("SIMULATA", text)
+        self.assertIn("PROVA", text)
         keyboard = message.reply_text.await_args.kwargs["reply_markup"]
         self.assertEqual(keyboard.keyboard[0][0].text, "/testspesa")
+        for rare_command in ("/aggiornaopzioni", "/pulisci"):
+            self.assertNotIn(
+                rare_command, [button.text for row in keyboard.keyboard for button in row]
+            )
         admin_call = context.bot.set_my_commands.await_args
         self.assertEqual(admin_call.args[0], ADMIN_COMMANDS)
         self.assertEqual(admin_call.kwargs["scope"].chat_id, 12345)
@@ -130,7 +136,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
             context.application.job_queue.run_once.call_args.kwargs["data"],
             {"notify_chat_id": 12345},
         )
-        self.assertIn("Ti scrivo appena ho finito", message.reply_text.await_args.args[0])
+        self.assertIn("ti scrivo quando ho finito", message.reply_text.await_args.args[0])
 
     async def test_manual_refresh_reports_loaded_options(self) -> None:
         accounts = [PortalOption("a", "Cassa Co.ca")]
@@ -148,11 +154,11 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
 
         sent = context.bot.send_message.await_args.kwargs
         self.assertEqual(sent["chat_id"], 12345)
-        self.assertIn("Opzioni aggiornate: 1 casse", sent["text"])
-        self.assertIn("Cassa Co.ca: entrate 4, uscite errore", sent["text"])
+        self.assertIn("Fatto! Trovate 1 casse", sent["text"])
+        self.assertIn("Cassa Co.ca: 4 entrate, da rileggere uscite", sent["text"])
 
     def test_preload_summary_reports_unreadable_accounts(self) -> None:
-        self.assertIn("non riuscito", _format_preload_summary(None))
+        self.assertIn("Non riesco a leggere le casse", _format_preload_summary(None))
 
     async def test_summary_command_reads_portal_in_background(self) -> None:
         progress = SimpleNamespace(chat_id=777, message_id=55)
@@ -214,10 +220,13 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
             client.read_ledgers.await_args.kwargs["transaction_date"], date.today()
         )
         edit = context.bot.edit_message_text.await_args
-        self.assertIn("Cassa RS\n💰 Saldo attuale: 97,75 €", edit.args[0])
+        self.assertIn("Cassa RS\n💰 Saldo: 97,75 €", edit.args[0])
         self.assertEqual((edit.kwargs["chat_id"], edit.kwargs["message_id"]), (777, 55))
         buttons = [b.callback_data for row in edit.kwargs["reply_markup"].inline_keyboard for b in row]
-        self.assertEqual(buttons, [f"summary:{start_year - 1}", f"summary:{start_year}"])
+        self.assertEqual(buttons, [
+            f"summary:{start_year - 1}", f"summary:{start_year}",
+            f"summary:details:{start_year}",
+        ])
         self.assertFalse(context.application.bot_data["ledger_summary_running"])
 
     async def test_summary_job_reports_portal_errors_and_releases_lock(self) -> None:
@@ -254,7 +263,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
 
         await summary_callback(SimpleNamespace(callback_query=query), context)
 
-        self.assertIn(scout_year_name_for(start_year), query.edit_message_text.await_args.args[0])
+        self.assertIn("Leggo i saldi dal portale", query.edit_message_text.await_args.args[0])
         self.assertEqual(
             context.application.job_queue.run_once.call_args.kwargs["data"]["start_year"],
             start_year,
@@ -274,6 +283,49 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
 
         query.edit_message_text.assert_not_awaited()
         context.application.job_queue.run_once.assert_not_called()
+
+    async def test_details_callback_requests_details_without_changing_year(self) -> None:
+        start_year = scout_year_start(date.today()) - 1
+        query = SimpleNamespace(
+            data=f"summary:details:{start_year}",
+            message=SimpleNamespace(chat_id=777, message_id=55),
+            answer=AsyncMock(), edit_message_text=AsyncMock(),
+        )
+        context = self.make_context(bilancio_client=Mock())
+        context.application.job_queue = Mock()
+        await summary_callback(SimpleNamespace(callback_query=query), context)
+        data = context.application.job_queue.run_once.call_args.kwargs["data"]
+        self.assertEqual(data["start_year"], start_year)
+        self.assertTrue(data["details"])
+
+    async def test_details_job_shows_opening_balance(self) -> None:
+        sample = AccountLedger(
+            account=PortalOption("a", "Cassa esempio"),
+            opening_balance=Decimal("10"),
+            total_income=Decimal("0"), total_expense=Decimal("0"),
+            balance=Decimal("10"), entries=(), total_rows=0, complete=True,
+        )
+        client = SimpleNamespace(read_ledgers=AsyncMock(return_value=[sample]))
+        context = self.make_context(bilancio_client=client)
+        context.job = SimpleNamespace(data={
+            "chat_id": 777, "message_id": 55,
+            "start_year": scout_year_start(date.today()), "details": True,
+        })
+        context.bot = SimpleNamespace(edit_message_text=AsyncMock(), send_message=AsyncMock())
+        await ledger_summary_job(context)
+        self.assertIn("Saldo iniziale: 10,00 €", context.bot.edit_message_text.await_args.args[0])
+
+    async def test_retry_summary_does_not_call_simulations_real_saves(self) -> None:
+        database = SimpleNamespace(request_retry_for_user=Mock(return_value=1))
+        service = SimpleNamespace(process_due=AsyncMock(return_value=RetrySummary(1, 0, 0, 1)))
+        context = self.make_context(database=database, retry_service=service)
+        context.bot = Mock()
+        message = SimpleNamespace(reply_text=AsyncMock())
+        await retry_command(
+            SimpleNamespace(message=message, effective_user=SimpleNamespace(id=12345)),
+            context,
+        )
+        self.assertIn("0 salvate ✅, 1 in prova 🧪", message.reply_text.await_args.args[0])
 
     async def test_preload_reads_every_account_direction_without_submission(self) -> None:
         accounts = [PortalOption("a", "Cassa Co.ca"), PortalOption("b", "Cassa EG")]
@@ -347,7 +399,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             message.reply_text.await_args.args[0],
-            "Comando riservato all’amministratore.",
+            "Questo comando è riservato all'amministratore.",
         )
 
     async def test_clean_asks_confirmation_then_clears_local_history(self) -> None:
@@ -393,7 +445,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse((root / "data" / "logs" / "bot.log.1").exists())
             self.assertEqual((root / "data" / "logs" / "bot.log").read_text(encoding="utf-8"), "")
             self.assertTrue((root / "archive" / "receipt.jpg").exists())
-            self.assertIn("Spese eliminate: 1", query.edit_message_text.await_args.args[0])
+            self.assertIn("Eliminate 1 spese", query.edit_message_text.await_args.args[0])
 
     async def test_clean_can_be_declined(self) -> None:
         database = Mock()
@@ -405,7 +457,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
             self.make_context(settings=make_settings(), database=database),
         )
         database.clear_history.assert_not_called()
-        self.assertEqual(query.edit_message_text.await_args.args[0], "Pulizia annullata.")
+        self.assertEqual(query.edit_message_text.await_args.args[0], "Ok, non ho toccato niente.")
 
     async def test_latest_expenses_hide_unfinished_entries_and_show_status(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -424,8 +476,8 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
                 self.make_context(database=database),
             )
             text = message.reply_text.await_args.args[0]
-            self.assertIn("✅ registrata", text)
-            self.assertIn("⏳ in coda, non registrata", text)
+            self.assertIn("✅", text)
+            self.assertIn("in attesa di essere salvata", text)
             self.assertNotIn("Spesa b", text)
             self.assertIn("Cassa Co.ca", text)
             self.assertNotIn("{", text)
@@ -445,7 +497,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         workflow.cancel_current.assert_awaited_once_with(12345)
         self.assertEqual(
             message.reply_text.await_args.args[0],
-            "Operazione annullata.",
+            "Ok, ho annullato. Quando vuoi, mandami un altro scontrino.",
         )
 
     async def test_portal_health_check_is_admin_only(self) -> None:
@@ -460,7 +512,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             message.reply_text.await_args.args[0],
-            "Comando riservato all’amministratore.",
+            "Questo comando è riservato all'amministratore.",
         )
 
     async def test_queue_command_reports_empty_queue(self) -> None:
@@ -478,7 +530,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(
                 message.reply_text.await_args.args[0],
-                "Non ci sono spese in coda.",
+                "Tutto a posto: non ci sono spese in attesa ✅",
             )
 
     def test_recent_expense_format_does_not_include_newlines_from_fields(self) -> None:

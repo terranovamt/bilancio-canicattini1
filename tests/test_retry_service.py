@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -73,13 +74,14 @@ class ExpenseRetryServiceTests(unittest.IsolatedAsyncioTestCase):
 
         stored = self.database.get_expense("expense-1")
         self.assertEqual(result.succeeded, 1)
+        self.assertEqual(result.trials, 1)
         self.assertEqual(stored.status, "dry_run")
         self.assertIsNotNone(stored.archive_path)
         self.assertTrue(Path(stored.archive_path).is_file())
         self.assertEqual(portal.received_expenses[0][0].direction, TransactionDirection.EXPENSE)
         self.assertTrue(portal.received_expenses[0][1])
         self.assertEqual(bot.messages[0][0], 12345)
-        self.assertIn("modalità prova", bot.messages[0][1])
+        self.assertIn("🧪 Nuovo tentativo in prova", bot.messages[0][1])
 
     async def test_processes_queued_expense_without_a_unit(self) -> None:
         self.create_queued_expense(with_unit=False)
@@ -142,6 +144,22 @@ class ExpenseRetryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored.status, "failed")
         self.assertEqual(self.database.get_due_retries("2999-01-01T00:00:00+00:00"), [])
         self.assertEqual(len(bot.messages), 2)
+        self.assertIn("«Negozio, 12,50 €»", bot.messages[0][1])
+        self.assertTrue(bot.messages[0][1].startswith("⚠️"))
+
+    async def test_real_retry_success_identifies_the_expense(self) -> None:
+        self.create_queued_expense()
+        bot = FakeBot()
+        service = ExpenseRetryService(
+            settings=replace(make_settings(), dry_run=False),
+            database=self.database,
+            bilancio_client=FakeRetryPortal(),
+            archive=FileArchive(self.root / "archive"),
+            pending_store=PendingReceiptStore(self.root / "pending"),
+        )
+        result = await service.process_due(bot)
+        self.assertEqual((result.succeeded, result.trials), (1, 0))
+        self.assertEqual(bot.messages[0][1], "✅ Salvata: Negozio, 12,50 € (26/10).")
 
     def create_queued_expense(self, *, with_unit: bool = True) -> None:
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")

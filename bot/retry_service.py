@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from bot import messages as texts
-
 import asyncio
 import logging
 import sqlite3
@@ -20,6 +18,7 @@ from bilancio.client import (
     PortalOption,
     TransactionDirection,
 )
+from bot import messages as texts
 from config import Settings
 from db.database import Database, RetryEntry, StoredExpense
 from storage.archive import FileArchive
@@ -40,6 +39,7 @@ class RetrySummary:
     succeeded: int
     pending: int
     failed: int
+    trials: int = 0
 
 
 class ExpenseRetryService:
@@ -72,16 +72,18 @@ class ExpenseRetryService:
                 before,
                 telegram_user_id=telegram_user_id,
             )
-            succeeded = pending = failed = 0
+            succeeded = pending = failed = trials = 0
             for entry in entries:
                 outcome = await self._process_one(entry, bot)
-                if outcome == "succeeded":
+                if outcome in {"succeeded", "trial"}:
                     succeeded += 1
+                    if outcome == "trial":
+                        trials += 1
                 elif outcome == "pending":
                     pending += 1
                 else:
                     failed += 1
-            return RetrySummary(succeeded, pending, failed)
+            return RetrySummary(succeeded, pending, failed, trials)
 
     async def _process_one(
         self,
@@ -155,7 +157,10 @@ class ExpenseRetryService:
                 await self._notify_user(
                     bot,
                     stored.telegram_user_id,
-                    texts.RETRY_EXHAUSTED,
+                    texts.RETRY_EXHAUSTED.format(
+                        description=texts.safe_text(stored.payload.get("merchant")),
+                        amount=texts.amount_text(stored.payload),
+                    ),
                 )
                 await self._notify_admin(
                     bot,
@@ -191,10 +196,14 @@ class ExpenseRetryService:
             (
                 texts.RETRY_TRIAL
                 if result.dry_run
-                else texts.RETRY_SAVED
+                else texts.RETRY_SAVED.format(
+                    description=texts.safe_text(stored.payload.get("merchant")),
+                    amount=texts.amount_text(stored.payload),
+                    day=texts.date_text(stored.payload.get("date"), short=True),
+                )
             ),
         )
-        return "succeeded"
+        return "trial" if result.dry_run else "succeeded"
 
     async def retry_user_now(
         self,

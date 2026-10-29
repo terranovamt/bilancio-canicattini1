@@ -14,7 +14,7 @@ L'analisi delle ricevute è prevista in locale con Ollama. Non è configurato l'
 
 ## Componenti
 
-- `bot/`: comandi Telegram, accesso autorizzato, flusso di conferma e ritentativi.
+- `bot/`: comandi Telegram, accesso autorizzato, flusso di conferma e ritentativi. I testi e le etichette sono centralizzati in [`bot/messages.py`](bot/messages.py); gli esempi sono nel [catalogo dei messaggi](docs/PREVIEW_MESSAGGI_TELEGRAM.md).
 - `vision/`: correzione locale dell'immagine, schema dei dati e client Ollama.
 - `storage/`: conservazione temporanea e archivio permanente delle ricevute.
 - `db/`: spese, stati, duplicati e coda SQLite.
@@ -67,15 +67,15 @@ All'avvio il bot registra il menu dei comandi Telegram: scrivendo `/` compaiono 
 
 Le casse e le tipologie `Voci Scout` vengono lette dal portale in sottofondo circa 10 secondi dopo l'avvio del bot e di nuovo ogni notte alle 02:30 UTC. Restano in memoria per 26 ore, così durante la giornata i menu si aprono senza attendere il browser. La cache distingue anno scout, cassa, entrata/uscita, voce, tipologia e unità, così non mescola elenchi dipendenti. Se scegli un menu mentre la lettura iniziale è ancora in corso, il bot mostra un messaggio di attesa e completa la scelta appena possibile. Usa `/aggiornaopzioni` (amministratore) per rileggere subito casse e tipologie: al termine il bot ti scrive quante casse ha letto e quante tipologie di entrata e di uscita ha trovato per ciascuna. Il salvataggio e la verifica nel portale restano sempre operazioni reali di browser, anche quando i menu provengono dalla cache.
 
-Nel passaggio delle tipologie il bot mostra prima le 6 più usate per quella cassa e direzione; in fondo c'è il pulsante **➕ Altre tipologie** con quelle mancanti. All'inizio, quando non ci sono ancora spese registrate, mostra le prime 6 nell'ordine del portale.
+Nel passaggio delle tipologie il bot mostra prima le 6 più usate per quella cassa e direzione; in fondo c'è il pulsante **➕ Mostra altre** con quelle mancanti. All'inizio, quando non ci sono ancora spese registrate, mostra le prime 6 nell'ordine del portale.
 
-L’amministratore può usare `/testspesa` per inserire a mano una spesa reale, senza scontrino e senza AI. Il bot propone subito valori predefiniti: data di oggi, descrizione «Prova Telegram» e importo 0,10 €. Puoi cambiarli con i pulsanti **📅 Data**, **💶 Importo** e **✏️ Descrizione**, poi premi **✅ Conferma**. Il bot chiede cassa e direzione, usa `Voci Scout` e mostra le tipologie disponibili per quella scelta. Imposta l’unità predefinita associata alla cassa; se per quell'anno scout il portale non offre alcuna unità («No results»), lascia l'unità vuota. Lascia la categoria vuota. Prima del salvataggio mostra un riepilogo e chiede un'ultima conferma.
+L’amministratore può usare `/testspesa` per inserire a mano una spesa reale, senza scontrino e senza AI. Il bot propone subito valori predefiniti: data di oggi, descrizione «Prova Telegram» e importo 0,10 €. Puoi cambiarli con i pulsanti **📅 Data**, **💶 Importo** e **✏️ Descrizione**, poi premi **✅ Va bene**. Il bot chiede cassa e direzione, usa `Voci Scout` e mostra le tipologie disponibili per quella scelta. Imposta l’unità predefinita associata alla cassa; se per quell'anno scout il portale non offre alcuna unità («No results»), lascia l'unità vuota e non la mostra nel riepilogo. Lascia la categoria vuota. Prima del salvataggio mostra un riepilogo e chiede un'ultima conferma con **✅ Salva davvero**.
 
 - `/testspesa` salva **sempre davvero** nel portale, anche con `DRY_RUN=true`: quell'impostazione vale solo per gli scontrini.
 - Usa `/annulla` o il pulsante **Annulla** per interrompere prima della conferma finale.
 - Se il salvataggio non viene verificato, il bot non riprova da solo: controlla nel portale e ripeti `/testspesa` solo se la spesa non c'è.
-- Durante le operazioni lente il messaggio diventa «⏳ …» e i pulsanti spariscono. Se tocchi di nuovo un pulsante vecchio, il bot lo ignora e mostra «Questa scelta non è più attiva».
-- Se il portale non risponde mentre il bot legge casse o tipologie, la prova manuale viene annullata in automatico, senza inserire nulla: puoi ripartire subito con `/testspesa`. Per uno scontrino, invece, il file resta salvato e il bot propone **Conferma** per riprovare oppure **Annulla**.
+- Durante le operazioni lente compare un messaggio di attesa e i pulsanti spariscono. Se tocchi di nuovo un pulsante vecchio, il bot lo ignora e mostra «Questo pulsante non è più attivo».
+- Se il portale non risponde mentre il bot legge casse o tipologie, la prova manuale viene annullata in automatico, senza inserire nulla: puoi ripartire subito con `/testspesa`. Per uno scontrino, invece, il file resta salvato e il bot propone **✅ Sì, è giusto** per riprovare oppure **Annulla**.
 - Un nuovo `/testspesa` annulla da solo una prova manuale rimasta aperta.
 - Se una conversazione iniziata prima di un aggiornamento mostra ancora i vecchi pulsanti per unità o categoria, usa `/annulla` e ricomincia con `/testspesa`.
 
@@ -83,12 +83,12 @@ Per la prima prova usa una descrizione chiaramente riconoscibile e controlla con
 
 ### Ultime spese e pulizia
 
-`/ultime` mostra le ultime 10 spese con lo stato: ✅ registrata, 🧪 simulata, ⏳ in coda (non ancora registrata) oppure ❌ non registrata. Le operazioni annullate o mai confermate non compaiono.
+`/ultime` mostra le ultime 10 spese: ✅ salvata e verificata, 🧪 prova senza salvataggio, ⚠️ da controllare oppure ⏳ in attesa o in corso. Le operazioni annullate o mai confermate non compaiono. Nei riepiloghi compaiono solo i campi compilati; i percorsi e i dettagli tecnici vengono inviati solo all'amministratore. La tastiera rapida dell'amministratore non contiene `/aggiornaopzioni` e `/pulisci`: li trovi in `/help`.
 
 `/pulisci` (solo amministratore) svuota la memoria del bot. Cancella la coda, l'elenco di `/ultime`, le operazioni aperte, i file temporanei, i log e la diagnostica. Non cancella nulla nel portale AGESCI e non tocca le ricevute archiviate.
 
 1. Su Telegram invia `/pulisci`.
-2. Leggi l'avviso e premi **Sì, pulisci tutto**; premi **No** per lasciare tutto com'è.
+2. Leggi l'avviso e premi **Sì, pulisci**; premi **No, lascia stare** per lasciare tutto com'è.
 3. Il bot risponde con il numero di spese e di file eliminati.
 
 ### Riepilogo delle casse
@@ -96,15 +96,15 @@ Per la prima prova usa una descrizione chiaramente riconoscibile e controlla con
 `/riepilogo` legge dal portale AGESCI, in sola lettura, i saldi di tutte le casse dell'anno scout corrente. Lo possono usare tutti gli utenti autorizzati e non modifica nulla.
 
 1. Su Telegram invia `/riepilogo`.
-2. Attendi circa un minuto: compare «⏳ Leggo saldi e operazioni…».
+2. Attendi circa un minuto: compare «⏳ Leggo i saldi dal portale…».
 3. Il messaggio si trasforma nel riepilogo. Per ogni cassa vedi:
    - il saldo attuale, cioè quanto dovresti avere in contanti o sul conto;
-   - il saldo iniziale al 1° ottobre, le entrate e le uscite;
-   - l'andamento mese per mese, con il saldo a fine mese;
-   - le ultime 3 operazioni.
-4. Premi **⬅️ Anno …** per vedere l'anno scout precedente, **Anno … ➡️** per tornare avanti, oppure **🔄 Aggiorna** per rileggere il portale.
+   - le entrate e le uscite;
+   - l'ultima operazione.
+4. Premi **📈 Dettagli** per vedere anche il saldo iniziale al 1° ottobre, l'andamento mese per mese e le ultime 3 operazioni. Il bot rilegge l'anno selezionato senza modificare nulla.
+5. Premi **⬅️ Anno …** per vedere l'anno scout precedente, **Anno … ➡️** per tornare avanti, oppure **🔄 Aggiorna** per rileggere il portale e tornare alla vista compatta.
 
-Se compare «❌ Non riesco a leggere i saldi dal portale», riprova più tardi. Se compare «⚠️ Il portale mostra … righe su …», il saldo è comunque quello del portale, ma andamento e ultime operazioni sono parziali.
+Se compare «❌ Non riesco a leggere i saldi adesso», riprova più tardi. Se compare «⚠️ Il portale mostra solo … righe su …», il saldo è comunque quello del portale, ma andamento e ultime operazioni sono parziali.
 
 Dopo la pulizia la classifica delle tipologie più usate riparte da zero.
 

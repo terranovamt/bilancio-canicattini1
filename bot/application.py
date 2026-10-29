@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from bot import messages as texts
-
 import asyncio
 import logging
 from collections.abc import Sequence
@@ -29,6 +27,7 @@ from telegram.ext import (
     filters,
 )
 
+from bot import messages as texts
 from bot.access import is_authorized_user
 from bot.receipt_workflow import ReceiptAnalyzer, ReceiptWorkflow
 from bot.retry_service import ExpenseRetryService
@@ -55,7 +54,7 @@ USER_HELP_TEXT = (
     texts.USER_HELP
 )
 ADMIN_HELP_TEXT = (
-    texts.ADMIN_HELP.format(value0=USER_HELP_TEXT)
+    texts.ADMIN_HELP.format(user_help=USER_HELP_TEXT)
 )
 
 USER_COMMANDS = (
@@ -188,10 +187,9 @@ async def start_command(
     if update.message is None:
         return
     settings: Settings = context.application.bot_data["settings"]
-    rows = [["/ultime", "/riepilogo"], ["/coda", "/help"], ["/annulla"]]
+    rows = texts.USER_KEYBOARD
     if _is_admin(update, settings):
-        rows.insert(0, ["/testspesa", "/testbilancio"])
-        rows.append(["/aggiornaopzioni", "/pulisci"])
+        rows = texts.ADMIN_KEYBOARD
         await context.bot.set_my_commands(
             ADMIN_COMMANDS,
             scope=BotCommandScopeChat(chat_id=settings.admin_user_id),
@@ -200,7 +198,7 @@ async def start_command(
             texts.MODE_REAL
         )
         text = (
-            texts.ADMIN_START.format(value0=mode)
+            texts.ADMIN_START.format(mode=f"{mode}\n{texts.MANUAL_MODE_NOTICE}")
         )
     else:
         text = (
@@ -304,9 +302,8 @@ async def queue_command(
         return
     lines = [texts.QUEUE_HEADER]
     for expense in expenses:
-        lines.append(
-            texts.QUEUE_ROW.format(value0=_safe_field(expense.payload.get('date')), value1=_safe_field(expense.payload.get('merchant')), value2=_safe_field(expense.payload.get('total_amount')), value3='in coda' if expense.status == 'queued' else 'da verificare')
-        )
+        lines.append(texts.expense_row(expense.payload, expense.status, queued=True))
+    lines.extend(("", texts.QUEUE_FOOTER))
     await update.message.reply_text("\n".join(lines))
 
 
@@ -335,7 +332,12 @@ async def retry_command(
         telegram_user_id=update.effective_user.id,
     )
     await update.message.reply_text(
-        texts.RETRY_DONE.format(value0=summary.succeeded, value1=summary.pending, value2=summary.failed)
+        texts.RETRY_DONE_WITH_TRIALS.format(
+            saved=summary.succeeded - summary.trials, trials=summary.trials,
+            pending=summary.pending, failed=summary.failed,
+        ) if summary.trials else texts.RETRY_DONE.format(
+            saved=summary.succeeded, pending=summary.pending, failed=summary.failed,
+        )
     )
 
 
@@ -359,7 +361,7 @@ async def refresh_options_command(
         return
     client: BilancioClient | None = context.application.bot_data["bilancio_client"]
     if client is None:
-        await update.message.reply_text(texts.PORTAL_NOT_CONFIGURED)
+        await update.message.reply_text(texts.PORTAL_UNAVAILABLE)
         return
     await client.clear_options_cache()
     job_queue = getattr(context.application, "job_queue", None)
@@ -382,22 +384,20 @@ _SUMMARY_FAILED_TEXT = (
 
 
 def _summary_progress_text(start_year: int) -> str:
-    return (
-        texts.SUMMARY_PROGRESS.format(value0=scout_year_name(start_year))
-    )
+    return texts.SUMMARY_PROGRESS
 
 
 def _summary_keyboard(start_year: int, today: date) -> InlineKeyboardMarkup:
     buttons = [
         InlineKeyboardButton(
-            texts.PREVIOUS_YEAR.format(value0=scout_year_name(start_year - 1)),
+            texts.PREVIOUS_YEAR.format(year=scout_year_name(start_year - 1)),
             callback_data=f"summary:{start_year - 1}",
         )
     ]
     if start_year < scout_year_start(today):
         buttons.append(
             InlineKeyboardButton(
-                texts.NEXT_YEAR.format(value0=scout_year_name(start_year + 1)),
+                texts.NEXT_YEAR.format(year=scout_year_name(start_year + 1)),
                 callback_data=f"summary:{start_year + 1}",
             )
         )
@@ -405,6 +405,7 @@ def _summary_keyboard(start_year: int, today: date) -> InlineKeyboardMarkup:
         [
             buttons,
             [InlineKeyboardButton(texts.REFRESH_BUTTON, callback_data=f"summary:{start_year}")],
+            [InlineKeyboardButton(texts.DETAILS_BUTTON, callback_data=f"summary:details:{start_year}")],
         ]
     )
 
@@ -415,13 +416,17 @@ def _schedule_summary(
     chat_id: int,
     message_id: int,
     start_year: int,
+    details: bool = False,
 ) -> None:
     context.application.bot_data[_SUMMARY_RUNNING_KEY] = True
     context.application.job_queue.run_once(
         ledger_summary_job,
         when=0,
         name="ledger-summary",
-        data={"chat_id": chat_id, "message_id": message_id, "start_year": start_year},
+        data={
+            "chat_id": chat_id, "message_id": message_id, "start_year": start_year,
+            **({"details": True} if details else {}),
+        },
     )
 
 
@@ -432,7 +437,7 @@ async def summary_command(
     if update.message is None:
         return
     if context.application.bot_data.get("bilancio_client") is None:
-        await update.message.reply_text(texts.PORTAL_NOT_CONFIGURED)
+        await update.message.reply_text(texts.PORTAL_UNAVAILABLE)
         return
     if context.application.bot_data.get(_SUMMARY_RUNNING_KEY):
         await update.message.reply_text(texts.SUMMARY_BUSY)
@@ -456,7 +461,11 @@ async def summary_callback(
         return
     current_start = scout_year_start(date.today())
     try:
-        start_year = int(str(query.data).split(":", 1)[1])
+        parts = str(query.data).split(":")
+        details = len(parts) == 3 and parts[1] == "details"
+        if not (len(parts) == 2 or details):
+            raise ValueError("Invalid summary callback")
+        start_year = int(parts[-1])
     except (IndexError, ValueError):
         await query.answer()
         return
@@ -464,7 +473,7 @@ async def summary_callback(
         await query.answer()
         return
     if context.application.bot_data.get("bilancio_client") is None:
-        await query.answer(texts.PORTAL_NOT_CONFIGURED)
+        await query.answer(texts.PORTAL_UNAVAILABLE)
         return
     if context.application.bot_data.get(_SUMMARY_RUNNING_KEY):
         await query.answer(texts.SUMMARY_BUSY)
@@ -476,6 +485,7 @@ async def summary_callback(
         chat_id=query.message.chat_id,
         message_id=query.message.message_id,
         start_year=start_year,
+        details=details,
     )
 
 
@@ -496,7 +506,7 @@ async def ledger_summary_job(context: ContextTypes.DEFAULT_TYPE) -> None:
             logger.warning("Ledger summary failed: %s", type(error).__name__)
             messages = [_SUMMARY_FAILED_TEXT]
         else:
-            messages = format_ledger_summary(ledgers, start_year)
+            messages = format_ledger_summary(ledgers, start_year, details=data.get("details", False))
         for index, text in enumerate(messages):
             markup = keyboard if index == len(messages) - 1 else None
             if index == 0:
@@ -539,14 +549,17 @@ async def test_bilancio_command(
         logger.error("AGESCI manual login is required")
         debug_path = Path(settings.data_path) / "debug"
         await update.message.reply_text(
-            texts.HEALTH_MANUAL.format(value0=debug_path, value1=Path(error.diagnostic_path).name if error.diagnostic_path else 'nessun file')
+            texts.HEALTH_MANUAL.format(
+                folder=debug_path,
+                diagnostic_file=f" ({Path(error.diagnostic_path).name})" if error.diagnostic_path else "",
+            )
         )
         return
     except BilancioClientError as error:
         logger.error("AGESCI health check failed: %s", type(error).__name__)
         debug_path = Path(settings.data_path) / "debug"
         await update.message.reply_text(
-            texts.HEALTH_FAILED.format(value0=debug_path)
+            texts.HEALTH_FAILED.format(folder=debug_path)
         )
         return
     await update.message.reply_text(
@@ -623,10 +636,10 @@ def _format_preload_summary(
     def describe(count: int | None) -> str:
         return texts.UNREAD_COUNT if count is None else str(count)
 
-    lines = [texts.REFRESH_DONE.format(value0=len(accounts))]
+    lines = [texts.REFRESH_DONE.format(count=len(accounts))]
     for label, directions in accounts.items():
         lines.append(
-            texts.REFRESH_ROW.format(value0=label, value1=describe(directions.get(TransactionDirection.INCOME)), value2=describe(directions.get(TransactionDirection.EXPENSE)))
+            texts.REFRESH_ROW.format(account=label, income=describe(directions.get(TransactionDirection.INCOME)), expense=describe(directions.get(TransactionDirection.EXPENSE)))
         )
     if any(count is None for _, _, count in summary):
         lines.append(texts.REFRESH_PARTIAL)
@@ -679,7 +692,7 @@ async def clean_callback(
     await asyncio.to_thread(_truncate_logs, data_path / "logs")
     logger.info("Local history cleared by the administrator")
     await query.edit_message_text(
-        texts.CLEAN_DONE.format(value0=counts['expenses'], value1=counts['retries'], value2=removed_files)
+        texts.CLEAN_DONE.format(expenses=counts['expenses'], pending=counts['retries'], files=removed_files)
     )
 
 
@@ -725,19 +738,7 @@ async def telegram_error_handler(
 def _format_recent_expenses(expenses: Sequence[StoredExpense]) -> str:
     lines = [texts.LATEST_HEADER]
     for expense in expenses:
-        payload = expense.payload
-        transaction_date = _safe_field(payload.get("date"))
-        merchant = _safe_field(payload.get("merchant"))
-        amount = _safe_field(payload.get("total_amount"))
-        currency = _safe_field(payload.get("currency"))
-        account_data = payload.get("account")
-        account = _safe_field(
-            account_data.get("label") if isinstance(account_data, dict) else account_data
-        )
-        status = _STATUS_LABELS.get(expense.status, expense.status)
-        lines.append(
-            texts.RECENT_ROW.format(value0=status, value1=transaction_date, value2=merchant, value3=amount, value4=currency, value5=account)
-        )
+        lines.append(texts.expense_row(expense.payload, expense.status))
     return "\n".join(lines)
 
 
@@ -748,12 +749,6 @@ _STATUS_LABELS = {
     "failed": texts.STATUS_REVIEW,
     "confirmed": texts.STATUS_WORKING,
 }
-
-
-def _safe_field(value: object) -> str:
-    if value is None:
-        return texts.EMPTY_VALUE
-    return " ".join(str(value).split())[:80] or texts.EMPTY_VALUE
 
 
 async def notify_admin(
