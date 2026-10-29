@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
-from datetime import date, time as day_time, timezone
+from datetime import date, datetime, time as day_time, timezone
 from pathlib import Path
 
 from telegram import (
@@ -31,6 +31,13 @@ from bot import messages as texts
 from bot.access import is_authorized_user
 from bot.receipt_workflow import ReceiptAnalyzer, ReceiptWorkflow
 from bot.retry_service import ExpenseRetryService
+from bot.updates import (
+    RunningVersion,
+    UpdateStatusStore,
+    describe_version,
+    pending_notices,
+    resolve_timezone,
+)
 from bot.summary import (
     format_ledger_summary,
     reference_date_for,
@@ -71,6 +78,7 @@ ADMIN_COMMANDS = (
     BotCommand("testspesa", texts.COMMAND_MANUAL),
     BotCommand("testbilancio", texts.COMMAND_HEALTH),
     BotCommand("aggiornaopzioni", texts.COMMAND_REFRESH),
+    BotCommand("aggiorna", texts.COMMAND_UPDATE),
     BotCommand("pulisci", texts.COMMAND_CLEAN),
 )
 
@@ -106,6 +114,17 @@ def create_application(
     application.bot_data["receipt_workflow"] = workflow
     application.bot_data["bilancio_client"] = bilancio_client
     application.bot_data["retry_service"] = None
+    application.bot_data["update_store"] = UpdateStatusStore(
+        Path(settings.data_path) / "update"
+    )
+    application.bot_data["running_version"] = RunningVersion.from_env()
+    if application.job_queue is not None:
+        application.job_queue.run_repeating(
+            update_status_job,
+            interval=60,
+            first=20,
+            name="nas-update-status",
+        )
     if bilancio_client is not None:
         retry_service = ExpenseRetryService(
             settings=settings,
@@ -148,6 +167,10 @@ def create_application(
     application.add_handler(CommandHandler("testspesa", manual_expense_command))
     application.add_handler(CommandHandler("testbilancio", test_bilancio_command))
     application.add_handler(CommandHandler("aggiornaopzioni", refresh_options_command))
+    application.add_handler(CommandHandler("aggiorna", update_command))
+    application.add_handler(
+        CallbackQueryHandler(update_callback, pattern=r"^admin:update:")
+    )
     application.add_handler(CommandHandler("pulisci", clean_command))
     application.add_handler(
         CallbackQueryHandler(clean_callback, pattern=r"^admin:clean:")
@@ -198,7 +221,10 @@ async def start_command(
             texts.MODE_REAL
         )
         text = (
-            texts.ADMIN_START.format(mode=f"{mode}\n{texts.MANUAL_MODE_NOTICE}")
+            texts.ADMIN_START.format(
+                mode=f"{mode}\n{texts.MANUAL_MODE_NOTICE}",
+                version=await asyncio.to_thread(_version_status, context, settings),
+            )
         )
     else:
         text = (
@@ -213,6 +239,111 @@ async def start_command(
 def _is_admin(update: Update, settings: Settings) -> bool:
     user = update.effective_user
     return user is not None and user.id == settings.admin_user_id
+
+
+def _update_store(context: ContextTypes.DEFAULT_TYPE, settings: Settings) -> UpdateStatusStore:
+    store = context.application.bot_data.get("update_store")
+    if isinstance(store, UpdateStatusStore):
+        return store
+    return UpdateStatusStore(Path(settings.data_path) / "update")
+
+
+def _running_version(context: ContextTypes.DEFAULT_TYPE) -> RunningVersion:
+    running = context.application.bot_data.get("running_version")
+    return running if isinstance(running, RunningVersion) else RunningVersion.from_env()
+
+
+def _version_status(context: ContextTypes.DEFAULT_TYPE, settings: Settings) -> str:
+    store = _update_store(context, settings)
+    return describe_version(
+        _running_version(context),
+        store.read_check(),
+        store.read_install(),
+        request_pending=store.has_request(),
+        zone=resolve_timezone(settings.timezone),
+    )
+
+
+async def update_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None:
+        return
+    settings: Settings = context.application.bot_data["settings"]
+    if not _is_admin(update, settings):
+        await update.message.reply_text(texts.ADMIN_ONLY)
+        return
+    if not settings.dry_run:
+        await update.message.reply_text(texts.UPDATE_LIVE_MODE)
+        return
+    store = _update_store(context, settings)
+    if await asyncio.to_thread(store.read_check) is None:
+        await update.message.reply_text(texts.UPDATE_NOT_CONFIGURED)
+        return
+    if await asyncio.to_thread(store.has_request):
+        await update.message.reply_text(texts.UPDATE_ALREADY_REQUESTED)
+        return
+    status = await asyncio.to_thread(_version_status, context, settings)
+    await update.message.reply_text(
+        texts.UPDATE_PROMPT.format(status=status),
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton(texts.UPDATE_YES, callback_data="admin:update:yes")],
+                [InlineKeyboardButton(texts.UPDATE_NO, callback_data="admin:update:no")],
+            ]
+        ),
+    )
+
+
+async def update_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    query = update.callback_query
+    if query is None:
+        return
+    await query.answer()
+    settings: Settings = context.application.bot_data["settings"]
+    if not _is_admin(update, settings):
+        return
+    if query.data != "admin:update:yes":
+        await query.edit_message_text(texts.UPDATE_CANCELLED)
+        return
+    if not settings.dry_run:
+        await query.edit_message_text(texts.UPDATE_LIVE_MODE)
+        return
+    store = _update_store(context, settings)
+    try:
+        await asyncio.to_thread(store.request_install, datetime.now(timezone.utc))
+    except OSError as error:
+        logger.error("Could not record update request: %s", type(error).__name__)
+        await query.edit_message_text(texts.UPDATE_REQUEST_FAILED)
+        return
+    logger.info("Update installation requested by the administrator")
+    await query.edit_message_text(texts.UPDATE_REQUESTED)
+
+
+async def update_status_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.application.bot_data["settings"]
+    store = _update_store(context, settings)
+    notices, marker = await asyncio.to_thread(
+        pending_notices, store, _running_version(context)
+    )
+    if not notices:
+        return
+    try:
+        await context.bot.send_message(
+            chat_id=settings.admin_user_id,
+            text="\n\n".join(notices),
+        )
+    except TelegramError:
+        logger.error("Could not send update status notification")
+        return
+    try:
+        await asyncio.to_thread(store.write_notified, marker)
+    except OSError as error:
+        logger.error("Could not store update notification marker: %s", type(error).__name__)
 
 
 async def help_command(

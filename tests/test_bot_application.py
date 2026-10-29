@@ -30,7 +30,12 @@ from bot.application import (
     summary_callback,
     summary_command,
     test_bilancio_command,
+    update_callback,
+    update_command,
+    update_status_job,
 )
+from bot import messages as texts
+from bot.updates import RunningVersion
 from bot.summary import scout_year_name as scout_year_name_for, scout_year_start
 from bot.retry_service import RetrySummary
 from datetime import date
@@ -554,6 +559,140 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(message.count("\n"), 1)
         self.assertIn("Shop Injected text", message)
+
+
+class UpdateCommandTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.data = Path(self.temporary.name) / "data"
+        self.update_dir = self.data / "update"
+        self.update_dir.mkdir(parents=True)
+        self.user = SimpleNamespace(id=12345)
+
+    def settings(self, dry_run: str = "true") -> Settings:
+        return Settings.from_env(
+            {
+                "BOT_TOKEN": "test-token-placeholder",
+                "ALLOWED_USER_IDS": "12345,67890",
+                "ADMIN_USER_ID": "12345",
+                "DATA_PATH": str(self.data),
+                "TZ": "UTC",
+                "DRY_RUN": dry_run,
+            }
+        )
+
+    def context(self, settings: Settings | None = None) -> SimpleNamespace:
+        context = SimpleNamespace(
+            application=SimpleNamespace(
+                bot_data={
+                    "settings": settings or self.settings(),
+                    "running_version": RunningVersion(
+                        revision="a" * 40, committed_at=None, subject="Attuale"
+                    ),
+                }
+            )
+        )
+        context.bot = SimpleNamespace(set_my_commands=AsyncMock(), send_message=AsyncMock())
+        return context
+
+    def write_check(self, revision: str) -> None:
+        (self.update_dir / "check").write_text(
+            f"checked_at=2026-10-29T12:00:00Z\navailable_revision={revision}\n"
+            "available_summary=bbbbbbb - Nuova\nerror=\n",
+            encoding="utf-8",
+        )
+
+    async def test_admin_start_shows_running_and_available_version(self) -> None:
+        self.write_check("b" * 40)
+        message = SimpleNamespace(reply_text=AsyncMock())
+        await start_command(
+            SimpleNamespace(message=message, effective_user=self.user), self.context()
+        )
+        text = message.reply_text.await_args.args[0]
+        self.assertIn("Versione attiva: aaaaaaa – Attuale", text)
+        self.assertIn("Nuova versione disponibile: bbbbbbb - Nuova", text)
+
+    async def test_non_admin_start_hides_version(self) -> None:
+        self.write_check("b" * 40)
+        message = SimpleNamespace(reply_text=AsyncMock())
+        await start_command(
+            SimpleNamespace(message=message, effective_user=SimpleNamespace(id=67890)),
+            self.context(),
+        )
+        self.assertNotIn("Versione", message.reply_text.await_args.args[0])
+
+    async def test_update_requires_confirmation_then_writes_request(self) -> None:
+        self.write_check("b" * 40)
+        context = self.context()
+        message = SimpleNamespace(reply_text=AsyncMock())
+        await update_command(SimpleNamespace(message=message, effective_user=self.user), context)
+        markup = message.reply_text.await_args.kwargs["reply_markup"]
+        self.assertEqual(markup.inline_keyboard[0][0].callback_data, "admin:update:yes")
+        self.assertFalse((self.update_dir / "request").exists())
+
+        query = SimpleNamespace(
+            data="admin:update:yes", answer=AsyncMock(), edit_message_text=AsyncMock()
+        )
+        await update_callback(SimpleNamespace(callback_query=query, effective_user=self.user), context)
+        self.assertTrue((self.update_dir / "request").exists())
+        self.assertEqual(query.edit_message_text.await_args.args[0], texts.UPDATE_REQUESTED)
+
+    async def test_update_declined_writes_nothing(self) -> None:
+        query = SimpleNamespace(
+            data="admin:update:no", answer=AsyncMock(), edit_message_text=AsyncMock()
+        )
+        await update_callback(
+            SimpleNamespace(callback_query=query, effective_user=self.user), self.context()
+        )
+        self.assertFalse((self.update_dir / "request").exists())
+
+    async def test_update_is_admin_only_and_blocked_in_live_mode(self) -> None:
+        self.write_check("b" * 40)
+        message = SimpleNamespace(reply_text=AsyncMock())
+        await update_command(
+            SimpleNamespace(message=message, effective_user=SimpleNamespace(id=67890)),
+            self.context(),
+        )
+        self.assertEqual(message.reply_text.await_args.args[0], texts.ADMIN_ONLY)
+        await update_command(
+            SimpleNamespace(message=message, effective_user=self.user),
+            self.context(self.settings(dry_run="false")),
+        )
+        self.assertEqual(message.reply_text.await_args.args[0], texts.UPDATE_LIVE_MODE)
+        query = SimpleNamespace(
+            data="admin:update:yes", answer=AsyncMock(), edit_message_text=AsyncMock()
+        )
+        await update_callback(
+            SimpleNamespace(callback_query=query, effective_user=self.user),
+            self.context(self.settings(dry_run="false")),
+        )
+        self.assertFalse((self.update_dir / "request").exists())
+
+    async def test_update_without_nas_check_is_not_requested(self) -> None:
+        message = SimpleNamespace(reply_text=AsyncMock())
+        await update_command(SimpleNamespace(message=message, effective_user=self.user), self.context())
+        self.assertEqual(message.reply_text.await_args.args[0], texts.UPDATE_NOT_CONFIGURED)
+
+    async def test_status_job_notifies_admin_once(self) -> None:
+        (self.update_dir / "install").write_text(
+            "result=rolled_back\nfinished_at=2026-10-29T12:30:00Z\nrevision=" + "b" * 40
+            + "\nsummary=bbbbbbb - Nuova\nreason=start\n",
+            encoding="utf-8",
+        )
+        context = self.context()
+        await update_status_job(context)
+        await update_status_job(context)
+        context.bot.send_message.assert_awaited_once()
+        kwargs = context.bot.send_message.await_args.kwargs
+        self.assertEqual(kwargs["chat_id"], 12345)
+        self.assertIn("ripristinato quella precedente", kwargs["text"])
+
+    def test_update_command_is_registered_for_admin_only(self) -> None:
+        names = [command.command for command in ADMIN_COMMANDS]
+        self.assertIn("aggiorna", names)
+        self.assertNotIn("aggiorna", [command.command for command in USER_COMMANDS])
+        self.assertIn("/aggiorna", ADMIN_HELP_TEXT)
 
 
 if __name__ == "__main__":

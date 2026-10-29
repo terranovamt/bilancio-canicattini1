@@ -39,7 +39,22 @@ Cosa puoi fare:
 🧪 Modalità PROVA: non viene salvato nulla nel portale.
 /testspesa salva davvero, anche in modalità prova, dopo la tua conferma.
 
+🔖 Versione attiva: a1b2c3d del 29/10/2026 13:00 – Titolo del commit
+🆕 Nuova versione disponibile: e4f5a6b - Nuovo titolo (29/10/2026 14:00)
+Per installarla: /aggiorna
+
 Altri strumenti: /help
+```
+
+La parte sulla versione cambia secondo lo stato rilevato dal NAS:
+
+```text
+✅ È l'ultima versione (controllo del 29/10/2026 14:10).
+ℹ️ Il controllo automatico degli aggiornamenti non è ancora attivo.
+⚠️ L'ultimo controllo degli aggiornamenti non è riuscito (29/10/2026 14:10).
+⚠️ Ultimo aggiornamento non riuscito (e4f5a6b - Nuovo titolo …): la nuova versione non è partita, ho ripristinato quella precedente.
+⏳ Installazione richiesta: parte al prossimo controllo.
+🔖 Versione attiva: non indicata (installata senza Git).
 ```
 
 In modalità reale la riga della modalità diventa:
@@ -55,7 +70,7 @@ In modalità reale la riga della modalità diventa:
 [/annulla]
 ```
 
-`/aggiornaopzioni` e `/pulisci` restano disponibili con `/help` e nei suggerimenti dei comandi, non nella tastiera rapida.
+`/aggiornaopzioni`, `/aggiorna` e `/pulisci` restano disponibili con `/help` e nei suggerimenti dei comandi, non nella tastiera rapida.
 
 ### 3 · `/help`
 
@@ -77,6 +92,7 @@ Per l'amministratore si aggiunge:
 /testspesa – inserisci una spesa a mano
 /testbilancio – verifico il collegamento al portale
 /aggiornaopzioni – aggiorno casse e tipologie
+/aggiorna – installo l'ultima versione del bot
 /pulisci – svuoto coda, ultime spese e registri
 ```
 
@@ -495,6 +511,51 @@ Il portale e le ricevute archiviate non vengono toccati.
 
 ```text
 Ok, non ho toccato niente.
+```
+
+### 22 bis · `/aggiorna` e notifiche di aggiornamento
+
+```text
+🔄 Vuoi installare l'ultima versione?
+
+🔖 Versione attiva: a1b2c3d – Titolo del commit
+🆕 Nuova versione disponibile: e4f5a6b - Nuovo titolo (29/10/2026 14:00)
+Per installarla: /aggiorna
+
+Il bot si riavvia per circa un minuto: controlla che nessuno stia registrando una spesa.
+```
+
+```text
+[Sì, installa] [No, lascia stare]
+```
+
+```text
+⏳ Richiesta registrata. Il NAS la esegue al prossimo controllo, di solito entro 10 minuti, e ti scrivo l'esito.
+```
+
+Se il comando non può procedere:
+
+```text
+⚠️ Il bot è in modalità REALE: l'aggiornamento automatico è bloccato. Riporta prima DRY_RUN=true.
+ℹ️ Il controllo automatico non è attivo sul NAS: la richiesta non verrebbe eseguita. Aggiorna con il comando manuale.
+⏳ C'è già una richiesta in attesa: il NAS la esegue al prossimo controllo.
+```
+
+Notifiche inviate automaticamente all'amministratore, una sola volta per evento:
+
+```text
+🆕 È disponibile una nuova versione del bot: e4f5a6b - Nuovo titolo (29/10/2026 14:00)
+Per installarla: /aggiorna
+```
+
+```text
+✅ Aggiornamento installato: e4f5a6b - Nuovo titolo (29/10/2026 14:00)
+```
+
+```text
+⚠️ Aggiornamento non riuscito (e4f5a6b - Nuovo titolo …): la nuova versione non è partita, ho ripristinato quella precedente.
+❌ Aggiornamento non riuscito (e4f5a6b - Nuovo titolo …): la costruzione è fallita, è rimasta attiva la versione precedente.
+ℹ️ Nessun aggiornamento: è già installata l'ultima versione.
 ```
 
 ## F. Annullamenti, avvisi ed errori

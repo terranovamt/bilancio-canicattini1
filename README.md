@@ -23,7 +23,31 @@ L'analisi delle ricevute è prevista in locale con Ollama. Non è configurato l'
 - `docs/GUIDA_SYNOLOGY.md`: istruzioni per preparare il NAS.
 - `docs/CONTESTO_PROGETTO.md`: decisioni e stato dettagliato del lavoro.
 - `aggiorna.sh`: aggiornamento sul NAS da un pacchetto estratto separatamente, senza sostituire credenziali o dati; procedura nella sezione 15 della guida Synology.
-- `scarica.sh`: download e deploy dal ramo Git `deploy` solo su comando dell'utente, senza timer. Prima configurazione in [Deploy Git sul Synology](docs/DEPLOY_GIT_SYNOLOGY.md).
+- `scarica.sh`: download e deploy dal ramo Git `deploy` su comando dell'utente. Prima configurazione in [Deploy Git sul Synology](docs/DEPLOY_GIT_SYNOLOGY.md).
+- `automatico.sh`: facoltativo, per l'Utilità di pianificazione DSM. Controlla le nuove versioni, installa su richiesta `/aggiorna` da Telegram o all'orario programmato; procedura nella sezione 8 della stessa guida. `/start` mostra all'amministratore la versione attiva e quella disponibile.
+
+## Agenti AI in VS Code
+
+Il punto di contatto e **Manager**: mantiene la visione del progetto, assegna incarichi circoscritti agli specialisti e verifica il risultato complessivo. Le definizioni sono in [`.github/agents/`](.github/agents/).
+
+| Agente | Responsabilita |
+| --- | --- |
+| [Manager](.github/agents/manager.agent.md) | Dialogo con te, contesto, coordinamento e verifica finale. |
+| [Sviluppo bot e archivio](.github/agents/bot-python.agent.md) | Telegram, accessi, archivio, database, coda, integrazione e deploy generale. |
+| [Automazione portale AGESCI](.github/agents/agesci-portal.agent.md) | Client del portale, Playwright, selettori, CSV e verifica delle registrazioni. |
+| [AI locale Ollama](.github/agents/ollama-ai.agent.md) | Analisi locale delle ricevute, modelli, prompt, immagini/PDF, errori e risorse Ollama. |
+| [Doctor agenti](.github/agents/doctor.agent.md) | Coerenza di agenti e istruzioni, documentazione collegata, ripetizioni, riferimenti obsoleti e pulizia sicura. |
+
+Sul PC, in VS Code:
+
+1. Apri la chat del progetto.
+2. Seleziona **Manager** nel selettore degli agenti. Se non compare, ricarica la finestra di VS Code e controlla di avere aperto questa cartella di progetto.
+3. Scrivi la richiesta normalmente: il Manager usa gli specialisti quando servono e raccoglie i risultati nella stessa conversazione.
+4. Per un controllo di manutenzione, chiedi per esempio: «Fai controllare al Doctor gli agenti e la documentazione: correggi i riferimenti errati e segnalami duplicazioni e incongruenze».
+
+Tutti gli agenti usano il modello **Auto**, che lascia scegliere a Copilot il modello adatto alla richiesta. Gli specialisti sono configurati come sottoagenti e non compaiono nel selettore principale. Non occorre passare manualmente da uno all'altro. La scelta iniziale del Manager va fatta in VS Code: questi file non cambiano automaticamente l'agente di una chat gia aperta. La delega richiede che la versione e la modalita di chat in uso supportino i sottoagenti personalizzati; se non sono disponibili, il Manager deve dichiararlo e svolgere direttamente il lavoro.
+
+Il Doctor lavora su richiesta o quando il Manager rileva incoerenze rilevanti: non e un controllo periodico in sottofondo. Corregge gli errori documentali sicuri nel perimetro richiesto, ma prima di cancellare file o sezioni sostanziali, rimuovere agenti o cambiare responsabilita presenta una proposta e richiede conferma. Non pulisce ricevute, database, log, diagnostica o backup. Le regole comuni restano nelle [istruzioni condivise](.github/copilot-instructions.md); decisioni e stato verificato restano nel [contesto del progetto](docs/CONTESTO_PROGETTO.md).
 
 ## Configurazione privata
 

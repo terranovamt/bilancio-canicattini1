@@ -546,10 +546,10 @@ Non importa in quale cartella si trovi il terminale: il comando usa percorsi com
 - Non sostituisce `data`, `scontrini` o `ollama-data` e non cambia i loro proprietari o permessi.
 - Funziona anche se il bot e spento: verifica la configurazione del prossimo avvio tramite un container temporaneo che esegue soltanto il controllo, non il bot. Richiede sempre `DRY_RUN=true`. Se il bot e acceso, verifica anche la modalita del processo corrente. Se rileva la modalita reale o non puo completare i controlli, si ferma.
 - Conserva i vecchi file del programma in `.update-backups`, dentro il progetto; questa cartella e esclusa da Git e dall'immagine Docker.
-- Se la costruzione fallisce, non ricrea il container: se il precedente era acceso resta acceso; se era spento resta spento. I file del programma su disco sono gia aggiornati. Non dichiarare concluso l'aggiornamento e conserva il backup.
-- Dopo la ricreazione controlla il container e il database. La risposta a `/start` e ancora necessaria per verificare Telegram.
+- Se la costruzione fallisce, non ricrea il container: se il precedente era acceso resta acceso; se era spento resta spento. Anche i file del programma su disco vengono riportati alla versione precedente.
+- Dopo la ricreazione controlla il container e il database. Se il nuovo container non diventa sano entro tre minuti, ripristina da solo file e immagine precedenti e lo segnala con **ERRORE**. La risposta a `/start` resta necessaria per verificare Telegram: per l'amministratore mostra anche la **Versione attiva** (con lo ZIP compare «non indicata», perché manca Git).
 
-Il backup automatico riguarda solo il programma, **non e un backup del database o delle ricevute**. Mantieni anche una copia protetta dei dati con il sistema di backup del NAS. Lo script non effettua ripristini automatici e non elimina i vecchi backup.
+Il backup automatico riguarda solo il programma, **non e un backup del database o delle ricevute**. Mantieni anche una copia protetta dei dati con il sistema di backup del NAS. Il ripristino automatico riguarda solo programma e immagine del bot, non i dati, e lo script non elimina i vecchi backup.
 
 Se compare **ERRORE**, non cancellare dati e non ripetere comandi di pulizia. Comunica soltanto il messaggio necessario, dopo aver rimosso informazioni private. Se manca `aggiorna.sh`, stai usando un vecchio ZIP: procurati il nuovo pacchetto.
 

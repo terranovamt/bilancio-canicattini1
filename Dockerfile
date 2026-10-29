@@ -19,4 +19,12 @@ COPY vision ./vision
 COPY config.py logging_config.py ./
 RUN mkdir -p /data /scontrini /data/logs /data/pending
 
+# Last layers: changing the revision must not invalidate the dependency cache.
+ARG APP_REVISION=""
+ARG APP_COMMIT_DATE=""
+ARG APP_COMMIT_SUBJECT=""
+ENV APP_REVISION=${APP_REVISION} \
+    APP_COMMIT_DATE=${APP_COMMIT_DATE} \
+    APP_COMMIT_SUBJECT=${APP_COMMIT_SUBJECT}
+
 CMD ["python", "-m", "bot.main"]

@@ -1,6 +1,12 @@
-# Aggiornamento Git sul NAS, solo quando lo decidi tu
+# Aggiornamento Git sul NAS: manuale, da Telegram o programmato
 
-Non ci sono timer, webhook o aggiornamenti automatici. Un push dal PC rende disponibile il codice, ma **il NAS non fa nulla finché non esegui il comando di aggiornamento**.
+Un push dal PC rende disponibile il codice sul ramo `deploy`. Il NAS installa la nuova versione solo in tre casi:
+
+- quando esegui a mano il comando della sezione 6;
+- quando confermi `/aggiorna` su Telegram, se hai attivato il controllo automatico della sezione 8;
+- all'orario scelto, se hai attivato anche l'installazione programmata della sezione 8.
+
+Senza la sezione 8 non ci sono timer: il NAS non fa nulla finché non esegui il comando.
 
 Il ramo distribuito si chiama `deploy`. La copia Git viene tenuta separata dal progetto attivo: credenziali, database, ricevute e modello rimangono nel progetto esistente e non entrano in Git.
 
@@ -141,7 +147,7 @@ sh /volume1/docker/bilancio-canicattini1-git/scarica.sh /volume1/docker/bilancio
 5. Inserisci la passphrase della chiave GitHub se richiesta.
 6. Inserisci la password NAS quando `sudo` la richiede per Docker e la copia dei file.
 7. Attendi **Versione installata**, seguito dall'identificativo Git, e **Ultimo commit installato**, con codice breve, titolo e data del commit. Confronta il codice breve con quello comunicato dopo la pubblicazione.
-8. Invia `/start` su Telegram per verificare la risposta.
+8. Invia `/start` su Telegram: nella risposta per l'amministratore la riga **Versione attiva** deve mostrare lo stesso codice breve.
 
 Non anteporre `sudo` al comando iniziale: lo script usa l'utente normale per Git e chiede i privilegi soltanto per installare.
 
@@ -155,9 +161,99 @@ Puoi rilanciare il comando anche per la stessa versione, dopo aver risolto un er
 - Nessun aggiornamento Git cambia automaticamente la modalità simulata o reale.
 - `.env`, `data`, `scontrini` e `ollama-data` non vengono copiati, cancellati o inseriti nella copia Git.
 - Il vecchio codice viene conservato in `.update-backups` nel progetto attivo; questo non sostituisce il backup dei dati.
-- Non esiste ancora un ripristino automatico dell'immagine precedente. Se la costruzione fallisce, il vecchio container mantiene il suo stato (acceso o spento); se la ricreazione o il controllo di salute falliscono, occorre esaminare l'errore prima di dichiarare riuscito il deploy.
-- Se un comando viene interrotto bruscamente o il NAS si spegne, può rimanere una cartella di blocco. Non cancellarla senza prima verificare che nessun aggiornamento sia ancora in esecuzione.
+- Prima di costruire, l'immagine in uso viene conservata con il nome `…-bot:rollback`. Se la costruzione fallisce, i file del programma vengono ripristinati e il bot attuale non viene toccato. Se il nuovo container non parte o non supera il controllo di salute entro tre minuti, vengono ripristinati automaticamente file e immagine precedenti; il bot viene riacceso solo se era acceso prima.
+- Se fallisce anche il ripristino, lo script lo dice chiaramente e Telegram non riceverà più risposte finché non controlli i log sul NAS.
+- Ogni esito viene registrato in `data/update/install` e comunicato su Telegram all'amministratore.
+- Se un comando viene interrotto bruscamente o il NAS si spegne, il blocco rimasto viene rimosso da solo al tentativo successivo, perché il processo che lo aveva creato non è più attivo. Se lo script dice che un aggiornamento è ancora in corso, aspetta e non cancellare il blocco a mano.
 - Non modificare i file nella copia Git NAS: lavora sul PC, pubblica la versione e poi richiedi il download.
-- Non configurare **Utilità di pianificazione**, timer o webhook per questa procedura.
+- Non usare webhook: il NAS non deve essere raggiungibile da GitHub.
 
 Per la diagnostica usa i comandi della [guida Synology](GUIDA_SYNOLOGY.md). Condividi soltanto errori ripuliti da credenziali e dati personali, mai la chiave privata o la configurazione privata.
+
+## 8. Facoltativo: controllo automatico e installazione da Telegram o programmata
+
+Completa prima le sezioni 1–6 e un aggiornamento manuale riuscito. Questa parte usa `automatico.sh`, eseguito dall'**Utilità di pianificazione** di DSM.
+
+Cosa fa:
+
+- **controlla**: scarica da GitHub l'elenco delle versioni senza installare nulla. Così `/start` mostra se c'è una versione nuova e ricevi un avviso su Telegram. Se nel frattempo hai confermato `/aggiorna`, installa la nuova versione.
+- **installa**: come `controlla`, ma installa sempre una versione nuova. Una versione che non è partita non viene ritentata da sola: aspetta una versione successiva o una tua richiesta con `/aggiorna`.
+
+L'installazione automatica funziona solo con `DRY_RUN=true`, come quella manuale. In modalità reale viene bloccata e ricevi l'avviso su Telegram.
+
+### 8.1 Sul NAS: una chiave senza passphrase, solo per leggere
+
+Un'attività pianificata non può digitare la passphrase. Serve una seconda chiave dedicata, senza passphrase e di sola lettura.
+
+1. Apri SSH con lo stesso account delle sezioni 3–5, **senza `sudo`**.
+2. Crea la chiave e premi Invio due volte quando chiede la passphrase, lasciandola vuota:
+
+```sh
+ssh-keygen -t ed25519 -f "$HOME/.ssh/bilancio_github_auto" -C "bilancio-nas-auto-readonly"
+```
+
+3. Se chiede di sovrascrivere una chiave esistente, rispondi **no** e fermati.
+4. Mostra la sola chiave **pubblica** e copiala:
+
+```sh
+cat "$HOME/.ssh/bilancio_github_auto.pub"
+```
+
+5. Su GitHub, in **Settings → Deploy keys**, aggiungila con titolo `Synology bilancio - automatico`, **lasciando disattivato Allow write access**.
+6. Sul NAS, fai usare la nuova chiave alla copia Git, adeguando il percorso al tuo volume:
+
+```sh
+git -C /volume1/docker/bilancio-canicattini1-git config core.sshCommand "ssh -i '$HOME/.ssh/bilancio_github_auto' -o IdentitiesOnly=yes -o BatchMode=yes"
+```
+
+7. Verifica il download senza installare:
+
+```sh
+git -C /volume1/docker/bilancio-canicattini1-git fetch origin deploy
+```
+
+8. Non deve chiedere alcuna passphrase. Se compare `Permission denied (publickey)`, ricontrolla la deploy key.
+
+Chi accede al NAS con il tuo account può leggere il codice del repository con questa chiave, ma non modificarlo. Se il NAS viene compromesso, elimina la deploy key da GitHub.
+
+### 8.2 In DSM: attività di controllo ogni 10 minuti
+
+1. Apri **Pannello di controllo → Utilità di pianificazione**.
+2. Premi **Crea → Attività pianificata → Script definito dall'utente**.
+3. Nella scheda **Generale** scrivi il nome `Bilancio - controllo aggiornamenti` e come utente scegli **root**. Serve per Docker; Git userà comunque il tuo account, proprietario della copia Git.
+4. Nella scheda **Pianificazione** scegli **Esegui ogni giorno**, poi **Frequenza: ogni 10 minuti**, dalle 00:00 alle 23:50.
+5. Nella scheda **Impostazioni attività**, in **Script definito dall'utente**, scrivi, adeguando i percorsi:
+
+```sh
+sh /volume1/docker/bilancio-canicattini1-git/automatico.sh controlla /volume1/docker/bilancio_canicattini1
+```
+
+6. Facoltativo: attiva l'invio dei dettagli via email solo in caso di errore.
+7. Salva, seleziona l'attività e premi **Esegui** una volta.
+8. Su Telegram invia `/start`: deve comparire **È l'ultima versione** oppure **Nuova versione disponibile**, con l'orario del controllo.
+
+Se compare **L'ultimo controllo degli aggiornamenti non è riuscito**, apri l'attività in DSM, premi **Azione → Visualizza risultato** e segnala solo il messaggio che inizia con `ERRORE`.
+
+### 8.3 Su Telegram: installare quando vuoi
+
+1. Quando ricevi **È disponibile una nuova versione del bot**, controlla che nessuno stia registrando una spesa.
+2. Invia `/aggiorna` e premi **Sì, installa**.
+3. Entro il controllo successivo, di solito entro 10 minuti, il bot si riavvia per circa un minuto.
+4. Ricevi **Aggiornamento installato** oppure un messaggio che spiega cosa non ha funzionato e se è stata ripristinata la versione precedente.
+5. Invia `/start` e controlla la riga **Versione attiva**.
+
+### 8.4 Facoltativo: installazione programmata
+
+Attivala solo se accetti che il bot si riavvii da solo all'orario scelto quando trova una versione nuova.
+
+1. In **Utilità di pianificazione** crea un'altra attività come al punto 8.2, con nome `Bilancio - installazione programmata` e utente **root**.
+2. Pianificala una volta al giorno, in un orario in cui nessuno usa il bot, per esempio alle 05:00. Evita la notte tra le 03:30 e le 04:30, quando il bot rilegge le opzioni del portale.
+3. Usa lo stesso comando del punto 8.2, sostituendo `controlla` con `installa`:
+
+```sh
+sh /volume1/docker/bilancio-canicattini1-git/automatico.sh installa /volume1/docker/bilancio_canicattini1
+```
+
+4. Salva. Il mattino dopo una pubblicazione riceverai l'esito su Telegram.
+
+Le due attività non si sovrappongono: se una è in corso, l'altra salta il proprio turno. Per disattivare l'automatismo togli la spunta **Abilitato** dalle attività; l'aggiornamento manuale della sezione 6 continua a funzionare.

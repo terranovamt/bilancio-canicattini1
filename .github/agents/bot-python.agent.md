@@ -1,10 +1,19 @@
 ---
 name: "Sviluppo bot e archivio"
-description: "Use when implementing or testing the Python Telegram bot, receipt intake, local vision processing, SQLite persistence, file archiving, Docker configuration, or retry queue."
+description: "Use when implementing or testing Python Telegram conversations, access control, receipt intake, SQLite persistence, file archiving, retry queues, application integration, general Docker runtime, or Synology deployment."
 tools: [read, edit, search, execute]
-user-invocable: true
+model: "Auto (copilot)"
+agents: []
+user-invocable: false
+disable-model-invocation: false
 ---
-Sei responsabile delle modifiche al bot Telegram, all'analisi delle ricevute, all'archivio e al database.
+Sei responsabile delle modifiche al bot Telegram, all'archivio, al database e all'integrazione applicativa. Ricevi un incarico circoscritto dal Manager e non delegare ad altri agenti.
+
+## Confini
+
+- Gestisci `bot/`, `storage/`, `db/`, runtime e deploy generali con i relativi test.
+- Integra il risultato dell'analisi ricevute nel flusso del bot, ma lascia `vision/`, prompt, modelli e impostazioni specifiche Ollama allo specialista AI locale.
+- Mantieni l'accesso al portale dietro `BilancioClient`; segnala al Manager le modifiche necessarie al client o ai selettori per lo specialista AGESCI.
 
 ## Vincoli
 
@@ -12,6 +21,7 @@ Sei responsabile delle modifiche al bot Telegram, all'analisi delle ricevute, al
 - Privilegia l'elaborazione locale delle immagini. Non inviare ricevute o dati a servizi esterni senza una decisione esplicita dell'utente.
 - Non leggere, stampare, copiare o includere nei risultati il contenuto di `.env` o altri segreti.
 - Non eseguire test che contattino Telegram, servizi AI o il portale con credenziali reali.
+- Non avviare il bot, script di deploy o comandi manuali che possono contattare servizi reali senza autorizzazione. `DRY_RUN=true` non basta a rendere sicuro ogni percorso: `/testspesa` salva realmente dopo la conferma finale.
 - Mantieni i messaggi destinati agli utenti in italiano e il codice e i log in inglese.
 
 ## Metodo

@@ -16,7 +16,7 @@ USER_START = (
     "• /help – tutti i comandi"
 )
 ADMIN_START = (
-    '👋 Ciao! Sei collegato come amministratore.\n\n📷 Mandami uno scontrino per registrare una spesa.\n✍️ /testspesa – inserisci una spesa a mano\n📊 /riepilogo – saldi delle casse\n\n{mode}\n\nAltri strumenti: /help'
+    '👋 Ciao! Sei collegato come amministratore.\n\n📷 Mandami uno scontrino per registrare una spesa.\n✍️ /testspesa – inserisci una spesa a mano\n📊 /riepilogo – saldi delle casse\n\n{mode}\n\n{version}\n\nAltri strumenti: /help'
 )
 MODE_TRIAL = "🧪 Modalità PROVA: non viene salvato nulla nel portale."
 MODE_REAL = "⚠️ Modalità REALE: le spese confermate vengono salvate nel portale."
@@ -31,7 +31,7 @@ USER_HELP = (
     "/annulla – interrompo quello che stiamo facendo"
 )
 ADMIN_HELP = (
-    '{user_help}\n\n🔧 Solo amministratore\n/testspesa – inserisci una spesa a mano\n/testbilancio – verifico il collegamento al portale\n/aggiornaopzioni – aggiorno casse e tipologie\n/pulisci – svuoto coda, ultime spese e registri'
+    '{user_help}\n\n🔧 Solo amministratore\n/testspesa – inserisci una spesa a mano\n/testbilancio – verifico il collegamento al portale\n    /aggiornaopzioni – aggiorno casse e tipologie\n/aggiorna – installo l\'ultima versione del bot\n/pulisci – svuoto coda, ultime spese e registri'
 )
 COMMAND_START = "Apri il menu del bot"
 COMMAND_HELP = "Guida e comandi"
@@ -44,6 +44,57 @@ COMMAND_MANUAL = "Inserisci davvero una spesa a mano"
 COMMAND_HEALTH = "Verifica il collegamento al portale"
 COMMAND_REFRESH = "Aggiorna casse e tipologie"
 COMMAND_CLEAN = "Svuota spese e registri del bot"
+COMMAND_UPDATE = "Installa l'ultima versione del bot"
+
+VERSION_WITH_DATE = "{short} del {date}"
+VERSION_RUNNING = "🔖 Versione attiva: {version}"
+VERSION_UNKNOWN = "🔖 Versione attiva: non indicata (installata senza Git)."
+VERSION_UNKNOWN_SHORT = "versione non indicata"
+VERSION_NOT_CHECKED = "ℹ️ Il controllo automatico degli aggiornamenti non è ancora attivo."
+VERSION_CHECK_FAILED = "⚠️ L'ultimo controllo degli aggiornamenti non è riuscito ({checked})."
+VERSION_NEW = "🆕 Nuova versione disponibile: {summary}\nPer installarla: /aggiorna"
+VERSION_LATEST = "✅ È l'ultima versione (controllo del {checked})."
+VERSION_PUBLISHED = "ℹ️ Ultima versione pubblicata: {summary} (controllo del {checked})."
+VERSION_LAST_FAILED = "⚠️ Ultimo aggiornamento non riuscito ({summary}): {reason}"
+VERSION_REQUEST_PENDING = "⏳ Installazione richiesta: parte al prossimo controllo."
+UPDATE_REASONS = {
+    "build": "la costruzione è fallita, è rimasta attiva la versione precedente.",
+    "start": "la nuova versione non è partita, ho ripristinato quella precedente.",
+    "rollback": "la nuova versione non è partita e il ripristino non è riuscito: serve un controllo sul NAS.",
+    "live_mode": "il bot è in modalità REALE, aggiornamento bloccato.",
+    "config": "la configurazione non è valida, non ho cambiato nulla.",
+    "download": "non riesco a scaricare la nuova versione.",
+    "dirty": "la copia Git sul NAS contiene modifiche locali.",
+    "up_to_date": "è già installata l'ultima versione.",
+    "package": "il pacchetto da installare è incompleto.",
+}
+UPDATE_REASON_UNKNOWN = "errore imprevisto: serve un controllo sul NAS."
+UPDATE_DONE = "✅ Aggiornamento installato: {summary}"
+UPDATE_ROLLED_BACK = "⚠️ Aggiornamento non riuscito ({summary}): {reason}"
+UPDATE_FAILED = "❌ Aggiornamento non riuscito ({summary}): {reason}"
+UPDATE_SKIPPED = "ℹ️ Nessun aggiornamento: {reason}"
+UPDATE_AVAILABLE = "🆕 È disponibile una nuova versione del bot: {summary}\nPer installarla: /aggiorna"
+UPDATE_PROMPT = (
+    "🔄 Vuoi installare l'ultima versione?\n\n{status}\n\n"
+    "Il bot si riavvia per circa un minuto: controlla che nessuno stia registrando una spesa."
+)
+UPDATE_YES = "Sì, installa"
+UPDATE_NO = "No, lascia stare"
+UPDATE_REQUESTED = (
+    "⏳ Richiesta registrata. Il NAS la esegue al prossimo controllo, "
+    "di solito entro 10 minuti, e ti scrivo l'esito."
+)
+UPDATE_ALREADY_REQUESTED = "⏳ C'è già una richiesta in attesa: il NAS la esegue al prossimo controllo."
+UPDATE_CANCELLED = "Ok, nessun aggiornamento."
+UPDATE_LIVE_MODE = (
+    "⚠️ Il bot è in modalità REALE: l'aggiornamento automatico è bloccato. "
+    "Riporta prima DRY_RUN=true."
+)
+UPDATE_NOT_CONFIGURED = (
+    "ℹ️ Il controllo automatico non è attivo sul NAS: la richiesta non verrebbe eseguita. "
+    "Aggiorna con il comando manuale."
+)
+UPDATE_REQUEST_FAILED = "❌ Non riesco a registrare la richiesta. Riprova più tardi."
 USER_KEYBOARD = (("/ultime", "/riepilogo"), ("/coda", "/help"), ("/annulla",))
 ADMIN_KEYBOARD = (("/testspesa", "/testbilancio"), *USER_KEYBOARD)
 

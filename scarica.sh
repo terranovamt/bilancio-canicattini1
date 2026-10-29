@@ -6,6 +6,30 @@ fail() {
     exit 1
 }
 
+# Shared with automatico.sh: a lock whose PID is gone was left by a crash.
+acquire_lock() {
+    if mkdir "$1" 2>/dev/null; then
+        printf '%s\n' "$$" > "$1/pid"
+        return 0
+    fi
+    old_pid=$(cat "$1/pid" 2>/dev/null || true)
+    case "$old_pid" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    if kill -0 "$old_pid" 2>/dev/null || [ -d "/proc/$old_pid" ]; then
+        return 1
+    fi
+    printf 'Rimuovo il blocco lasciato da un aggiornamento interrotto (processo %s non attivo).\n' "$old_pid"
+    rm -f "$1/pid" && rmdir "$1" 2>/dev/null || return 1
+    mkdir "$1" 2>/dev/null || return 1
+    printf '%s\n' "$$" > "$1/pid"
+}
+
+release_lock() {
+    rm -f "$1/pid"
+    rmdir "$1" 2>/dev/null || true
+}
+
 # Read the whole function before Git can update this script on disk.
 main() {
     [ "$#" -eq 1 ] || fail "Uso: sh scarica.sh PERCORSO_PROGETTO_INSTALLATO"
@@ -23,8 +47,8 @@ main() {
     cd "$source_dir"
     git_dir=$(git rev-parse --absolute-git-dir) || fail "Questa cartella non e una copia Git."
     lock_dir="$git_dir/nas-deploy.lock"
-    mkdir "$lock_dir" 2>/dev/null || fail "Un aggiornamento e gia in corso. Non avviarne un altro."
-    trap 'rmdir "$lock_dir"' EXIT
+    acquire_lock "$lock_dir" || fail "Un aggiornamento e gia in corso. Non avviarne un altro."
+    trap 'release_lock "$lock_dir"' EXIT
     trap 'exit 1' HUP INT TERM
     [ "$(git symbolic-ref --short HEAD)" = "deploy" ] \
         || fail "La copia NAS deve essere sul ramo deploy."
