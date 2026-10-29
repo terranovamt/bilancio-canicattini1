@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
-from datetime import time as day_time, timezone
+from datetime import date, time as day_time, timezone
 from pathlib import Path
 
 from telegram import (
@@ -30,6 +30,12 @@ from telegram.ext import (
 from bot.access import is_authorized_user
 from bot.receipt_workflow import ReceiptAnalyzer, ReceiptWorkflow
 from bot.retry_service import ExpenseRetryService
+from bot.summary import (
+    format_ledger_summary,
+    reference_date_for,
+    scout_year_name,
+    scout_year_start,
+)
 from bilancio.client import (
     BilancioClient,
     BilancioClientError,
@@ -48,6 +54,7 @@ USER_HELP_TEXT = (
     "/start - inizia a usare il bot\n"
     "/help - mostra questo aiuto\n"
     "/ultime - mostra le ultime 10 spese\n"
+    "/riepilogo - saldi delle casse e andamento dal portale\n"
     "/annulla - annulla l’operazione in corso\n"
     "/coda - mostra le spese in attesa o da verificare\n"
     "/riprova - ritenta le spese in coda"
@@ -65,6 +72,7 @@ USER_COMMANDS = (
     BotCommand("start", "Apri il menu del bot"),
     BotCommand("help", "Guida e comandi"),
     BotCommand("ultime", "Le tue ultime spese"),
+    BotCommand("riepilogo", "Saldi delle casse e andamento"),
     BotCommand("annulla", "Annulla l’operazione in corso"),
     BotCommand("coda", "Operazioni in attesa"),
     BotCommand("riprova", "Ritenta le operazioni in coda"),
@@ -142,6 +150,10 @@ def create_application(
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("annulla", cancel_command))
     application.add_handler(CommandHandler("ultime", latest_expenses_command))
+    application.add_handler(CommandHandler("riepilogo", summary_command))
+    application.add_handler(
+        CallbackQueryHandler(summary_callback, pattern=r"^summary:")
+    )
     application.add_handler(CommandHandler("coda", queue_command))
     application.add_handler(CommandHandler("riprova", retry_command))
     application.add_handler(CommandHandler("testspesa", manual_expense_command))
@@ -186,7 +198,7 @@ async def start_command(
     if update.message is None:
         return
     settings: Settings = context.application.bot_data["settings"]
-    rows = [["/ultime", "/coda"], ["/help", "/annulla"]]
+    rows = [["/ultime", "/riepilogo"], ["/coda", "/help"], ["/annulla"]]
     if _is_admin(update, settings):
         rows.insert(0, ["/testspesa", "/testbilancio"])
         rows.append(["/aggiornaopzioni", "/pulisci"])
@@ -201,6 +213,7 @@ async def start_command(
             "🧾 Archivio spese · amministratore\n\n"
             "📷 Inviami la foto o il PDF di uno scontrino.\n"
             "✍️ /testspesa inserisce DAVVERO una spesa a mano, dopo un’ultima conferma.\n"
+            "📊 /riepilogo mostra i saldi delle casse e l’andamento.\n"
             "🔄 /aggiornaopzioni rilegge casse e tipologie dal portale.\n"
             "🧹 /pulisci svuota coda, ultime spese e log.\n\n"
             f"{mode}"
@@ -209,7 +222,8 @@ async def start_command(
         text = (
             "🧾 Benvenuto nel tuo archivio spese!\n\n"
             "📷 Inviami la foto o il PDF di uno scontrino.\n"
-            "Prima di procedere ti mostrerò i dati da controllare.\n\n"
+            "Prima di procedere ti mostrerò i dati da controllare.\n"
+            "📊 /riepilogo mostra i saldi delle casse e l’andamento.\n\n"
             "Scegli un comando qui sotto oppure scrivi / per aprire i suggerimenti."
         )
     await update.message.reply_text(
@@ -385,6 +399,149 @@ async def refresh_options_command(
         "Ti scrivo appena ho finito. Nessuna spesa viene inserita."
     )
 
+
+_SUMMARY_RUNNING_KEY = "ledger_summary_running"
+_SUMMARY_FAILED_TEXT = (
+    "❌ Non riesco a leggere i saldi dal portale. Riprova più tardi."
+)
+
+
+def _summary_progress_text(start_year: int) -> str:
+    return (
+        f"⏳ Leggo saldi e operazioni dell’anno {scout_year_name(start_year)} "
+        "dal portale…\nCi vuole circa un minuto. Non modifico nulla."
+    )
+
+
+def _summary_keyboard(start_year: int, today: date) -> InlineKeyboardMarkup:
+    buttons = [
+        InlineKeyboardButton(
+            f"⬅️ Anno {scout_year_name(start_year - 1)}",
+            callback_data=f"summary:{start_year - 1}",
+        )
+    ]
+    if start_year < scout_year_start(today):
+        buttons.append(
+            InlineKeyboardButton(
+                f"Anno {scout_year_name(start_year + 1)} ➡️",
+                callback_data=f"summary:{start_year + 1}",
+            )
+        )
+    return InlineKeyboardMarkup(
+        [
+            buttons,
+            [InlineKeyboardButton("🔄 Aggiorna", callback_data=f"summary:{start_year}")],
+        ]
+    )
+
+
+def _schedule_summary(
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    chat_id: int,
+    message_id: int,
+    start_year: int,
+) -> None:
+    context.application.bot_data[_SUMMARY_RUNNING_KEY] = True
+    context.application.job_queue.run_once(
+        ledger_summary_job,
+        when=0,
+        name="ledger-summary",
+        data={"chat_id": chat_id, "message_id": message_id, "start_year": start_year},
+    )
+
+
+async def summary_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None:
+        return
+    if context.application.bot_data.get("bilancio_client") is None:
+        await update.message.reply_text("Il collegamento al portale non è configurato.")
+        return
+    if context.application.bot_data.get(_SUMMARY_RUNNING_KEY):
+        await update.message.reply_text("⏳ Sto già preparando un riepilogo, attendi.")
+        return
+    start_year = scout_year_start(date.today())
+    progress = await update.message.reply_text(_summary_progress_text(start_year))
+    _schedule_summary(
+        context,
+        chat_id=progress.chat_id,
+        message_id=progress.message_id,
+        start_year=start_year,
+    )
+
+
+async def summary_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    query = update.callback_query
+    if query is None or query.message is None:
+        return
+    current_start = scout_year_start(date.today())
+    try:
+        start_year = int(str(query.data).split(":", 1)[1])
+    except (IndexError, ValueError):
+        await query.answer()
+        return
+    if not current_start - 20 <= start_year <= current_start:
+        await query.answer()
+        return
+    if context.application.bot_data.get("bilancio_client") is None:
+        await query.answer("Il collegamento al portale non è configurato.")
+        return
+    if context.application.bot_data.get(_SUMMARY_RUNNING_KEY):
+        await query.answer("⏳ Sto già preparando un riepilogo, attendi.")
+        return
+    await query.answer()
+    await query.edit_message_text(_summary_progress_text(start_year))
+    _schedule_summary(
+        context,
+        chat_id=query.message.chat_id,
+        message_id=query.message.message_id,
+        start_year=start_year,
+    )
+
+
+async def ledger_summary_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    data = context.job.data
+    chat_id: int = data["chat_id"]
+    message_id: int = data["message_id"]
+    start_year: int = data["start_year"]
+    today = date.today()
+    keyboard = _summary_keyboard(start_year, today)
+    try:
+        client: BilancioClient = context.application.bot_data["bilancio_client"]
+        try:
+            ledgers = await client.read_ledgers(
+                transaction_date=reference_date_for(start_year, today)
+            )
+        except BilancioClientError as error:
+            logger.warning("Ledger summary failed: %s", type(error).__name__)
+            messages = [_SUMMARY_FAILED_TEXT]
+        else:
+            messages = format_ledger_summary(ledgers, start_year)
+        for index, text in enumerate(messages):
+            markup = keyboard if index == len(messages) - 1 else None
+            if index == 0:
+                await context.bot.edit_message_text(
+                    text,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    reply_markup=markup,
+                )
+            else:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=markup,
+                )
+    except TelegramError:
+        logger.error("Could not send ledger summary")
+    finally:
+        context.application.bot_data[_SUMMARY_RUNNING_KEY] = False
 
 async def test_bilancio_command(
     update: Update,

@@ -410,7 +410,7 @@ Un container acceso non basta: la risposta Telegram conferma anche che il bot ri
 7. Scegli la tipologia: compaiono prima le più usate; premi **➕ Altre tipologie** se quella giusta non c'è. Unità e categoria vengono impostate dal bot.
 8. Leggi il riepilogo completo e verifica data, anno scout, descrizione, importo, cassa e tipologia.
 9. Premi **✅ CONFERMA INSERIMENTO REALE** solo se tutto è corretto; altrimenti premi **Annulla**.
-10. Attendi il messaggio «Spesa manuale registrata e verificata nel portale».
+10. Attendi l'esito: il messaggio «⏳ Registro l'operazione nel portale…» viene sostituito da «✅ Operazione registrata e verificata», con il riepilogo di tutti i dati inseriti (data, descrizione, importo, cassa, operazione, tipologia, unità e categoria).
 
 Se compare «❌ Non sono riuscito a registrare e verificare la spesa manuale», il bot non riprova da solo: apri il portale e controlla se la spesa c'è. Ripeti `/testspesa` solo se non compare, per evitare doppioni.
 

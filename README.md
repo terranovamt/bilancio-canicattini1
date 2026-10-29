@@ -91,6 +91,21 @@ Per la prima prova usa una descrizione chiaramente riconoscibile e controlla con
 2. Leggi l'avviso e premi **Sì, pulisci tutto**; premi **No** per lasciare tutto com'è.
 3. Il bot risponde con il numero di spese e di file eliminati.
 
+### Riepilogo delle casse
+
+`/riepilogo` legge dal portale AGESCI, in sola lettura, i saldi di tutte le casse dell'anno scout corrente. Lo possono usare tutti gli utenti autorizzati e non modifica nulla.
+
+1. Su Telegram invia `/riepilogo`.
+2. Attendi circa un minuto: compare «⏳ Leggo saldi e operazioni…».
+3. Il messaggio si trasforma nel riepilogo. Per ogni cassa vedi:
+   - il saldo attuale, cioè quanto dovresti avere in contanti o sul conto;
+   - il saldo iniziale al 1° ottobre, le entrate e le uscite;
+   - l'andamento mese per mese, con il saldo a fine mese;
+   - le ultime 3 operazioni.
+4. Premi **⬅️ Anno …** per vedere l'anno scout precedente, **Anno … ➡️** per tornare avanti, oppure **🔄 Aggiorna** per rileggere il portale.
+
+Se compare «❌ Non riesco a leggere i saldi dal portale», riprova più tardi. Se compare «⚠️ Il portale mostra … righe su …», il saldo è comunque quello del portale, ma andamento e ultime operazioni sono parziali.
+
 Dopo la pulizia la classifica delle tipologie più usate riparte da zero.
 
 ## Verifiche automatiche sul PC

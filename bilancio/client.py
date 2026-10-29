@@ -88,6 +88,38 @@ class PortalSubmissionResult:
     verified: bool
     confirmation_id: str | None = None
     dry_run: bool = False
+    unit_left_empty: bool = False
+
+
+OPENING_BALANCE_DESCRIPTION = "Saldo Iniziale Calcolato"
+
+
+@dataclass(frozen=True, slots=True)
+class LedgerEntry:
+    transaction_date: date
+    description: str
+    income: Decimal
+    expense: Decimal
+    transaction_type: str = ""
+    unit: str = ""
+
+    @property
+    def is_opening_balance(self) -> bool:
+        return self.description == OPENING_BALANCE_DESCRIPTION
+
+
+@dataclass(frozen=True, slots=True)
+class AccountLedger:
+    """Read-only snapshot of one account ledger for a scout year."""
+
+    account: PortalOption
+    opening_balance: Decimal
+    total_income: Decimal
+    total_expense: Decimal
+    balance: Decimal
+    entries: tuple[LedgerEntry, ...]
+    total_rows: int
+    complete: bool
 
 
 class BilancioClient(Protocol):
@@ -136,6 +168,13 @@ class BilancioClient(Protocol):
         accounting_voice: str = "Voci Scout",
     ) -> Sequence[PortalOption]:
         """Return categories available for the current form selections."""
+
+    async def read_ledgers(
+        self,
+        *,
+        transaction_date: date,
+    ) -> Sequence[AccountLedger]:
+        """Read balances and operations of every account without changing data."""
 
     async def create_expense(
         self,

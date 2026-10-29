@@ -313,7 +313,40 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(make_settings().dry_run)
         self.assertFalse(portal.submitted[0][1])
         self.assertTrue(portal.submitted[0][0].accounting_voice == "Voci Scout")
-        self.assertIn("registrata e verificata", final_message.reply_text.await_args.args[0])
+        result_text = save_query.edit_message_text.await_args.args[0]
+        final_message.reply_text.assert_not_awaited()
+        self.assertTrue(result_text.startswith("✅ Operazione registrata e verificata"))
+        for expected in (
+            "Prova Telegram",
+            "0,10 EUR",
+            "Cassa: Cassa Co.ca",
+            "Operazione: Uscita",
+            "Voci: Voci Scout",
+            "Tipologia: Tipo uscita",
+            "Unità: Gruppo G1",
+            "Categoria: nessuna",
+        ):
+            self.assertIn(expected, result_text)
+
+    async def test_result_reports_unit_left_empty_by_portal(self) -> None:
+        portal = FakeBilancioClient()
+        portal.create_expense = AsyncMock(
+            return_value=PortalSubmissionResult(verified=True, unit_left_empty=True)
+        )
+        workflow = self._manual_portal_workflow(portal)
+        user = SimpleNamespace(id=12345)
+        await self._start_manual(workflow, user)
+        for data in (
+            "receipt:confirm",
+            "receipt:choose:0",
+            "receipt:direction:entrata",
+            "receipt:choose:0",
+        ):
+            await self._tap(workflow, user, data)
+        query = await self._tap(workflow, user, "receipt:manual_save")
+        result_text = query.edit_message_text.await_args.args[0]
+        self.assertIn("Operazione: Entrata", result_text)
+        self.assertIn("Unità: nessuna (il portale non ne offre per questo anno)", result_text)
 
     async def test_failed_manual_entry_is_not_retried_automatically(self) -> None:
         portal = FakeBilancioClient()
@@ -346,7 +379,10 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             [],
         )
         self.assertIsNone(self.database.get_conversation_state(user.id))
-        self.assertIn("Non la riproverò", message.reply_text.await_args.args[0])
+        result_text = query.edit_message_text.await_args.args[0]
+        message.reply_text.assert_not_awaited()
+        self.assertIn("Non la riproverò", result_text)
+        self.assertIn("Prova Telegram", result_text)
 
     async def test_receipts_still_follow_dry_run_setting(self) -> None:
         portal = FakeBilancioClient()

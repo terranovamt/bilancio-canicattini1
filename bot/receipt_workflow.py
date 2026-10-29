@@ -62,6 +62,10 @@ _CALLBACK_STATES = {
 }
 _STALE_CHOICE_TEXT = "Questa scelta non è più attiva."
 _BUSY_TEXT = "⏳ Sto ancora lavorando, attendi."
+
+
+def _safe_text(value: str) -> str:
+    return " ".join(value.split())[:200]
 _MANUAL_DEFAULT_DESCRIPTION = "Prova Telegram"
 _MANUAL_DEFAULT_AMOUNT = "0.10"
 _TOP_TYPES_COUNT = 6
@@ -955,8 +959,20 @@ class ReceiptWorkflow:
         message = getattr(update, "effective_message", None) or update.message
         if message is None:
             return
+        query = getattr(update, "callback_query", None)
+
+        async def send(text: str) -> None:
+            # Replace the "⏳" progress message so the outcome takes its place.
+            if query is not None:
+                try:
+                    await query.edit_message_text(text)
+                    return
+                except TelegramError:
+                    logger.warning("Could not replace Telegram progress message")
+            await message.reply_text(text)
+
         if self._bilancio is None:
-            await message.reply_text(
+            await send(
                 "Il collegamento al portale non è ancora configurato. Non è stato "
                 "registrato nulla; lo scontrino resta in attesa."
             )
@@ -1053,7 +1069,7 @@ class ReceiptWorkflow:
                     "failed",
                 )
                 await self._clear_state(user_id)
-                await message.reply_text(
+                await send(
                     "Il portale non ha confermato la modalità di prova. Per sicurezza "
                     "non ripeterò l’operazione: avvisa l’amministratore e controlla "
                     "il portale prima di riprovare."
@@ -1069,9 +1085,10 @@ class ReceiptWorkflow:
                     "failed",
                 )
                 await self._clear_state(user_id)
-                await message.reply_text(
+                await send(
                     "❌ Non sono riuscito a registrare e verificare la spesa manuale. "
-                    "Non la riproverò in automatico.\n"
+                    "Non la riproverò in automatico.\n\n"
+                    f"{self._operation_details(payload, state_data)}\n\n"
                     "Controlla nel portale se compare: se non c’è, ripeti /testspesa."
                     f"\nDiagnostica: {debug_path}"
                 )
@@ -1117,13 +1134,13 @@ class ReceiptWorkflow:
                         self._pending_store.delete,
                         pending_path,
                     )
-                await message.reply_text(
+                await send(
                     "Non ho potuto verificare la registrazione. La ricevuta è "
                     "conservata sul NAS e l’operazione è in coda per un nuovo tentativo."
                 )
             else:
                 await self._clear_state(user_id)
-                await message.reply_text(
+                await send(
                     "Non ho potuto completare l’operazione. Lo scontrino resta "
                     "conservato; avvisa l’amministratore."
                 )
@@ -1140,26 +1157,29 @@ class ReceiptWorkflow:
         if isinstance(pending_path, str):
             await asyncio.to_thread(self._pending_store.delete, pending_path)
         await self._clear_state(user_id)
+        details = self._operation_details(
+            payload,
+            state_data,
+            unit_left_empty=result.unit_left_empty,
+        )
+        already_present = result.confirmation_id == "existing-entry"
         if result.dry_run:
-            if payload.get("manual_entry") is True:
-                await message.reply_text(
-                    "Prova manuale completata: il portale non ha salvato la spesa."
-                )
-            else:
-                await message.reply_text(
-                    "Prova completata: il portale non ha salvato la spesa. "
-                    "La ricevuta è stata archiviata sul NAS."
-                )
+            title = "🧪 Prova completata: il portale NON ha salvato l’operazione."
+        elif already_present:
+            title = (
+                "ℹ️ Operazione già presente nel portale: non l’ho inserita "
+                "una seconda volta."
+            )
         elif payload.get("manual_entry") is True:
-            await message.reply_text(
-                "Spesa manuale registrata e verificata nel portale. "
-                "Non è stato archiviato uno scontrino."
-            )
+            title = "✅ Operazione registrata e verificata nel portale."
         else:
-            await message.reply_text(
-                "Spesa registrata e verificata nel portale. "
-                "La ricevuta è stata archiviata sul NAS."
-            )
+            title = "✅ Spesa registrata e verificata nel portale."
+        footer = (
+            "Inserimento manuale: nessuno scontrino archiviato."
+            if payload.get("manual_entry") is True
+            else "La ricevuta è stata archiviata sul NAS."
+        )
+        await send(f"{title}\n\n{details}\n\n{footer}")
 
     async def _ask_for_notes(
         self,
@@ -1352,42 +1372,54 @@ class ReceiptWorkflow:
         payload: dict[str, object],
         state_data: dict[str, object],
     ) -> str:
-        account = self._option_from(state_data, "account").label
-        transaction_type = self._option_from(
-            state_data,
-            "transaction_type",
-        ).label
-        unit_data = state_data.get("unit")
-        unit = (
-            PortalOption(**unit_data).label
-            if isinstance(unit_data, dict)
-            else "nessuna"
+        return (
+            "Ultimo controllo prima di procedere:\n"
+            f"{self._operation_details(payload, state_data)}\n\n"
+            "ATTENZIONE: premendo il pulsante inserirai DAVVERO la spesa nel portale."
         )
-        category_data = state_data.get("category")
-        category = (
-            PortalOption(**category_data).label
-            if isinstance(category_data, dict)
-            else "nessuna"
-        )
+
+    @staticmethod
+    def _operation_details(
+        payload: dict[str, object],
+        state_data: dict[str, object],
+        *,
+        unit_left_empty: bool = False,
+    ) -> str:
+        def label(key: str) -> str:
+            data = state_data.get(key)
+            if isinstance(data, dict) and isinstance(data.get("label"), str):
+                return _safe_text(data["label"])
+            return "nessuna"
+
+        transaction_date = payload.get("date")
+        if isinstance(transaction_date, str):
+            try:
+                transaction_date = date.fromisoformat(transaction_date).strftime("%d/%m/%Y")
+            except ValueError:
+                pass
+        amount = str(payload.get("total_amount", "?")).replace(".", ",")
         direction = (
             "Entrata"
             if state_data.get("direction") == TransactionDirection.INCOME.value
             else "Uscita"
         )
-        action = "ATTENZIONE: premendo il pulsante inserirai DAVVERO la spesa nel portale."
+        unit = (
+            "nessuna (il portale non ne offre per questo anno)"
+            if unit_left_empty
+            else label("unit")
+        )
+        notes = state_data.get("portal_notes")
         return (
-            "Ultimo controllo prima di procedere:\n"
-            f"Data: {payload['date']}\n"
-            f"Descrizione: {payload['merchant']}\n"
-            f"Importo: {payload['total_amount']} EUR\n"
-            f"Cassa: {account}\n"
-            f"Operazione: {direction}\n"
-            f"Voci: {state_data.get('accounting_voice', 'Voci Scout')}\n"
-            f"Tipologia: {transaction_type}\n"
-            f"Unità: {unit}\n"
-            f"Categoria: {category}\n"
-            f"Note: {state_data.get('portal_notes') or 'nessuna'}\n\n"
-            f"{action}"
+            f"📅 Data: {transaction_date}\n"
+            f"📝 Descrizione: {_safe_text(str(payload.get('merchant', '')))}\n"
+            f"💶 Importo: {amount} EUR\n"
+            f"🏦 Cassa: {label('account')}\n"
+            f"↕️ Operazione: {direction}\n"
+            f"📂 Voci: {state_data.get('accounting_voice', 'Voci Scout')}\n"
+            f"🏷️ Tipologia: {label('transaction_type')}\n"
+            f"👥 Unità: {unit}\n"
+            f"🗂️ Categoria: {label('category')}\n"
+            f"🗒️ Note: {_safe_text(notes) if isinstance(notes, str) and notes else 'nessuna'}"
         )
 
     @staticmethod

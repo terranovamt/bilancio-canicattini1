@@ -20,14 +20,25 @@ from bot.application import (
     configure_bot_menu,
     help_command,
     latest_expenses_command,
+    ledger_summary_job,
     preload_options_job,
     preload_portal_options,
     queue_command,
     refresh_options_command,
     start_command,
+    summary_callback,
+    summary_command,
     test_bilancio_command,
 )
-from bilancio.client import BilancioClientError, PortalOption, TransactionDirection
+from bot.summary import scout_year_name as scout_year_name_for, scout_year_start
+from datetime import date
+from decimal import Decimal
+from bilancio.client import (
+    AccountLedger,
+    BilancioClientError,
+    PortalOption,
+    TransactionDirection,
+)
 from config import Settings
 from db.database import Database, StoredExpense
 
@@ -142,6 +153,127 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
 
     def test_preload_summary_reports_unreadable_accounts(self) -> None:
         self.assertIn("non riuscito", _format_preload_summary(None))
+
+    async def test_summary_command_reads_portal_in_background(self) -> None:
+        progress = SimpleNamespace(chat_id=777, message_id=55)
+        message = SimpleNamespace(reply_text=AsyncMock(return_value=progress))
+        context = self.make_context(settings=make_settings(), bilancio_client=Mock())
+        context.application.job_queue = Mock()
+
+        await summary_command(
+            SimpleNamespace(message=message, effective_user=SimpleNamespace(id=67890)),
+            context,
+        )
+
+        self.assertIn("Non modifico nulla", message.reply_text.await_args.args[0])
+        run_once = context.application.job_queue.run_once
+        self.assertIs(run_once.call_args.args[0], ledger_summary_job)
+        self.assertEqual(
+            run_once.call_args.kwargs["data"],
+            {"chat_id": 777, "message_id": 55, "start_year": scout_year_start(date.today())},
+        )
+        self.assertTrue(context.application.bot_data["ledger_summary_running"])
+
+    async def test_summary_command_refuses_concurrent_reads(self) -> None:
+        message = SimpleNamespace(reply_text=AsyncMock())
+        context = self.make_context(
+            settings=make_settings(), bilancio_client=Mock(), ledger_summary_running=True
+        )
+        context.application.job_queue = Mock()
+
+        await summary_command(SimpleNamespace(message=message), context)
+
+        self.assertIn("già preparando", message.reply_text.await_args.args[0])
+        context.application.job_queue.run_once.assert_not_called()
+
+    async def test_summary_job_edits_progress_with_balances_and_year_buttons(self) -> None:
+        start_year = scout_year_start(date.today())
+        ledger = AccountLedger(
+            account=PortalOption("Cassa RS", "Cassa RS"),
+            opening_balance=Decimal("97.75"),
+            total_income=Decimal("0"),
+            total_expense=Decimal("0"),
+            balance=Decimal("97.75"),
+            entries=(),
+            total_rows=1,
+            complete=True,
+        )
+        client = SimpleNamespace(
+            read_ledgers=AsyncMock(return_value=[ledger]), create_expense=AsyncMock()
+        )
+        context = self.make_context(bilancio_client=client, ledger_summary_running=True)
+        context.job = SimpleNamespace(
+            data={"chat_id": 777, "message_id": 55, "start_year": start_year}
+        )
+        context.bot = SimpleNamespace(edit_message_text=AsyncMock(), send_message=AsyncMock())
+
+        await ledger_summary_job(context)
+
+        client.create_expense.assert_not_awaited()
+        self.assertEqual(
+            client.read_ledgers.await_args.kwargs["transaction_date"], date.today()
+        )
+        edit = context.bot.edit_message_text.await_args
+        self.assertIn("Cassa RS\n💰 Saldo attuale: 97,75 €", edit.args[0])
+        self.assertEqual((edit.kwargs["chat_id"], edit.kwargs["message_id"]), (777, 55))
+        buttons = [b.callback_data for row in edit.kwargs["reply_markup"].inline_keyboard for b in row]
+        self.assertEqual(buttons, [f"summary:{start_year - 1}", f"summary:{start_year}"])
+        self.assertFalse(context.application.bot_data["ledger_summary_running"])
+
+    async def test_summary_job_reports_portal_errors_and_releases_lock(self) -> None:
+        client = SimpleNamespace(read_ledgers=AsyncMock(side_effect=BilancioClientError("x")))
+        context = self.make_context(bilancio_client=client, ledger_summary_running=True)
+        start_year = scout_year_start(date.today()) - 1
+        context.job = SimpleNamespace(
+            data={"chat_id": 777, "message_id": 55, "start_year": start_year}
+        )
+        context.bot = SimpleNamespace(edit_message_text=AsyncMock(), send_message=AsyncMock())
+
+        await ledger_summary_job(context)
+
+        self.assertEqual(
+            client.read_ledgers.await_args.kwargs["transaction_date"],
+            date(start_year + 1, 9, 30),
+        )
+        edit = context.bot.edit_message_text.await_args
+        self.assertIn("Non riesco a leggere i saldi", edit.args[0])
+        buttons = [b.callback_data for row in edit.kwargs["reply_markup"].inline_keyboard for b in row]
+        self.assertIn(f"summary:{start_year + 1}", buttons)
+        self.assertFalse(context.application.bot_data["ledger_summary_running"])
+
+    async def test_summary_callback_switches_to_previous_year(self) -> None:
+        start_year = scout_year_start(date.today()) - 1
+        query = SimpleNamespace(
+            data=f"summary:{start_year}",
+            message=SimpleNamespace(chat_id=777, message_id=55),
+            answer=AsyncMock(),
+            edit_message_text=AsyncMock(),
+        )
+        context = self.make_context(bilancio_client=Mock())
+        context.application.job_queue = Mock()
+
+        await summary_callback(SimpleNamespace(callback_query=query), context)
+
+        self.assertIn(scout_year_name_for(start_year), query.edit_message_text.await_args.args[0])
+        self.assertEqual(
+            context.application.job_queue.run_once.call_args.kwargs["data"]["start_year"],
+            start_year,
+        )
+
+    async def test_summary_callback_ignores_future_years(self) -> None:
+        query = SimpleNamespace(
+            data=f"summary:{scout_year_start(date.today()) + 1}",
+            message=SimpleNamespace(chat_id=777, message_id=55),
+            answer=AsyncMock(),
+            edit_message_text=AsyncMock(),
+        )
+        context = self.make_context(bilancio_client=Mock())
+        context.application.job_queue = Mock()
+
+        await summary_callback(SimpleNamespace(callback_query=query), context)
+
+        query.edit_message_text.assert_not_awaited()
+        context.application.job_queue.run_once.assert_not_called()
 
     async def test_preload_reads_every_account_direction_without_submission(self) -> None:
         accounts = [PortalOption("a", "Cassa Co.ca"), PortalOption("b", "Cassa EG")]

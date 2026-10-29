@@ -23,6 +23,7 @@ from bilancio.playwright_client import (
     _format_amount_input,
     _normalize_amount_input,
     _normalize_ledger_header,
+    _parse_ledger_amount,
     _parse_ledger_page_range,
     _unit_ledger_value_matches,
     _wait_for_authentication_marker,
@@ -31,6 +32,67 @@ from bilancio.playwright_client import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+LEDGER_HEADERS = [
+    "Data Operazione arrow_upward",
+    "Unità arrow_upward",
+    "Descrizione Operazione arrow_upward",
+    "arrow_upward Importo Entrata",
+    "Tipologia Entrataarrow_upward",
+    "arrow_upwardImporto Uscita",
+    "Tipologia Uscitaarrow_upward",
+    "Saldo",
+    "Categoriaarrow_upward",
+    "Azioni",
+]
+LEDGER_TOTALS = [
+    "arrow_upward",
+    "arrow_upward",
+    "arrow_upward",
+    "arrow_upward1.423,25 €",
+    "arrow_upward",
+    "arrow_upward70,99 €",
+    "arrow_upward",
+    "1.352,26 €",
+    "arrow_upward",
+    "",
+]
+
+
+class FakeLedgerCells:
+    def __init__(self, texts: list[str]) -> None:
+        self._texts = texts
+
+    async def all_text_contents(self) -> list[str]:
+        return list(self._texts)
+
+
+class FakeLedgerRow:
+    def __init__(self, role: str, texts: list[str]) -> None:
+        self._role = role
+        self._texts = texts
+
+    def get_by_role(self, role: str) -> FakeLedgerCells:
+        return FakeLedgerCells(self._texts if role == self._role else [])
+
+
+class FakeLedgerRows:
+    def __init__(self, data_rows: list[list[str]]) -> None:
+        self._rows = [
+            FakeLedgerRow("columnheader", LEDGER_TOTALS),
+            FakeLedgerRow("columnheader", LEDGER_HEADERS),
+            *(FakeLedgerRow("cell", cells) for cells in data_rows),
+        ]
+
+    def nth(self, index: int) -> FakeLedgerRow:
+        return self._rows[index]
+
+    async def count(self) -> int:
+        return len(self._rows)
+
+
+def ledger_row(day: str, unit: str, description: str, income: str, income_type: str, expense: str, expense_type: str) -> list[str]:
+    return [day, unit, description, income, income_type, expense, expense_type, "", "", ""]
 
 
 class FakeVisibilityLocator:
@@ -419,7 +481,88 @@ class PlaywrightBilancioClientTests(unittest.IsolatedAsyncioTestCase):
             )
             verified_expense = client._wait_for_matching_expense.await_args.args[1]
             self.assertIsNone(verified_expense.unit)
+            self.assertTrue(result.unit_left_empty)
             save.click.assert_awaited_once()
+
+    async def test_reads_ledger_totals_opening_balance_and_operations(self) -> None:
+        rows = FakeLedgerRows(
+            [
+                ledger_row("01/10/2026", "", "Saldo Iniziale Calcolato", "1.423,25 €", "", "0,00 €", ""),
+                ledger_row("03/10/2026", "", "Ricordi", "0,00 €", "", "17,79 €", "A.1 Materiale"),
+                ledger_row("06/10/2026", "O1 - CASSARINO - CIARCIA", "Distintivi", "0,00 €", "", "53,20 €", "A.1 Materiale"),
+            ]
+        )
+        account = PortalOption("Cassa EG", "Cassa EG")
+        with tempfile.TemporaryDirectory() as directory:
+            client = self.make_client(Path(directory))
+            client._locator = Mock(return_value=rows)
+            with patch(
+                "bilancio.playwright_client._wait_for_ledger_data",
+                AsyncMock(return_value=(1, 3, 3)),
+            ):
+                ledger = await client._read_account_ledger(Mock(), account)
+
+        self.assertEqual(ledger.account, account)
+        self.assertEqual(ledger.opening_balance, Decimal("1423.25"))
+        self.assertEqual(ledger.total_income, Decimal("0.00"))
+        self.assertEqual(ledger.total_expense, Decimal("70.99"))
+        self.assertEqual(ledger.balance, Decimal("1352.26"))
+        self.assertTrue(ledger.complete)
+        self.assertEqual(
+            [entry.is_opening_balance for entry in ledger.entries],
+            [True, False, False],
+        )
+        last = ledger.entries[-1]
+        self.assertEqual(last.transaction_date, date(2026, 10, 6))
+        self.assertEqual(last.expense, Decimal("53.20"))
+        self.assertEqual(last.transaction_type, "A.1 Materiale")
+        self.assertEqual(last.unit, "O1 - CASSARINO - CIARCIA")
+
+    async def test_ledger_with_more_pages_is_marked_partial(self) -> None:
+        rows = FakeLedgerRows(
+            [ledger_row("01/10/2026", "", "Saldo Iniziale Calcolato", "1.423,25 €", "", "0,00 €", "")]
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            client = self.make_client(Path(directory))
+            client._locator = Mock(return_value=rows)
+            with patch(
+                "bilancio.playwright_client._wait_for_ledger_data",
+                AsyncMock(return_value=(1, 10, 25)),
+            ):
+                ledger = await client._read_account_ledger(
+                    Mock(), PortalOption("Cassa EG", "Cassa EG")
+                )
+        self.assertFalse(ledger.complete)
+        self.assertEqual(ledger.total_rows, 25)
+
+    async def test_read_ledgers_opens_every_account_without_submitting(self) -> None:
+        accounts = [PortalOption("Cassa LC", "Cassa LC"), PortalOption("Cassa EG", "Cassa EG")]
+        page = Mock()
+        page.wait_for_url = AsyncMock()
+        with tempfile.TemporaryDirectory() as directory:
+            client = self.make_client(Path(directory))
+
+            async def with_page(operation, **kwargs):
+                self.assertEqual(kwargs["transaction_date"], date(2026, 5, 1))
+                return await operation(page)
+
+            client._with_page = AsyncMock(side_effect=with_page)
+            client._read_accounts = AsyncMock(return_value=accounts)
+            client._open_account_ledger = AsyncMock()
+            client._read_account_ledger = AsyncMock(side_effect=lambda _page, account: account.label)
+
+            result = await client.read_ledgers(transaction_date=date(2026, 5, 1))
+
+        self.assertEqual(result, ["Cassa LC", "Cassa EG"])
+        self.assertEqual(client._open_account_ledger.await_count, 2)
+        predicate = page.wait_for_url.await_args_list[1].args[0]
+        self.assertTrue(predicate("https://portal.example/prima-nota?id=1&c=Cassa%20EG&u=O1"))
+        self.assertFalse(predicate("https://portal.example/prima-nota?id=1&c=Cassa%20LC"))
+
+    def test_parses_ledger_amounts(self) -> None:
+        self.assertEqual(_parse_ledger_amount("arrow_upward1.423,25 €"), Decimal("1423.25"))
+        self.assertEqual(_parse_ledger_amount("-0,10 €"), Decimal("-0.10"))
+        self.assertEqual(_parse_ledger_amount(""), Decimal("0"))
 
     def make_client(self, root: Path) -> PlaywrightBilancioClient:
         return PlaywrightBilancioClient(

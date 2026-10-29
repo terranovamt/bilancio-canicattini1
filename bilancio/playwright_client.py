@@ -9,8 +9,9 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import date, datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import yaml
 from playwright.async_api import (
@@ -25,8 +26,10 @@ from playwright.async_api import (
 )
 
 from bilancio.client import (
+    AccountLedger,
     BilancioClientError,
     ACCOUNTING_VOICE_OPTIONS,
+    LedgerEntry,
     PortalExpense,
     PortalOption,
     PortalOptionsUnavailable,
@@ -170,6 +173,24 @@ def _normalize_ledger_header(value: str) -> str:
         .replace("arrow_downward", "")
         .split()
     )
+
+
+def _parse_ledger_amount(value: str) -> Decimal:
+    normalized = _normalize_amount_input(_normalize_ledger_header(value))
+    if not normalized:
+        return Decimal("0")
+    try:
+        amount = Decimal(normalized)
+    except InvalidOperation as error:
+        raise PortalOptionsUnavailable("AGESCI ledger amount is not readable") from error
+    if not amount.is_finite():
+        raise PortalOptionsUnavailable("AGESCI ledger amount is not readable")
+    return amount
+
+
+def _ledger_url_account(url: str) -> str | None:
+    values = parse_qs(urlparse(url).query).get("c")
+    return values[0] if values else None
 
 
 async def _wait_for_authentication_marker(
@@ -388,6 +409,28 @@ class PlaywrightBilancioClient:
             transaction_date,
         )
 
+    async def read_ledgers(
+        self,
+        *,
+        transaction_date: date,
+    ) -> Sequence[AccountLedger]:
+        async def read(page: Page) -> list[AccountLedger]:
+            ledgers: list[AccountLedger] = []
+            for account in await self._read_accounts(page):
+                await self._open_account_ledger(page, account)
+                await page.wait_for_url(
+                    lambda url: _ledger_url_account(url) == account.label,
+                    timeout=self._timeout_ms,
+                )
+                ledgers.append(await self._read_account_ledger(page, account))
+            return ledgers
+
+        return await self._with_page(
+            read,
+            transaction_date=transaction_date,
+            max_attempts=2,
+        )
+
     async def create_expense(
         self,
         expense: PortalExpense,
@@ -462,14 +505,22 @@ class PlaywrightBilancioClient:
                 self._fill_form(page, expense_to_submit),
             )
             if dry_run:
-                return PortalSubmissionResult(verified=True, dry_run=True)
+                return PortalSubmissionResult(
+                    verified=True,
+                    dry_run=True,
+                    unit_left_empty=unit is not None and expense_to_submit.unit is None,
+                )
             await self._locator(page, "save").click()
             if not await self._wait_for_matching_expense(page, expense_to_submit):
                 await self._save_diagnostics(page, "submission-verification-failed")
                 raise BilancioClientError(
                     "AGESCI did not show the submitted expense in the account ledger"
                 )
-            return PortalSubmissionResult(verified=True, dry_run=False)
+            return PortalSubmissionResult(
+                verified=True,
+                dry_run=False,
+                unit_left_empty=unit is not None and expense_to_submit.unit is None,
+            )
 
         return await self._with_page(
             fill_form,
@@ -1139,6 +1190,87 @@ class PlaywrightBilancioClient:
                 return True
             await asyncio.sleep(0.25)
         return False
+
+    async def _read_account_ledger(
+        self,
+        page: Page,
+        account: PortalOption,
+    ) -> AccountLedger:
+        rows = self._locator(page, "ledger_rows")
+        first, last, total_rows = await _wait_for_ledger_data(
+            self._locator(page, "ledger_loading_overlay"),
+            self._locator(page, "ledger_page_indicator"),
+            rows,
+            self._timeout_ms,
+        )
+        headers = [
+            _normalize_ledger_header(text)
+            for text in await rows.nth(1).get_by_role("columnheader").all_text_contents()
+        ]
+        required = (
+            "Data Operazione",
+            "Descrizione Operazione",
+            "Importo Entrata",
+            "Importo Uscita",
+            "Saldo",
+        )
+        if any(header not in headers for header in required):
+            raise PortalOptionsUnavailable(
+                "AGESCI account ledger columns could not be verified"
+            )
+        columns = {header: headers.index(header) for header in headers}
+
+        totals = await rows.nth(0).get_by_role("columnheader").all_text_contents()
+        if len(totals) != len(headers):
+            raise PortalOptionsUnavailable("AGESCI ledger totals could not be read")
+        totals_income = _parse_ledger_amount(totals[columns["Importo Entrata"]])
+        totals_expense = _parse_ledger_amount(totals[columns["Importo Uscita"]])
+        balance = _parse_ledger_amount(totals[columns["Saldo"]])
+
+        def column(cells: list[str], header: str) -> str:
+            index = columns.get(header)
+            if index is None or index >= len(cells):
+                return ""
+            return " ".join(cells[index].split())
+
+        entries: list[LedgerEntry] = []
+        for index in range(2, await rows.count()):
+            cells = await rows.nth(index).get_by_role("cell").all_text_contents()
+            try:
+                transaction_date = datetime.strptime(
+                    column(cells, "Data Operazione"), "%d/%m/%Y"
+                ).date()
+            except ValueError:
+                continue
+            income = _parse_ledger_amount(column(cells, "Importo Entrata"))
+            expense = _parse_ledger_amount(column(cells, "Importo Uscita"))
+            entries.append(
+                LedgerEntry(
+                    transaction_date=transaction_date,
+                    description=column(cells, "Descrizione Operazione"),
+                    income=income,
+                    expense=expense,
+                    transaction_type=(
+                        column(cells, "Tipologia Entrata")
+                        or column(cells, "Tipologia Uscita")
+                    ),
+                    unit=column(cells, "Unità"),
+                )
+            )
+
+        opening = [entry for entry in entries if entry.is_opening_balance]
+        opening_income = sum((entry.income for entry in opening), Decimal("0"))
+        opening_expense = sum((entry.expense for entry in opening), Decimal("0"))
+        return AccountLedger(
+            account=account,
+            opening_balance=opening_income - opening_expense,
+            total_income=totals_income - opening_income,
+            total_expense=totals_expense - opening_expense,
+            balance=balance,
+            entries=tuple(entries),
+            total_rows=total_rows,
+            complete=first <= 1 and last >= total_rows,
+        )
 
     async def _matching_expense_count(
         self,
