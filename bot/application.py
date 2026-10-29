@@ -40,6 +40,7 @@ from bot.updates import (
     describe_version,
     pending_notices,
     resolve_timezone,
+    update_available,
 )
 from bot.summary import (
     format_ledger_summary,
@@ -477,10 +478,20 @@ async def update_status_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     if not notices:
         return
+    check = await asyncio.to_thread(store.read_check)
+    keyboard = (
+        InlineKeyboardMarkup([
+            [InlineKeyboardButton(texts.MENU_UPDATE_BUTTON, callback_data="menu:update")],
+            [InlineKeyboardButton(texts.MENU_VERSION_BUTTON, callback_data="menu:version")],
+        ])
+        if update_available(_running_version(context), check)
+        else None
+    )
     try:
         await context.bot.send_message(
             chat_id=settings.admin_user_id,
             text="\n\n".join(notices),
+            reply_markup=keyboard,
         )
     except TelegramError:
         logger.error("Could not send update status notification")

@@ -73,6 +73,26 @@ class UpdateStatusTests(unittest.TestCase):
         self.write("check", checked_at="2026-10-29T13:00:00Z", available_revision=OLD)
         self.assertIn("È l'ultima versione (controllo del 29/10/2026 13:00)", self.describe())
 
+    def test_failed_fetch_does_not_announce_cached_revision(self) -> None:
+        self.write(
+            "check", checked_at="2026-10-29T13:00:00Z",
+            available_revision=NEW, available_summary="bbbbbbb - Cached",
+            error="download",
+        )
+        self.assertIn(messages.VERSION_CHECK_FAILED.split("{checked}")[0], self.describe())
+        self.assertNotIn("Nuova versione disponibile", self.describe())
+        self.assertEqual(pending_notices(self.store, self.running)[0], [])
+        self.assertNotIn("available_revision", pending_notices(self.store, self.running)[1])
+
+        self.write(
+            "check", checked_at="2026-10-29T13:10:00Z",
+            available_revision=NEW, available_summary="bbbbbbb - Verified", error="",
+        )
+        notices, marker = pending_notices(self.store, self.running)
+        self.assertEqual(len(notices), 1)
+        self.assertIn("Verified", notices[0])
+        self.assertEqual(marker["available_revision"], NEW)
+
     def test_failed_check_and_failed_install_are_visible(self) -> None:
         self.write("check", checked_at="2026-10-29T13:00:00Z", available_revision=OLD, error="download")
         self.write(

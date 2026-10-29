@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 from test_update import PROJECT_ROOT, SHELL
+from bot.updates import RunningVersion, UpdateStatusStore, pending_notices
 
 MOCK_UPDATER = r"""#!/bin/sh
 printf "updated\n" >> "$MOCK_RESULT"
@@ -118,6 +119,28 @@ class AutomaticUpdateTests(unittest.TestCase):
         self.assertEqual(check["error"], "")
         self.assertEqual(self.updates(), 0)
         self.assertFalse((self.source / ".git" / "nas-deploy.lock").exists())
+
+    def test_repeated_checks_detect_new_git_commit_without_installing_or_repeating_notice(self) -> None:
+        running_revision = self.head(self.source)
+        published_revision = self.publish("Nuovo aggiornamento")
+        store = UpdateStatusStore(self.status)
+        running = RunningVersion(running_revision, None, None)
+
+        for check_number in range(2):
+            result = self.run_auto("controlla")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(
+                read_fields(self.status / "check")["available_revision"],
+                published_revision,
+            )
+            notices, marker = pending_notices(store, running)
+            self.assertEqual(len(notices), 1 if check_number == 0 else 0)
+            if notices:
+                self.assertIn("Nuovo aggiornamento", notices[0])
+                store.write_notified(marker)
+            self.assertEqual(self.head(self.source), running_revision)
+            self.assertEqual(self.updates(), 0)
+            self.assertFalse((self.status / "request").exists())
 
     def test_telegram_request_installs_new_version_and_is_consumed(self) -> None:
         self.run_auto("installa")

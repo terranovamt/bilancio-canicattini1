@@ -205,6 +205,7 @@ def running_label(running: RunningVersion, zone: tzinfo) -> str | None:
 def update_available(running: RunningVersion, check: UpdateCheck | None) -> bool:
     return (
         check is not None
+        and not check.error
         and check.available_revision is not None
         and running.revision is not None
         and not same_revision(running.revision, check.available_revision)
@@ -243,7 +244,7 @@ def describe_version(
             lines.append(texts.VERSION_CHECK_FAILED.format(checked=checked))
         if update_available(running, check):
             lines.append(texts.VERSION_NEW.format(summary=_available_summary(check)))
-        elif running.revision is None and check.available_revision is not None:
+        elif not check.error and running.revision is None and check.available_revision is not None:
             lines.append(
                 texts.VERSION_PUBLISHED.format(
                     summary=_available_summary(check), checked=checked

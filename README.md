@@ -24,7 +24,7 @@ L'analisi delle ricevute è prevista in locale con Ollama. Non è configurato l'
 - `docs/CONTESTO_PROGETTO.md`: decisioni e stato dettagliato del lavoro.
 - `aggiorna.sh`: aggiornamento sul NAS da un pacchetto estratto separatamente, senza sostituire credenziali o dati; procedura nella sezione 15 della guida Synology.
 - `scarica.sh`: download e deploy dal ramo Git `deploy` su comando dell'utente. Prima configurazione in [Deploy Git sul Synology](docs/DEPLOY_GIT_SYNOLOGY.md).
-- `automatico.sh`: facoltativo, per l'Utilità di pianificazione DSM. Controlla le nuove versioni, installa su richiesta `/aggiorna` da Telegram o all'orario programmato; procedura nella sezione 8 della stessa guida. `/start` mostra all'amministratore la versione attiva e quella disponibile.
+- `automatico.sh`: per l'Utilità di pianificazione DSM. L'attività in modalità `controlla`, ogni 10 minuti, verifica il ramo Git `deploy` senza installare autonomamente. Il bot avvisa soltanto l'amministratore quando trova una versione nuova, con un pulsante per aggiornare dopo conferma; procedura nella sezione 8 della stessa guida. Versione attiva e disponibile si consultano in **Amministrazione → Versione e aggiornamenti**.
 
 ## Agenti AI in VS Code
 
@@ -127,6 +127,21 @@ Per usare il bot non occorre ricordare i comandi:
 In **Amministrazione** trovi verifica del collegamento, aggiornamento casse e tipologie, versione e aggiornamenti del bot, pulizia della cronologia. Aprire questi strumenti non esegue salvataggi, installazioni o pulizie: le operazioni che le richiedevano mantengono le proprie conferme. Versione attiva e disponibile si consultano da **Versione e aggiornamenti**.
 
 Le schermate del menu, l'aiuto e `/start` possono rispondere durante l'analisi AI o le attese del portale; le azioni che modificano dati restano elaborate una alla volta per evitare sovrapposizioni. Restano possibili i normali tempi di risposta della rete Telegram. I comandi scritti rimangono disponibili come alternativa, compresi `/help`, `/manual` e il vecchio alias `/testspesa`.
+
+### Avvisi Git ogni 10 minuti
+
+L'attività DSM **Bilancio - controllo aggiornamenti**, in modalità `controlla` ogni 10 minuti, interroga Git con la chiave di sola lettura già presente sul NAS. Non serve inserire credenziali Git nel bot. Il bot legge l'esito dal volume persistente ogni minuto e invia un messaggio privato solo a `ADMIN_USER_ID` se trova una versione diversa da quella attiva.
+
+1. Quando ricevi **È disponibile una nuova versione del bot**, premi **🔄 Installa aggiornamento**, oppure invia `/aggiorna`.
+2. Controlla che nessuno stia registrando una spesa e premi **Sì, installa** solo se vuoi procedere. Aprire l'avviso non installa nulla.
+3. La richiesta viene eseguita al successivo controllo NAS, normalmente entro 10 minuti. L'aggiornamento resta bloccato in modalità reale: occorre `DRY_RUN=true`, come già previsto.
+4. Attendi il messaggio con l'esito e consulta **Versione e aggiornamenti** per verificare la versione attiva.
+
+Una versione già annunciata non viene notificata di nuovo a ogni controllo o dopo un riavvio: il codice dell'ultima versione notificata è conservato sul volume dati. Se Telegram non riceve il messaggio, il bot ritenta alla lettura successiva. Un controllo Git fallito non genera avvisi di novità usando il risultato vecchio rimasto in cache; l'errore resta visibile nella schermata della versione.
+
+L'attività ogni 10 minuti è stata confermata dall'utente; la sua esecuzione effettiva non è verificabile dai test locali. Per prepararla o controllarla segui la [sezione 8 della guida NAS](docs/DEPLOY_GIT_SYNOLOGY.md#82-in-dsm-attività-di-controllo-ogni-10-minuti). Per installare **solo dopo conferma**, lascia disattivata l'eventuale attività separata di installazione programmata descritta nella sezione 8.4.
+
+### Opzioni contabili dinamiche
 
 Le casse e le tipologie `Voci Scout` vengono lette dal portale in sottofondo circa 10 secondi dopo l'avvio del bot e di nuovo ogni notte alle 02:30 UTC. Restano in memoria per 26 ore, così durante la giornata i menu si aprono senza attendere il browser. La cache distingue anno scout, cassa, entrata/uscita, voce, tipologia e unità, così non mescola elenchi dipendenti. Se scegli un menu mentre la lettura iniziale è ancora in corso, il bot mostra un messaggio di attesa e completa la scelta appena possibile. Usa `/aggiornaopzioni` (amministratore) per rileggere subito casse e tipologie: al termine il bot ti scrive quante casse ha letto e quante tipologie di entrata e di uscita ha trovato per ciascuna. Il salvataggio e la verifica nel portale restano sempre operazioni reali di browser, anche quando i menu provengono dalla cache.
 

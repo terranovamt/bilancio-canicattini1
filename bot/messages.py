@@ -104,7 +104,9 @@ UPDATE_ROLLED_BACK = "⚠️ Aggiornamento non riuscito ({summary}): {reason}"
 UPDATE_FAILED = "❌ Aggiornamento non riuscito ({summary}): {reason}"
 UPDATE_SKIPPED = "ℹ️ Nessun aggiornamento: {reason}"
 UPDATE_AVAILABLE = (
-    "🆕 È disponibile una nuova versione del bot: {summary}\nPer installarla: /aggiorna"
+    "🆕 È disponibile una nuova versione del bot: {summary}\n"
+    "Premi «Installa aggiornamento» oppure usa /aggiorna. "
+    "Ti chiederò conferma prima di installare."
 )
 UPDATE_PROMPT = (
     "🔄 Vuoi installare l'ultima versione?\n\n{status}\n\n"

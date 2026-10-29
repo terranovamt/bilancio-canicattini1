@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from pathlib import Path
 
 from telegram import Update
+from telegram.error import TimedOut
 from telegram.ext import ApplicationHandlerStop
 
 from bot.application import (
@@ -809,6 +810,67 @@ class UpdateCommandTests(unittest.IsolatedAsyncioTestCase):
         kwargs = context.bot.send_message.await_args.kwargs
         self.assertEqual(kwargs["chat_id"], 12345)
         self.assertIn("ripristinato quella precedente", kwargs["text"])
+
+    async def test_git_update_notice_is_admin_only_once_per_revision_with_confirmation(self) -> None:
+        self.write_check("b" * 40)
+        context = self.context()
+        await update_status_job(context)
+        first = context.bot.send_message.await_args.kwargs
+        self.assertEqual(first["chat_id"], self.user.id)
+        self.assertIn("nuova versione", first["text"])
+        buttons = first["reply_markup"].inline_keyboard
+        self.assertEqual(buttons[0][0].text, texts.MENU_UPDATE_BUTTON)
+        self.assertEqual(buttons[0][0].callback_data, "menu:update")
+        self.assertFalse((self.update_dir / "request").exists())
+
+        # A later NAS check and a fresh bot context must not repeat the same notice.
+        await update_status_job(context)
+        fresh_context = self.context()
+        self.write_check("b" * 40)
+        await update_status_job(fresh_context)
+        context.bot.send_message.assert_awaited_once()
+        fresh_context.bot.send_message.assert_not_awaited()
+
+        self.write_check("c" * 40)
+        await update_status_job(context)
+        self.assertEqual(context.bot.send_message.await_count, 2)
+
+        query = SimpleNamespace(
+            data="menu:update", message=SimpleNamespace(reply_text=AsyncMock()),
+            answer=AsyncMock(), edit_message_text=AsyncMock(),
+        )
+        await menu_callback(
+            SimpleNamespace(
+                callback_query=query, effective_user=self.user,
+                effective_message=query.message, message=None,
+            ),
+            context,
+        )
+        confirmation = query.message.reply_text.await_args.kwargs["reply_markup"]
+        self.assertEqual(confirmation.inline_keyboard[0][0].callback_data, "admin:update:yes")
+        self.assertFalse((self.update_dir / "request").exists())
+
+    async def test_failed_notification_is_retried_without_exposing_telegram_error(self) -> None:
+        self.write_check("b" * 40)
+        context = self.context()
+        context.bot.send_message.side_effect = TimedOut("private network detail")
+        with self.assertLogs("bot.application", level="ERROR") as captured:
+            await update_status_job(context)
+        self.assertNotIn("private", "\n".join(captured.output))
+        self.assertFalse((self.update_dir / "notified").exists())
+        context.bot.send_message.side_effect = None
+        await update_status_job(context)
+        self.assertEqual(context.bot.send_message.await_count, 2)
+        self.assertTrue((self.update_dir / "notified").is_file())
+        self.assertFalse((self.update_dir / "request").exists())
+
+    async def test_no_update_means_no_notification_or_installation(self) -> None:
+        context = self.context()
+        await update_status_job(context)
+        self.write_check("a" * 40)
+        await update_status_job(context)
+        context.bot.send_message.assert_not_awaited()
+        self.assertFalse((self.update_dir / "request").exists())
 
     def test_update_command_is_registered_for_admin_only(self) -> None:
         names = [command.command for command in ADMIN_COMMANDS]

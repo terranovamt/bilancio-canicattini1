@@ -549,8 +549,15 @@ Notifiche inviate automaticamente all'amministratore, una sola volta per evento:
 
 ```text
 🆕 È disponibile una nuova versione del bot: e4f5a6b - Nuovo titolo (29/10/2026 14:00)
-Per installarla: /aggiorna
+Premi «Installa aggiornamento» oppure usa /aggiorna. Ti chiederò conferma prima di installare.
 ```
+
+```text
+[🔄 Installa aggiornamento]
+[🔖 Versione e aggiornamenti]
+```
+
+Il NAS controlla Git ogni 10 minuti con l'attività DSM in modalità `controlla`; il bot legge lo stato ogni minuto. Il messaggio raggiunge solo l'amministratore. La stessa versione non viene annunciata di nuovo dopo i controlli successivi o il riavvio; se Telegram fallisce, l'invio viene ritentato. Un controllo Git fallito non annuncia versioni dalla vecchia cache. Il pulsante apre la conferma: non installa subito.
 
 ```text
 ✅ Aggiornamento installato: e4f5a6b - Nuovo titolo (29/10/2026 14:00)
