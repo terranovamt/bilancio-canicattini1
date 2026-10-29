@@ -19,6 +19,7 @@ from bilancio.client import (
     PortalExpense,
     PortalOption,
     TransactionDirection,
+    default_unit_for_account,
 )
 from config import Settings
 from db.database import Database
@@ -434,6 +435,7 @@ class ReceiptWorkflow:
             )
         elif value.startswith("choose:"):
             await self._select_portal_option(
+                update,
                 user.id,
                 expense_id,
                 expense.payload,
@@ -492,7 +494,7 @@ class ReceiptWorkflow:
         }
         await self._save_state(user_id, "awaiting_account", data)
         await query.edit_message_text(
-            "🏦 1/6 · Scegli la cassa:",
+            "🏦 1/3 · Scegli la cassa:",
             reply_markup=self._option_keyboard(options),
         )
 
@@ -517,23 +519,14 @@ class ReceiptWorkflow:
             return
         state_data["direction"] = value
         await self._save_state(user_id, "awaiting_accounting_voice", state_data)
-        keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        "Voci Scout",
-                        callback_data="receipt:voice:Voci Scout",
-                    ),
-                    InlineKeyboardButton(
-                        "Voci Ministero",
-                        callback_data="receipt:voice:Voci Ministero",
-                    ),
-                ]
-            ]
-        )
-        await query.edit_message_text(
-            "📚 3/6 · Scegli il tipo di voce:",
-            reply_markup=keyboard,
+        await self._select_accounting_voice(
+            user_id,
+            expense_id,
+            "awaiting_accounting_voice",
+            state_data,
+            "Voci Scout",
+            query,
+            context,
         )
 
     async def _select_accounting_voice(
@@ -594,12 +587,13 @@ class ReceiptWorkflow:
         )
         await self._save_state(user_id, "awaiting_transaction_type", state_data)
         await query.edit_message_text(
-            "🏷️ 4/6 · Scegli la tipologia:",
+            "🏷️ 3/3 · Scegli la tipologia:",
             reply_markup=self._option_keyboard(options),
         )
 
     async def _select_portal_option(
         self,
+        update: Update,
         user_id: int,
         expense_id: str,
         payload: dict[str, object],
@@ -647,7 +641,7 @@ class ReceiptWorkflow:
                     ]
                 )
                 await query.edit_message_text(
-                    "↔️ 2/6 · Vuoi registrare un’entrata o un’uscita?",
+                    "↔️ 2/3 · Entrata o uscita?",
                     reply_markup=keyboard,
                 )
                 return
@@ -657,15 +651,35 @@ class ReceiptWorkflow:
             transaction_type = self._option_from(state_data, "transaction_type") if state in {"awaiting_unit", "awaiting_category"} else selected
             if state == "awaiting_transaction_type":
                 state_data.update(transaction_type=self._serialize_option(selected))
-                next_options = await self._bilancio.list_units(
-                    account,
-                    direction,
-                    selected,
-                    transaction_date=transaction_date,
-                    accounting_voice=accounting_voice,
+                unit = default_unit_for_account(account)
+                state_data["unit"] = (
+                    self._serialize_option(unit)
+                    if unit is not None
+                    else None
                 )
-                next_state = "awaiting_unit"
-                prompt = "👥 5/6 · Scegli l’unità:"
+                state_data["category"] = None
+                state_data["portal_notes"] = None
+                if payload.get("manual_entry") is True:
+                    await self._save_state(
+                        user_id,
+                        "awaiting_manual_final_confirmation",
+                        state_data,
+                    )
+                    await query.edit_message_text(
+                        self._manual_final_confirmation_text(payload, state_data),
+                        reply_markup=self._manual_final_confirmation_keyboard(),
+                    )
+                    return
+                await self._submit_expense(
+                    update,
+                    context,
+                    user_id,
+                    expense_id,
+                    payload,
+                    state_data,
+                    "-",
+                )
+                return
             elif state == "awaiting_unit":
                 state_data.update(unit=self._serialize_option(selected))
                 next_options = await self._bilancio.list_categories(
@@ -747,7 +761,12 @@ class ReceiptWorkflow:
             receipt = self._receipt_from_payload(payload)
             account = self._option_from(state_data, "account")
             transaction_type = self._option_from(state_data, "transaction_type")
-            unit = self._option_from(state_data, "unit")
+            unit_data = state_data.get("unit")
+            unit = (
+                PortalOption(**unit_data)
+                if isinstance(unit_data, dict)
+                else default_unit_for_account(account)
+            )
             category_data = state_data.get("category")
             category = (
                 PortalOption(**category_data)
@@ -802,7 +821,7 @@ class ReceiptWorkflow:
                 account=self._serialize_option(account),
                 direction=direction.value,
                 transaction_type=self._serialize_option(transaction_type),
-                unit=self._serialize_option(unit),
+                unit=self._serialize_option(unit) if unit is not None else None,
                 category=(
                     self._serialize_option(category)
                     if category is not None
@@ -1104,7 +1123,12 @@ class ReceiptWorkflow:
             state_data,
             "transaction_type",
         ).label
-        unit = self._option_from(state_data, "unit").label
+        unit_data = state_data.get("unit")
+        unit = (
+            PortalOption(**unit_data).label
+            if isinstance(unit_data, dict)
+            else "nessuna"
+        )
         category_data = state_data.get("category")
         category = (
             PortalOption(**category_data).label

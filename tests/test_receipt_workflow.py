@@ -7,7 +7,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from bilancio.client import PortalOption, PortalSubmissionResult, TransactionDirection
+from bilancio.client import (
+    PortalOption,
+    PortalSubmissionResult,
+    TransactionDirection,
+    default_unit_for_account,
+)
 from bot.receipt_workflow import ReceiptWorkflow
 from config import Settings
 from db.database import Database
@@ -212,29 +217,24 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(),
         )
 
-        voice_markup = direction_query.edit_message_text.await_args.kwargs["reply_markup"]
-        self.assertEqual(voice_markup.inline_keyboard[0][0].text, "Voci Scout")
+        type_markup = direction_query.edit_message_text.await_args.kwargs["reply_markup"]
+        self.assertEqual(type_markup.inline_keyboard[0][0].text, "Tipo uscita")
         self.assertEqual(
             self.database.get_conversation_state(12345)[0],
-            "awaiting_accounting_voice",
+            "awaiting_transaction_type",
         )
-
-        voice_query = self.make_query("receipt:voice:Voci Scout")
-        await workflow.handle_callback(
-            SimpleNamespace(
-                callback_query=voice_query,
-                effective_user=SimpleNamespace(id=12345),
-            ),
-            SimpleNamespace(),
-        )
-
-        type_markup = voice_query.edit_message_text.await_args.kwargs["reply_markup"]
-        self.assertEqual(type_markup.inline_keyboard[0][0].text, "Tipo uscita")
         self.assertEqual(portal.requested_dates[0], date(2026, 10, 26))
         self.assertEqual(portal.requested_dates[1], date(2026, 10, 26))
+        self.assertEqual(
+            self.database.get_conversation_state(12345)[1]["accounting_voice"],
+            "Voci Scout",
+        )
 
     async def test_manual_expense_skips_receipt_ai_and_archive(self) -> None:
         portal = FakeBilancioClient()
+        portal.list_accounts = AsyncMock(
+            return_value=[PortalOption("account-1", "Cassa Co.ca")]
+        )
         workflow = ReceiptWorkflow(
             settings=make_settings(),
             database=self.database,
@@ -266,26 +266,25 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             "receipt:confirm",
             "receipt:choose:0",
             "receipt:direction:uscita",
-            "receipt:voice:Voci Scout",
-            "receipt:choose:0",
-            "receipt:choose:0",
             "receipt:choose:0",
         ):
+            query = self.make_query(callback_data)
             await workflow.handle_callback(
                 SimpleNamespace(
-                    callback_query=self.make_query(callback_data),
+                    callback_query=query,
+                    effective_message=query.message,
                     effective_user=user,
                 ),
                 SimpleNamespace(),
             )
 
-        notes_message = SimpleNamespace(text="-", reply_text=AsyncMock())
-        await workflow.handle_text(
-            SimpleNamespace(message=notes_message, effective_user=user),
-            SimpleNamespace(),
-        )
         final_state = self.database.get_conversation_state(user.id)
         self.assertEqual(final_state[0], "awaiting_manual_final_confirmation")
+        self.assertEqual(
+            final_state[1]["unit"],
+            {"value": "Gruppo G1", "label": "Gruppo G1"},
+        )
+        self.assertIsNone(final_state[1]["category"])
 
         final_message = SimpleNamespace(reply_text=AsyncMock())
         save_query = self.make_query("receipt:manual_save")
@@ -310,6 +309,9 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_confirmed_receipt_is_archived_and_submitted_in_dry_run(self) -> None:
         portal = FakeBilancioClient()
+        portal.list_accounts = AsyncMock(
+            return_value=[PortalOption("account-1", "Cassa Co.ca")]
+        )
         workflow = ReceiptWorkflow(
             settings=make_settings(),
             database=self.database,
@@ -324,27 +326,17 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             "receipt:confirm",
             "receipt:choose:0",
             "receipt:direction:uscita",
-            "receipt:voice:Voci Scout",
-            "receipt:choose:0",
-            "receipt:choose:0",
             "receipt:choose:0",
         ):
+            query = self.make_query(callback_data)
             await workflow.handle_callback(
                 SimpleNamespace(
-                    callback_query=self.make_query(callback_data),
+                    callback_query=query,
+                    effective_message=query.message,
                     effective_user=SimpleNamespace(id=12345),
                 ),
                 SimpleNamespace(),
             )
-
-        message = SimpleNamespace(text="-", reply_text=AsyncMock())
-        await workflow.handle_text(
-            SimpleNamespace(
-                message=message,
-                effective_user=SimpleNamespace(id=12345),
-            ),
-            SimpleNamespace(),
-        )
 
         state = self.database.get_conversation_state(12345)
         self.assertIsNone(state)
@@ -358,7 +350,10 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         assert stored is not None
         self.assertEqual(stored.status, "dry_run")
         self.assertTrue(Path(stored.archive_path).is_file())
-        self.assertIn("non ha salvato", message.reply_text.await_args.args[0])
+        self.assertEqual(
+            portal.submitted[0][0].unit,
+            PortalOption("Gruppo G1", "Gruppo G1"),
+        )
 
     async def test_manual_one_euro_income_and_expense_with_fake_live_client(self) -> None:
         for direction in TransactionDirection:
@@ -396,22 +391,19 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
                 for callback in (
                     "receipt:confirm", "receipt:choose:0",
                     f"receipt:direction:{direction.value}",
-                    "receipt:voice:Voci Scout", "receipt:choose:0",
-                    "receipt:choose:0", "receipt:choose:0",
+                    "receipt:choose:0",
                 ):
+                    query = self.make_query(callback)
                     await workflow.handle_callback(
                         SimpleNamespace(
-                            callback_query=self.make_query(callback), effective_user=user
+                            callback_query=query,
+                            effective_message=query.message,
+                            effective_user=user,
                         ),
                         SimpleNamespace(),
                     )
-                await workflow.handle_text(
-                    SimpleNamespace(
-                        message=SimpleNamespace(text="-", reply_text=AsyncMock()),
-                        effective_user=user,
-                    ),
-                    SimpleNamespace(),
-                )
+                final_state = self.database.get_conversation_state(user.id)
+                self.assertEqual(final_state[0], "awaiting_manual_final_confirmation")
                 self.assertEqual(portal.submitted, [])
                 message = SimpleNamespace(reply_text=AsyncMock())
                 await workflow.handle_callback(
@@ -427,8 +419,31 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(expense.amount, Decimal("1.00"))
                 self.assertEqual(expense.direction, direction)
                 self.assertEqual(expense.account.label, "Cassa Co.ca")
+                self.assertEqual(
+                    expense.unit,
+                    PortalOption("Gruppo G1", "Gruppo G1"),
+                )
+                self.assertIsNone(expense.category)
                 self.assertEqual(self.database.get_expense(expense_id).status, "submitted")
                 self.assertIsNone(self.database.get_conversation_state(user.id))
+
+    def test_account_units_use_the_configured_defaults(self) -> None:
+        expected_units = {
+            "Cassa Co.ca": "Gruppo G1",
+            "Conto Co.ca": "Gruppo G1",
+            "Cassa LC": "L1 - ROCCIA DELLA PACE",
+            "Cassa EG": "O1 - CASSARINO - CIARCIA",
+            "Cassa RS": "T1 - FALCHI PELLEGRINI",
+        }
+        for account_name, unit_name in expected_units.items():
+            with self.subTest(account=account_name):
+                self.assertEqual(
+                    default_unit_for_account(PortalOption(account_name, account_name)),
+                    PortalOption(unit_name, unit_name),
+                )
+        self.assertIsNone(
+            default_unit_for_account(PortalOption("unknown", "Cassa di prova"))
+        )
 
     def test_parses_user_entered_european_amount_and_date(self) -> None:
         updated = ReceiptWorkflow._apply_user_value(
@@ -466,8 +481,10 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     def make_query(data: str):
+        message = SimpleNamespace(reply_text=AsyncMock())
         return SimpleNamespace(
             data=data,
+            message=message,
             answer=AsyncMock(),
             edit_message_text=AsyncMock(),
         )

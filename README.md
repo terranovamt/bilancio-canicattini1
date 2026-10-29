@@ -67,13 +67,13 @@ All'avvio il bot registra il menu dei comandi Telegram: scrivendo `/` compaiono 
 
 Le casse, tipologie, unità e categorie lette dal portale vengono conservate in memoria per sei ore. La cache distingue anno scout, cassa, entrata/uscita, voce, tipologia e unità, così non mescola elenchi dipendenti. La prima lettura resta legata ai tempi del portale; le successive non aprono il browser. Un riavvio azzera la cache. Usa `/aggiornaopzioni` (amministratore) per svuotarla prima della scadenza; se un menu era già aperto, annulla e ricomincia. Il salvataggio e la verifica nel portale restano sempre operazioni reali di browser, anche quando i menu provengono dalla cache.
 
-L’amministratore può usare `/testspesa` per inserire data, descrizione e importo direttamente in Telegram, senza scontrino e senza AI. Il bot mostra poi le scelte del portale e un riepilogo finale.
+L’amministratore può usare `/testspesa` per inserire data, descrizione e importo direttamente in Telegram, senza scontrino e senza AI. Il bot chiede cassa e direzione, usa `Voci Scout` e mostra le tipologie disponibili per quella scelta. Imposta l’unità predefinita associata alla cassa, se nota; lascia la categoria vuota. Prima di un inserimento reale mostra un riepilogo e chiede conferma.
 
 - Con `DRY_RUN=true`, il portale non salva la spesa.
 - Con `DRY_RUN=false`, il pulsante finale inserisce davvero la spesa nel portale.
 - Usa `/annulla` per interrompere prima della conferma finale.
 
-Per la prima prova usa una descrizione chiaramente riconoscibile e controlla con attenzione anno, conto, direzione, voci, tipologia, unità, categoria e importo. Non condividere i dati della spesa in chat con altre persone.
+Per la prima prova usa una descrizione chiaramente riconoscibile e controlla con attenzione anno, conto, direzione, tipologia, unità predefinita e importo. Non condividere i dati della spesa in chat con altre persone.
 
 ## Verifiche automatiche sul PC
 

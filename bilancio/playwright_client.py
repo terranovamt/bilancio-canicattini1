@@ -7,6 +7,7 @@ import re
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -31,6 +32,7 @@ from bilancio.client import (
     PortalOptionsUnavailable,
     PortalSubmissionResult,
     TransactionDirection,
+    default_unit_for_account,
     scout_year_label,
 )
 
@@ -390,12 +392,12 @@ class PlaywrightBilancioClient:
         *,
         dry_run: bool,
     ) -> PortalSubmissionResult:
-        if not dry_run and (
-            expense.transaction_type is None or expense.unit is None
-        ):
+        if not dry_run and expense.transaction_type is None:
             raise BilancioClientError(
-                "AGESCI requires a transaction type and unit for real submissions"
+                "AGESCI requires a transaction type for real submissions"
             )
+        unit = expense.unit or default_unit_for_account(expense.account)
+        expense_to_submit = replace(expense, unit=unit)
 
         async def fill_form(page: Page) -> PortalSubmissionResult:
             await self._run_portal_stage(
@@ -404,7 +406,7 @@ class PlaywrightBilancioClient:
             )
             existing = await self._run_portal_stage(
                 "checking for an existing expense",
-                self._find_matching_expense(page, expense),
+                self._find_matching_expense(page, expense_to_submit),
             )
             if existing:
                 return PortalSubmissionResult(
@@ -418,7 +420,7 @@ class PlaywrightBilancioClient:
             )
             await self._run_portal_stage(
                 "filling date, description, and amount",
-                self._fill_form(page, expense),
+                self._fill_form(page, expense_to_submit),
             )
             await self._run_portal_stage(
                 "selecting the accounting voice",
@@ -434,10 +436,10 @@ class PlaywrightBilancioClient:
                         expense.direction,
                     ),
                 )
-            if expense.unit is not None:
+            if unit is not None:
                 await self._run_portal_stage(
                     "selecting the unit",
-                    self._select_dropdown(page, "unit", expense.unit),
+                    self._select_dropdown(page, "unit", unit),
                 )
             if expense.category is not None:
                 await self._run_portal_stage(
@@ -446,12 +448,12 @@ class PlaywrightBilancioClient:
                 )
             await self._run_portal_stage(
                 "verifying date, description, and amount",
-                self._fill_form(page, expense),
+                self._fill_form(page, expense_to_submit),
             )
             if dry_run:
                 return PortalSubmissionResult(verified=True, dry_run=True)
             await self._locator(page, "save").click()
-            if not await self._wait_for_matching_expense(page, expense):
+            if not await self._wait_for_matching_expense(page, expense_to_submit):
                 await self._save_diagnostics(page, "submission-verification-failed")
                 raise BilancioClientError(
                     "AGESCI did not show the submitted expense in the account ledger"

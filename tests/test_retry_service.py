@@ -81,6 +81,22 @@ class ExpenseRetryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.messages[0][0], 12345)
         self.assertIn("modalità prova", bot.messages[0][1])
 
+    async def test_processes_queued_expense_without_a_unit(self) -> None:
+        self.create_queued_expense(with_unit=False)
+        portal = FakeRetryPortal()
+        service = ExpenseRetryService(
+            settings=make_settings(),
+            database=self.database,
+            bilancio_client=portal,
+            archive=FileArchive(self.root / "archive"),
+            pending_store=PendingReceiptStore(self.root / "pending"),
+        )
+
+        result = await service.process_due(FakeBot())
+
+        self.assertEqual(result.succeeded, 1)
+        self.assertIsNone(portal.received_expenses[0][0].unit)
+
     async def test_failed_attempt_is_rescheduled_with_backoff(self) -> None:
         self.create_queued_expense()
         portal = FakeRetryPortal(failure=True)
@@ -127,7 +143,7 @@ class ExpenseRetryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.database.get_due_retries("2999-01-01T00:00:00+00:00"), [])
         self.assertEqual(len(bot.messages), 2)
 
-    def create_queued_expense(self) -> None:
+    def create_queued_expense(self, *, with_unit: bool = True) -> None:
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         self.database.create_expense(
             expense_id="expense-1",
@@ -140,7 +156,7 @@ class ExpenseRetryServiceTests(unittest.IsolatedAsyncioTestCase):
                 "direction": "uscita",
                 "account": {"value": "a1", "label": "Cassa"},
                 "transaction_type": {"value": "t1", "label": "Tipo"},
-                "unit": {"value": "u1", "label": "Unità"},
+                "unit": {"value": "u1", "label": "Unità"} if with_unit else None,
                 "category": None,
                 "portal_notes": None,
                 "pending_path": str(self.source),

@@ -459,7 +459,7 @@ class PlaywrightBilancioClientTests(unittest.IsolatedAsyncioTestCase):
                     timeout_operation(),
                 )
 
-    async def test_live_submission_rejects_missing_type_or_unit(self) -> None:
+    async def test_live_submission_rejects_missing_transaction_type(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             client = self.make_client(Path(directory))
             expense = PortalExpense(
@@ -479,6 +479,29 @@ class PlaywrightBilancioClientTests(unittest.IsolatedAsyncioTestCase):
                 await client.create_expense(expense, dry_run=False)
 
             client._with_page.assert_not_awaited()
+
+    async def test_live_submission_allows_missing_unit_for_unmapped_account(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            client = self.make_client(Path(directory))
+            expense = PortalExpense(
+                transaction_date=date(2026, 10, 26),
+                description="Test receipt",
+                amount=Decimal("1.00"),
+                direction=TransactionDirection.EXPENSE,
+                account=PortalOption("account", "Cassa di prova"),
+                transaction_type=PortalOption("type", "Tipologia di prova"),
+                unit=None,
+                category=None,
+                notes=None,
+            )
+            client._with_page = AsyncMock(
+                return_value=PortalSubmissionResult(verified=True, dry_run=False)
+            )
+
+            result = await client.create_expense(expense, dry_run=False)
+
+            self.assertTrue(result.verified)
+            client._with_page.assert_awaited_once()
 
     async def test_fills_core_fields_after_direction_before_dropdowns(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -539,6 +562,7 @@ class PlaywrightBilancioClientTests(unittest.IsolatedAsyncioTestCase):
                     "core_fields",
                     "accounting_voice",
                     "transaction_type",
+                    "unit",
                     "core_fields",
                 ],
             )

@@ -262,7 +262,13 @@ class ExpenseRetryService:
             payload,
             "transaction_type",
         )
-        unit = ExpenseRetryService._stored_option(payload, "unit")
+        unit_value = payload.get("unit")
+        if unit_value is None:
+            unit = None
+        elif isinstance(unit_value, dict):
+            unit = PortalOption(**unit_value)
+        else:
+            raise ValueError("Queued portal unit is invalid")
         category_value = payload.get("category")
         category = (
             PortalOption(**category_value)

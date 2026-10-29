@@ -48,6 +48,19 @@ class PortalOption:
             raise ValueError("Portal option value and label must not be empty")
 
 
+_DEFAULT_ACCOUNT_UNITS: dict[str, PortalOption] = {
+    "cassa co.ca": PortalOption("Gruppo G1", "Gruppo G1"),
+    "conto co.ca": PortalOption("Gruppo G1", "Gruppo G1"),
+    "cassa lc": PortalOption("L1 - ROCCIA DELLA PACE", "L1 - ROCCIA DELLA PACE"),
+    "cassa eg": PortalOption("O1 - CASSARINO - CIARCIA", "O1 - CASSARINO - CIARCIA"),
+    "cassa rs": PortalOption("T1 - FALCHI PELLEGRINI", "T1 - FALCHI PELLEGRINI"),
+}
+
+
+def default_unit_for_account(account: PortalOption) -> PortalOption | None:
+    return _DEFAULT_ACCOUNT_UNITS.get(account.label.strip().casefold())
+
+
 @dataclass(frozen=True, slots=True)
 class PortalExpense:
     transaction_date: date
