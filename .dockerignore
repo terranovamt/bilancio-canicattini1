@@ -1,5 +1,7 @@
 .env
 .git/
+.update-backups/
+.update.lock/
 .venv/
 LOCAL_NOTES.md
 data/

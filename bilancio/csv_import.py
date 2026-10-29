@@ -40,8 +40,8 @@ class CsvExpenseRow:
     direction: TransactionDirection
     account_reference: str = field(repr=False)
     accounting_voice: str
-    transaction_type_reference: str = field(repr=False)
-    unit_reference: str = field(repr=False)
+    transaction_type_reference: str | None = field(repr=False)
+    unit_reference: str | None = field(repr=False)
     category_reference: str | None = field(repr=False)
 
     @property
@@ -60,6 +60,7 @@ _REQUIRED_COLUMNS = (
     "unita",
     "categoria",
 )
+_HEADER_ALIASES = {"descrizione": "nota"}
 _DATE_FORMATS = ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d/%m/%y", "%d-%m-%y")
 _DIRECTION_VALUES = {
     "entrata": TransactionDirection.INCOME,
@@ -70,7 +71,17 @@ _DIRECTION_VALUES = {
 _OPTION_PREFIX_SEPARATORS = frozenset(" \t-:–—(")
 
 
-def read_expense_csv(path: str | Path) -> list[CsvExpenseRow]:
+def read_expense_csv(
+    path: str | Path,
+    *,
+    accounting_voice_override: str | None = None,
+) -> list[CsvExpenseRow]:
+    if (
+        accounting_voice_override is not None
+        and accounting_voice_override not in ACCOUNTING_VOICE_OPTIONS
+    ):
+        raise CsvImportError("La voce contabile scelta non è supportata.")
+
     csv_path = Path(path)
     try:
         content = csv_path.read_text(encoding="utf-8-sig")
@@ -88,7 +99,8 @@ def read_expense_csv(path: str | Path) -> list[CsvExpenseRow]:
 
     header_map: dict[str, str] = {}
     for header in reader.fieldnames:
-        normalized = _normalize(header or "")
+        normalized_header = _normalize(header or "")
+        normalized = _HEADER_ALIASES.get(normalized_header, normalized_header)
         if not normalized or normalized in header_map:
             raise CsvImportError("Il CSV contiene intestazioni vuote o duplicate.")
         header_map[normalized] = header
@@ -115,14 +127,25 @@ def read_expense_csv(path: str | Path) -> list[CsvExpenseRow]:
         }
         if not any(values.values()):
             continue
-        entries.append(_parse_row(values, row_number))
+        entries.append(
+            _parse_row(
+                values,
+                row_number,
+                accounting_voice_override=accounting_voice_override,
+            )
+        )
 
     if not entries:
         raise CsvImportError("Il CSV non contiene spese da importare.")
     return entries
 
 
-def _parse_row(values: dict[str, str], row_number: int) -> CsvExpenseRow:
+def _parse_row(
+    values: dict[str, str],
+    row_number: int,
+    *,
+    accounting_voice_override: str | None = None,
+) -> CsvExpenseRow:
     direction_text = _normalize(values["tipo"])
     direction = _DIRECTION_VALUES.get(direction_text)
     if direction is None:
@@ -131,15 +154,12 @@ def _parse_row(values: dict[str, str], row_number: int) -> CsvExpenseRow:
         )
 
     transaction_date = _parse_date(values["data"], row_number)
-    signed_amount = _parse_amount(values["importo"], row_number)
-    if direction is TransactionDirection.INCOME and signed_amount <= 0:
-        raise CsvImportError(
-            f"La riga {row_number} ha un importo non coerente con un'entrata."
-        )
-    if direction is TransactionDirection.EXPENSE and signed_amount >= 0:
-        raise CsvImportError(
-            f"La riga {row_number} ha un importo non coerente con un'uscita."
-        )
+    amount = abs(_parse_amount(values["importo"], row_number))
+    signed_amount = (
+        amount
+        if direction is TransactionDirection.INCOME
+        else -amount
+    )
 
     description = values["nota"].strip()
     if not description:
@@ -151,16 +171,37 @@ def _parse_row(values: dict[str, str], row_number: int) -> CsvExpenseRow:
     if not account_reference:
         raise CsvImportError(f"La riga {row_number} non indica la cassa.")
 
-    accounting_voice = _resolve_accounting_voice(values["voce"], row_number)
-    transaction_type_reference = values["tipologia"].strip()
-    if not transaction_type_reference:
-        raise CsvImportError(f"La riga {row_number} non indica la tipologia.")
+    accounting_voice = (
+        accounting_voice_override
+        if accounting_voice_override is not None
+        else _resolve_accounting_voice(values["voce"], row_number)
+    )
+    transaction_type_reference = values["tipologia"].strip() or None
+    voice_type_reference = values["voce"].strip()
+    if (
+        accounting_voice_override is not None
+        and _is_transaction_type_code_reference(voice_type_reference)
+    ):
+        if (
+            transaction_type_reference is not None
+            and _normalize(transaction_type_reference)
+            != _normalize(voice_type_reference)
+        ):
+            raise CsvImportError(
+                f"La riga {row_number} indica tipologie diverse nei campi "
+                "voce e tipologia."
+            )
+        transaction_type_reference = voice_type_reference
 
-    unit_reference = values["unita"].strip()
-    if not unit_reference:
-        raise CsvImportError(f"La riga {row_number} non indica l'unità.")
+    unit_reference = values["unita"].strip() or None
 
     category_reference = values["categoria"].strip() or None
+    if category_reference is not None and (
+        transaction_type_reference is None or unit_reference is None
+    ):
+        raise CsvImportError(
+            f"La riga {row_number} indica una categoria senza tipologia e unità."
+        )
 
     return CsvExpenseRow(
         row_number=row_number,
@@ -289,6 +330,14 @@ def _has_code_prefix(value: str, normalized_reference: str) -> bool:
     return normalized_value[len(normalized_reference)] in _OPTION_PREFIX_SEPARATORS
 
 
+def _is_transaction_type_code_reference(value: str) -> bool:
+    match = re.match(r"^[A-Z]\.\d+", value, re.IGNORECASE)
+    return match is not None and (
+        match.end() == len(value)
+        or value[match.end()] in _OPTION_PREFIX_SEPARATORS
+    )
+
+
 def _normalize(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip().casefold()
 
@@ -331,44 +380,57 @@ async def prepare_portal_expenses(
             row.direction,
             row.accounting_voice,
         )
-        if type_key not in type_cache:
-            type_cache[type_key] = await client.list_transaction_types(
-                account,
-                row.direction,
-                transaction_date=row.transaction_date,
-                accounting_voice=row.accounting_voice,
+        transaction_type = None
+        if row.transaction_type_reference is not None:
+            if type_key not in type_cache:
+                type_cache[type_key] = await client.list_transaction_types(
+                    account,
+                    row.direction,
+                    transaction_date=row.transaction_date,
+                    accounting_voice=row.accounting_voice,
+                )
+            transaction_type = resolve_portal_option(
+                row.transaction_type_reference,
+                type_cache[type_key],
+                field_name="tipologia",
+                row_number=row.row_number,
             )
-        transaction_type = resolve_portal_option(
-            row.transaction_type_reference,
-            type_cache[type_key],
-            field_name="tipologia",
-            row_number=row.row_number,
-        )
 
-        unit_key = (
-            scout_year,
-            account.label,
-            row.direction,
-            transaction_type.label,
-            row.accounting_voice,
-        )
-        if unit_key not in unit_cache:
-            unit_cache[unit_key] = await client.list_units(
-                account,
+        unit = None
+        if row.unit_reference is not None:
+            if transaction_type is None:
+                raise CsvImportError(
+                    f"La riga {row.row_number} indica l'unità senza tipologia."
+                )
+            unit_key = (
+                scout_year,
+                account.label,
                 row.direction,
-                transaction_type,
-                transaction_date=row.transaction_date,
-                accounting_voice=row.accounting_voice,
+                transaction_type.label,
+                row.accounting_voice,
             )
-        unit = resolve_portal_option(
-            row.unit_reference,
-            unit_cache[unit_key],
-            field_name="unità",
-            row_number=row.row_number,
-        )
+            if unit_key not in unit_cache:
+                unit_cache[unit_key] = await client.list_units(
+                    account,
+                    row.direction,
+                    transaction_type,
+                    transaction_date=row.transaction_date,
+                    accounting_voice=row.accounting_voice,
+                )
+            unit = resolve_portal_option(
+                row.unit_reference,
+                unit_cache[unit_key],
+                field_name="unità",
+                row_number=row.row_number,
+            )
 
         category = None
         if row.category_reference is not None:
+            if transaction_type is None or unit is None:
+                raise CsvImportError(
+                    f"La riga {row.row_number} indica una categoria "
+                    "senza tipologia e unità."
+                )
             category_key = (
                 scout_year,
                 account.label,
@@ -413,9 +475,15 @@ async def prepare_portal_expenses(
 def _summary(rows: Sequence[CsvExpenseRow]) -> str:
     directions = Counter(row.direction.value for row in rows)
     categories_missing = sum(row.category_reference is None for row in rows)
+    transaction_types_missing = sum(
+        row.transaction_type_reference is None for row in rows
+    )
+    units_missing = sum(row.unit_reference is None for row in rows)
     return (
         f"Righe lette: {len(rows)}; entrate: {directions['entrata']}; "
-        f"uscite: {directions['uscita']}; categorie vuote: {categories_missing}."
+        f"uscite: {directions['uscita']}; "
+        f"tipologie vuote: {transaction_types_missing}; "
+        f"unità vuote: {units_missing}; categorie vuote: {categories_missing}."
     )
 
 
@@ -425,8 +493,13 @@ async def _run_import(
     apply: bool,
     confirmation_count: int | None,
     browser_channel: str | None,
+    show_browser: bool,
+    accounting_voice_override: str | None,
 ) -> int:
-    rows = read_expense_csv(csv_path)
+    rows = read_expense_csv(
+        csv_path,
+        accounting_voice_override=accounting_voice_override,
+    )
     print(_summary(rows))
 
     load_dotenv(dotenv_path=Path.cwd() / ".env")
@@ -463,7 +536,35 @@ async def _run_import(
         session_state_path=data_path / "bilancio-session.json",
         debug_path=data_path / "debug",
         browser_channel=browser_channel or settings.playwright_browser_channel,
+        headless=not show_browser,
     )
+    try:
+        return await _run_import_rows(
+            rows,
+            client,
+            apply=apply,
+            confirmation_count=confirmation_count,
+        )
+    finally:
+        if show_browser:
+            print(
+                "La finestra Chrome resta aperta. Non inserire credenziali a "
+                "mano: se compare il login, chiudila e fermati. Chiudila anche "
+                "dopo aver visto il risultato.",
+                flush=True,
+            )
+            if await client.wait_for_visible_browser_close():
+                print("Accesso manuale completato; sessione conservata.")
+        await client.close()
+
+
+async def _run_import_rows(
+    rows: list[CsvExpenseRow],
+    client: PlaywrightBilancioClient,
+    *,
+    apply: bool,
+    confirmation_count: int | None,
+) -> int:
     try:
         expenses = await prepare_portal_expenses(rows, client)
     except (BilancioClientError, CsvImportError) as error:
@@ -497,7 +598,7 @@ async def _run_import(
         except BilancioClientError as error:
             print(
                 f"Interruzione alla riga {rows[index - 1].row_number}: "
-                f"{type(error).__name__}. Le righe successive non sono state tentate.",
+                f"{error}. Le righe successive non sono state tentate.",
                 file=sys.stderr,
             )
             return 1
@@ -529,6 +630,16 @@ def main() -> int:
         help="Browser locale da usare al posto di Chromium",
     )
     parser.add_argument(
+        "--show-browser",
+        action="store_true",
+        help="Mostra una finestra del browser durante l'importazione simulata",
+    )
+    parser.add_argument(
+        "--accounting-voice",
+        choices=ACCOUNTING_VOICE_OPTIONS,
+        help="Usa questa voce contabile per tutte le righe del CSV",
+    )
+    parser.add_argument(
         "--apply",
         action="store_true",
         help="Abilita l'importazione reale, con ulteriori conferme obbligatorie",
@@ -547,6 +658,8 @@ def main() -> int:
                 apply=args.apply,
                 confirmation_count=args.confirm_real_insert,
                 browser_channel=args.browser_channel,
+                show_browser=args.show_browser,
+                accounting_voice_override=args.accounting_voice,
             )
         )
     except CsvImportError as error:

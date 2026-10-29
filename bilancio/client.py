@@ -55,8 +55,8 @@ class PortalExpense:
     amount: Decimal
     direction: TransactionDirection
     account: PortalOption
-    transaction_type: PortalOption
-    unit: PortalOption
+    transaction_type: PortalOption | None
+    unit: PortalOption | None
     category: PortalOption | None
     notes: str | None
     accounting_voice: str = "Voci Scout"
@@ -78,6 +78,9 @@ class PortalSubmissionResult:
 
 
 class BilancioClient(Protocol):
+    async def clear_options_cache(self) -> None:
+        """Invalidate cached portal choices without submitting operations."""
+
     async def health_check(self) -> None:
         """Log in if needed and open the form without saving an expense."""
 

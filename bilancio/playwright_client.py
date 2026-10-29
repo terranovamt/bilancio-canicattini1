@@ -18,6 +18,7 @@ from playwright.async_api import (
     Error as PlaywrightError,
     Locator,
     Page,
+    Playwright,
     TimeoutError as PlaywrightTimeoutError,
     async_playwright,
 )
@@ -40,6 +41,14 @@ _MAX_ATTEMPTS = 3
 async def _wait_for_visible_locator(locator: Locator, timeout_ms: int) -> bool:
     try:
         await locator.first.wait_for(state="visible", timeout=timeout_ms)
+    except PlaywrightTimeoutError:
+        return False
+    return True
+
+
+async def _wait_for_hidden_locator(locator: Locator, timeout_ms: int) -> bool:
+    try:
+        await locator.first.wait_for(state="hidden", timeout=timeout_ms)
     except PlaywrightTimeoutError:
         return False
     return True
@@ -129,13 +138,26 @@ def _normalize_amount_input(value: str) -> str:
     normalized = re.sub(r"[^\d,.-]", "", value)
     if "," not in normalized:
         if re.fullmatch(r"-?\d+", normalized):
-            return f"{Decimal(normalized) / Decimal('100'):.2f}"
+            return f"{Decimal(normalized):.2f}"
         return normalized
     if "." not in normalized:
         return normalized.replace(",", ".")
     if normalized.rfind(",") > normalized.rfind("."):
         return normalized.replace(".", "").replace(",", ".")
     return normalized.replace(",", "")
+
+
+def _format_amount_input(amount: Decimal) -> str:
+    return f"{amount:.2f}"
+
+
+def _unit_ledger_value_matches(value: str, unit: PortalOption | None) -> bool:
+    if unit is None:
+        return not value
+    if value == unit.label:
+        return True
+    group_prefix = "Gruppo "
+    return unit.label.startswith(group_prefix) and value == unit.label[len(group_prefix) :]
 
 
 def _normalize_ledger_header(value: str) -> str:
@@ -189,6 +211,7 @@ class PlaywrightBilancioClient:
         debug_path: str | Path,
         browser_channel: str | None = None,
         timeout_ms: int = 20_000,
+        headless: bool = True,
     ) -> None:
         self._username = username
         self._password = password
@@ -196,7 +219,16 @@ class PlaywrightBilancioClient:
         self._debug_path = Path(debug_path)
         self._browser_channel = browser_channel
         self._timeout_ms = timeout_ms
+        self._headless = headless
         self._lock = asyncio.Lock()
+        self._options_lock = asyncio.Lock()
+        self._options_cache: dict[
+            tuple[object, ...], tuple[float, tuple[PortalOption, ...]]
+        ] = {}
+        self._visible_playwright: Playwright | None = None
+        self._visible_browser: Browser | None = None
+        self._visible_context: BrowserContext | None = None
+        self._visible_page: Page | None = None
 
         try:
             loaded = yaml.safe_load(Path(selectors_path).read_text(encoding="utf-8"))
@@ -215,6 +247,33 @@ class PlaywrightBilancioClient:
             str(loaded.get("account_name_pattern", "")),
             re.IGNORECASE,
         )
+
+    async def clear_options_cache(self) -> None:
+        async with self._options_lock:
+            self._options_cache.clear()
+        logger.info("Portal options cache cleared")
+
+    async def _cached_options(
+        self,
+        key: tuple[object, ...],
+        operation: Callable[[Page], Awaitable[Sequence[PortalOption]]],
+        transaction_date: date | None,
+    ) -> Sequence[PortalOption]:
+        selected_date = transaction_date or date.today()
+        cache_key = (scout_year_label(selected_date), *key)
+        async with self._options_lock:
+            now = asyncio.get_running_loop().time()
+            cached = self._options_cache.get(cache_key)
+            if cached is not None and now - cached[0] < 6 * 60 * 60:
+                return cached[1]
+            options = tuple(
+                await self._with_page(operation, transaction_date=selected_date)
+            )
+            self._options_cache[cache_key] = (
+                asyncio.get_running_loop().time(),
+                options,
+            )
+            return options
 
     async def health_check(self) -> None:
         async def check(page: Page) -> None:
@@ -236,9 +295,10 @@ class PlaywrightBilancioClient:
         *,
         transaction_date: date | None = None,
     ) -> Sequence[PortalOption]:
-        return await self._with_page(
+        return await self._cached_options(
+            ("accounts",),
             self._read_accounts,
-            transaction_date=transaction_date or date.today(),
+            transaction_date,
         )
 
     async def list_transaction_types(
@@ -252,9 +312,19 @@ class PlaywrightBilancioClient:
         async def read(page: Page) -> Sequence[PortalOption]:
             await self._open_account_form(page, account, direction)
             await self._select_accounting_voice(page, accounting_voice)
-            return await self._read_dropdown(page, "transaction_type", direction)
+            options = await self._read_dropdown(
+                page,
+                "transaction_type",
+                direction,
+            )
+            await self._close_operation_form(page)
+            return options
 
-        return await self._with_page(read, transaction_date=transaction_date)
+        return await self._cached_options(
+            ("types", account, direction, accounting_voice),
+            read,
+            transaction_date,
+        )
 
     async def list_units(
         self,
@@ -274,9 +344,15 @@ class PlaywrightBilancioClient:
                 transaction_type,
                 direction,
             )
-            return await self._read_dropdown(page, "unit")
+            options = await self._read_dropdown(page, "unit")
+            await self._close_operation_form(page)
+            return options
 
-        return await self._with_page(read, transaction_date=transaction_date)
+        return await self._cached_options(
+            ("units", account, direction, accounting_voice, transaction_type),
+            read,
+            transaction_date,
+        )
 
     async def list_categories(
         self,
@@ -298,9 +374,15 @@ class PlaywrightBilancioClient:
                 direction,
             )
             await self._select_dropdown(page, "unit", unit)
-            return await self._read_dropdown(page, "category")
+            options = await self._read_dropdown(page, "category")
+            await self._close_operation_form(page)
+            return options
 
-        return await self._with_page(read, transaction_date=transaction_date)
+        return await self._cached_options(
+            ("categories", account, direction, accounting_voice, transaction_type, unit),
+            read,
+            transaction_date,
+        )
 
     async def create_expense(
         self,
@@ -308,27 +390,64 @@ class PlaywrightBilancioClient:
         *,
         dry_run: bool,
     ) -> PortalSubmissionResult:
+        if not dry_run and (
+            expense.transaction_type is None or expense.unit is None
+        ):
+            raise BilancioClientError(
+                "AGESCI requires a transaction type and unit for real submissions"
+            )
+
         async def fill_form(page: Page) -> PortalSubmissionResult:
-            await self._open_account_ledger(page, expense.account)
-            existing = await self._find_matching_expense(page, expense)
+            await self._run_portal_stage(
+                "opening the account ledger",
+                self._open_account_ledger(page, expense.account),
+            )
+            existing = await self._run_portal_stage(
+                "checking for an existing expense",
+                self._find_matching_expense(page, expense),
+            )
             if existing:
                 return PortalSubmissionResult(
                     verified=True,
                     confirmation_id="existing-entry",
                     dry_run=dry_run,
                 )
-            await self._open_operation_form(page, expense.direction)
-            await self._select_accounting_voice(page, expense.accounting_voice)
-            await self._select_dropdown(
-                page,
-                "transaction_type",
-                expense.transaction_type,
-                expense.direction,
+            await self._run_portal_stage(
+                "selecting the transaction direction",
+                self._open_operation_form(page, expense.direction),
             )
-            await self._select_dropdown(page, "unit", expense.unit)
+            await self._run_portal_stage(
+                "filling date, description, and amount",
+                self._fill_form(page, expense),
+            )
+            await self._run_portal_stage(
+                "selecting the accounting voice",
+                self._select_accounting_voice(page, expense.accounting_voice),
+            )
+            if expense.transaction_type is not None:
+                await self._run_portal_stage(
+                    "selecting the transaction type",
+                    self._select_dropdown(
+                        page,
+                        "transaction_type",
+                        expense.transaction_type,
+                        expense.direction,
+                    ),
+                )
+            if expense.unit is not None:
+                await self._run_portal_stage(
+                    "selecting the unit",
+                    self._select_dropdown(page, "unit", expense.unit),
+                )
             if expense.category is not None:
-                await self._select_dropdown(page, "category", expense.category)
-            await self._fill_form(page, expense)
+                await self._run_portal_stage(
+                    "selecting the category",
+                    self._select_dropdown(page, "category", expense.category),
+                )
+            await self._run_portal_stage(
+                "verifying date, description, and amount",
+                self._fill_form(page, expense),
+            )
             if dry_run:
                 return PortalSubmissionResult(verified=True, dry_run=True)
             await self._locator(page, "save").click()
@@ -345,6 +464,19 @@ class PlaywrightBilancioClient:
             max_attempts=1,
         )
 
+    async def _run_portal_stage[T](
+        self,
+        stage: str,
+        operation: Awaitable[T],
+    ) -> T:
+        try:
+            return await operation
+        except PlaywrightTimeoutError as error:
+            logger.warning("AGESCI stage timed out: %s", stage)
+            raise BilancioClientError(
+                f"AGESCI timed out while {stage}"
+            ) from error
+
     async def _with_page[T](
         self,
         operation: Callable[[Page], Awaitable[T]],
@@ -358,10 +490,13 @@ class PlaywrightBilancioClient:
             for attempt in range(max_attempts):
                 async with self._page_context() as (page, context):
                     try:
-                        await self._ensure_authenticated(
-                            page,
-                            context,
-                            transaction_date or date.today(),
+                        await self._run_portal_stage(
+                            "authenticating with the portal",
+                            self._ensure_authenticated(
+                                page,
+                                context,
+                                transaction_date or date.today(),
+                            ),
                         )
                         return await operation(page)
                     except PortalOptionsUnavailable as error:
@@ -380,20 +515,75 @@ class PlaywrightBilancioClient:
                     except (PlaywrightError, BilancioClientError) as error:
                         last_error = error
                         if attempt == max_attempts - 1:
-                            last_diagnostic_path = str(
-                                await self._save_diagnostics(page, "portal-error")
-                            )
-                            if isinstance(error, BilancioClientError):
-                                error.diagnostic_path = last_diagnostic_path
+                            if page.is_closed():
+                                logger.warning(
+                                    "Portal page closed before diagnostics "
+                                    "could be saved"
+                                )
+                            else:
+                                try:
+                                    last_diagnostic_path = str(
+                                        await self._save_diagnostics(
+                                            page,
+                                            "portal-error",
+                                        )
+                                    )
+                                except (PlaywrightError, OSError) as diagnostic_error:
+                                    logger.warning(
+                                        "Could not save portal diagnostics "
+                                        "after failure (%s)",
+                                        type(diagnostic_error).__name__,
+                                    )
+                                if (
+                                    isinstance(error, BilancioClientError)
+                                    and last_diagnostic_path is not None
+                                ):
+                                    error.diagnostic_path = last_diagnostic_path
                             break
                 await asyncio.sleep(2**attempt)
             raise BilancioClientError(
-                f"AGESCI portal operation failed after {max_attempts} attempts",
+                "AGESCI portal operation failed after "
+                f"{max_attempts} attempts "
+                f"({type(last_error).__name__ if last_error else 'UnknownError'}"
+                f"{': ' + str(last_error) if isinstance(last_error, BilancioClientError) else ''})",
                 diagnostic_path=last_diagnostic_path,
             ) from last_error
 
     @asynccontextmanager
     async def _page_context(self):
+        if not self._headless:
+            if self._visible_playwright is None:
+                self._visible_playwright = await async_playwright().start()
+            if (
+                self._visible_browser is None
+                or not self._visible_browser.is_connected()
+            ):
+                launch_options: dict[str, object] = {
+                    "headless": False,
+                    "slow_mo": 350,
+                }
+                if self._browser_channel is not None:
+                    launch_options["channel"] = self._browser_channel
+                self._visible_browser = await self._visible_playwright.chromium.launch(
+                    **launch_options
+                )
+                self._visible_context = None
+                self._visible_page = None
+            if self._visible_context is None:
+                state_path = self._session_state_path
+                self._visible_context = await self._visible_browser.new_context(
+                    storage_state=(
+                        str(state_path)
+                        if state_path.is_file()
+                        else None
+                    )
+                )
+                self._visible_context.set_default_timeout(self._timeout_ms)
+            if self._visible_page is None or self._visible_page.is_closed():
+                self._visible_page = await self._visible_context.new_page()
+            yield self._visible_page, self._visible_context
+            return
+
         async with async_playwright() as playwright:
             launch_options: dict[str, object] = {"headless": True}
             if self._browser_channel is not None:
@@ -417,19 +607,90 @@ class PlaywrightBilancioClient:
                     await context.close()
                 await browser.close()
 
+    async def close(self) -> None:
+        browser = self._visible_browser
+        browser_connected = browser is not None and browser.is_connected()
+        if self._visible_context is not None and browser_connected:
+            await self._visible_context.close()
+        self._visible_context = None
+        if browser_connected and browser is not None:
+            await browser.close()
+        self._visible_browser = None
+        if self._visible_playwright is not None:
+            await self._visible_playwright.stop()
+            self._visible_playwright = None
+        self._visible_page = None
+
+    async def wait_for_visible_browser_close(self) -> bool:
+        browser = self._visible_browser
+        session_saved = False
+        while browser is not None and browser.is_connected():
+            page = self._visible_page
+            if page is None or page.is_closed():
+                break
+            context = self._visible_context
+            if (
+                not session_saved
+                and page is not None
+                and context is not None
+            ):
+                username = self._locator(page, "username")
+                year_switch = self._locator(page, "scout_year_switch")
+                login_visible = (
+                    await username.count()
+                    and await username.first.is_visible()
+                )
+                year_visible = (
+                    await year_switch.count()
+                    and await year_switch.first.is_visible()
+                )
+                if year_visible and not login_visible:
+                    self._session_state_path.parent.mkdir(
+                        parents=True,
+                        exist_ok=True,
+                    )
+                    await context.storage_state(
+                        path=str(self._session_state_path)
+                    )
+                    session_saved = True
+            await asyncio.sleep(0.5)
+        return session_saved
+
     async def _ensure_authenticated(
         self,
         page: Page,
         context: BrowserContext,
         transaction_date: date,
     ) -> None:
-        await page.goto(self._login_url, wait_until="domcontentloaded")
         cookie_button = self._locator(page, "cookie_accept")
         if await cookie_button.count() and await cookie_button.first.is_visible():
             await cookie_button.first.click()
 
         username = self._locator(page, "username")
         scout_year_switch = self._locator(page, "scout_year_switch")
+        if (
+            await scout_year_switch.count()
+            and await scout_year_switch.first.is_visible()
+            and not (
+                await username.count()
+                and await username.first.is_visible()
+            )
+        ):
+            await self._select_scout_year(
+                page,
+                scout_year_label(transaction_date),
+            )
+            await self._select_role(page)
+            self._session_state_path.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+            await context.storage_state(path=str(self._session_state_path))
+            return
+
+        await page.goto(self._login_url, wait_until="domcontentloaded")
+        if await cookie_button.count() and await cookie_button.first.is_visible():
+            await cookie_button.first.click()
         login_visible = await _wait_for_authentication_marker(
             username,
             scout_year_switch,
@@ -521,15 +782,29 @@ class PlaywrightBilancioClient:
             )
         await self._require_one(year_entry, "scout_year_option")
         await year_entry.click()
+        deadline = asyncio.get_running_loop().time() + self._timeout_ms / 1000
+        while asyncio.get_running_loop().time() < deadline:
+            if (
+                await year_switch.count()
+                and await year_switch.first.is_visible()
+                and year_label
+                in " ".join((await year_switch.first.inner_text()).split())
+            ):
+                break
+            await asyncio.sleep(0.1)
+        else:
+            raise PortalOptionsUnavailable(
+                f"Scout year did not become active: {year_label}"
+            )
+        if await year_switch.first.get_attribute("aria-expanded") == "true":
+            await year_switch.first.click()
         selected_year = self._locator(
             page,
             "scout_year_selected",
             year_label=year_label,
         )
         if not await _wait_for_visible_locator(selected_year, self._timeout_ms):
-            raise PortalOptionsUnavailable(
-                f"Scout year did not become active: {year_label}"
-            )
+            raise PortalOptionsUnavailable("Scout year menu did not close")
 
     async def _read_accounts(self, page: Page) -> Sequence[PortalOption]:
         await self._locator(page, "prima_nota").click()
@@ -589,7 +864,23 @@ class PlaywrightBilancioClient:
                 "The transaction direction control did not become visible"
             )
         await self._require_one(direction_locator, "direction")
-        await direction_locator.check()
+        try:
+            await direction_locator.check()
+        except PlaywrightTimeoutError:
+            if not await direction_locator.is_checked():
+                raise
+        if not await direction_locator.is_checked():
+            raise PortalOptionsUnavailable(
+                "The requested transaction direction did not become active"
+            )
+
+    async def _close_operation_form(self, page: Page) -> None:
+        await page.keyboard.press("Escape")
+        add_operation = self._locator(page, "add_operation")
+        if not await _wait_for_visible_locator(add_operation, self._timeout_ms):
+            raise PortalOptionsUnavailable(
+                "AGESCI operation form did not close after reading options"
+            )
 
     async def _select_accounting_voice(
         self,
@@ -637,6 +928,11 @@ class PlaywrightBilancioClient:
         if not options:
             raise PortalOptionsUnavailable(
                 f"The portal returned no options for {selector_key}"
+            )
+        await locator.click()
+        if not await _wait_for_hidden_locator(option_list, self._timeout_ms):
+            raise PortalOptionsUnavailable(
+                f"The portal option list did not close after reading {selector_key}"
             )
         return options
 
@@ -701,41 +997,70 @@ class PlaywrightBilancioClient:
     async def _fill_form(self, page: Page, expense: PortalExpense) -> None:
         date_locator = self._locator(page, "date")
         description_locator = self._locator(page, "description")
-        amount_locator = self._locator(page, "amount")
+        amount_locator = self._locator(
+            page,
+            "amount",
+            direction_label=self._direction_label(expense.direction),
+        )
         await self._require_one(date_locator, "date")
         await self._require_one(description_locator, "description")
         await self._require_one(amount_locator, "amount")
-        await date_locator.fill(expense.transaction_date.strftime("%d/%m/%Y"))
-        await description_locator.fill(expense.description)
-        expected_amount = f"{expense.amount:.2f}"
-        await amount_locator.fill(expected_amount.replace(".", ","))
-        notes = expense.notes
-        if notes:
+        await self._fill_and_verify_field(
+            date_locator,
+            "date",
+            expense.transaction_date.strftime("%d/%m/%Y"),
+        )
+        await self._fill_and_verify_field(
+            description_locator,
+            "description",
+            expense.description,
+        )
+        await self._fill_and_verify_field(
+            amount_locator,
+            "amount",
+            _format_amount_input(expense.amount),
+            normalize=_normalize_amount_input,
+            expected_value=f"{expense.amount:.2f}",
+            sequential=True,
+        )
+        if expense.notes:
             notes_locator = self._locator(page, "notes")
             await self._require_one(notes_locator, "notes")
-            await notes_locator.fill(notes)
+            await self._fill_and_verify_field(
+                notes_locator,
+                "notes",
+                expense.notes,
+            )
 
-        if (
-            not await _wait_for_input_value(
-                date_locator,
-                expense.transaction_date.strftime("%d/%m/%Y"),
-                self._timeout_ms,
-            )
-            or not await _wait_for_input_value(
-                description_locator,
-                expense.description,
-                self._timeout_ms,
-            )
-            or not await _wait_for_input_value(
-                amount_locator,
-                expected_amount,
-                self._timeout_ms,
-                normalize=_normalize_amount_input,
-            )
-        ):
-            await self._save_diagnostics(page, "form-verification-failed")
+    async def _fill_and_verify_field(
+        self,
+        locator: Locator,
+        field_name: str,
+        value: str,
+        *,
+        normalize: Callable[[str], str] = lambda input_value: input_value,
+        expected_value: str | None = None,
+        sequential: bool = False,
+    ) -> None:
+        try:
+            if sequential:
+                await locator.click()
+                await locator.press("Control+A")
+                await locator.press_sequentially(value, delay=120)
+            else:
+                await locator.fill(value)
+        except PlaywrightError as error:
             raise BilancioClientError(
-                "AGESCI form values did not match the requested expense"
+                f"AGESCI {field_name} field could not be filled"
+            ) from error
+        if not await _wait_for_input_value(
+            locator,
+            expected_value if expected_value is not None else value,
+            self._timeout_ms,
+            normalize=normalize,
+        ):
+            raise BilancioClientError(
+                f"AGESCI {field_name} field did not retain the requested value"
             )
 
     async def _find_matching_expense(
@@ -809,10 +1134,14 @@ class PlaywrightBilancioClient:
         indices = {header: headers.index(header) for header in headers}
         expected = {
             "Data Operazione": expense.transaction_date.strftime("%d/%m/%Y"),
-            "Unità": expense.unit.label,
+            "Unità": expense.unit.label if expense.unit is not None else "",
             "Descrizione Operazione": expense.description,
             required_headers[3]: f"{expense.amount:.2f}",
-            required_headers[4]: expense.transaction_type.label,
+            required_headers[4]: (
+                expense.transaction_type.label
+                if expense.transaction_type is not None
+                else ""
+            ),
         }
         if expense.category is not None:
             if "Categoria" not in indices:
@@ -836,7 +1165,14 @@ class PlaywrightBilancioClient:
             if "," in normalized_amount:
                 normalized_amount = normalized_amount.replace(".", "").replace(",", ".")
             values[required_headers[3]] = normalized_amount
-            if all(values.get(key) == value for key, value in expected.items()):
+            if all(
+                values.get(key) == value
+                for key, value in expected.items()
+                if key != "Unità"
+            ) and _unit_ledger_value_matches(
+                values.get("Unità", ""),
+                expense.unit,
+            ):
                 matches += 1
         return matches
 

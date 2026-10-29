@@ -78,17 +78,92 @@ class CsvExpenseParsingTests(unittest.TestCase):
         self.assertEqual(entries[1].amount, Decimal("15.00"))
         self.assertIs(entries[1].direction, TransactionDirection.INCOME)
 
+    def test_accepts_descrizione_as_an_alias_for_nota(self) -> None:
+        path = self._write_csv([self._row()])
+        content = path.read_text(encoding="utf-8-sig")
+        path.write_text(
+            content.replace("nota", "descrizione", 1),
+            encoding="utf-8-sig",
+        )
+
+        entries = read_expense_csv(path)
+
+        self.assertEqual(entries[0].description, "Prova senza dati reali")
+
+    def test_uses_explicit_accounting_voice_override(self) -> None:
+        path = self._write_csv([self._row(voce="Valore originale")])
+
+        entries = read_expense_csv(
+            path,
+            accounting_voice_override="Voci Scout",
+        )
+
+        self.assertEqual(entries[0].accounting_voice, "Voci Scout")
+
+    def test_maps_voce_type_code_to_transaction_type_with_override(self) -> None:
+        type_reference = "A.2 Oneri e servizi bancari"
+        path = self._write_csv(
+            [self._row(voce=type_reference, tipologia="")],
+        )
+
+        entries = read_expense_csv(
+            path,
+            accounting_voice_override="Voci Scout",
+        )
+
+        self.assertEqual(entries[0].accounting_voice, "Voci Scout")
+        self.assertEqual(
+            entries[0].transaction_type_reference,
+            type_reference,
+        )
+
+    def test_rejects_conflicting_voice_and_type_codes(self) -> None:
+        path = self._write_csv(
+            [
+                self._row(
+                    voce="A.2 Oneri e servizi bancari",
+                    tipologia="A.1",
+                )
+            ],
+        )
+
+        with self.assertRaisesRegex(CsvImportError, "tipologie diverse"):
+            read_expense_csv(
+                path,
+                accounting_voice_override="Voci Scout",
+            )
+
+    def test_allows_empty_transaction_type_and_unit(self) -> None:
+        path = self._write_csv(
+            [self._row(tipologia="", unita="")],
+        )
+
+        entries = read_expense_csv(
+            path,
+            accounting_voice_override="Voci Scout",
+        )
+
+        self.assertIsNone(entries[0].transaction_type_reference)
+        self.assertIsNone(entries[0].unit_reference)
+
     def test_rejects_missing_description(self) -> None:
         path = self._write_csv([self._row(nota="")])
 
         with self.assertRaisesRegex(CsvImportError, "non ha una descrizione"):
             read_expense_csv(path)
 
-    def test_rejects_amount_sign_inconsistent_with_direction(self) -> None:
-        path = self._write_csv([self._row(importo="12,50")])
+    def test_normalizes_amount_sign_from_transaction_type(self) -> None:
+        path = self._write_csv(
+            [
+                self._row(importo="12,50"),
+                self._row(tipo="entrata", importo="-15,00"),
+            ]
+        )
 
-        with self.assertRaisesRegex(CsvImportError, "coerente"):
-            read_expense_csv(path)
+        entries = read_expense_csv(path)
+
+        self.assertEqual(entries[0].signed_amount, Decimal("-12.50"))
+        self.assertEqual(entries[1].signed_amount, Decimal("15.00"))
 
     def test_matches_unique_type_code_prefix(self) -> None:
         selected = resolve_portal_option(
@@ -185,6 +260,30 @@ class FakeBilancioClient:
 
 
 class CsvExpensePreparationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_leaves_optional_type_and_unit_unselected(self) -> None:
+        client = FakeBilancioClient()
+        from bilancio.csv_import import CsvExpenseRow
+
+        row = CsvExpenseRow(
+            row_number=2,
+            transaction_date=date(2026, 10, 1),
+            description="Prova senza dati reali",
+            signed_amount=Decimal("-12.50"),
+            direction=TransactionDirection.EXPENSE,
+            account_reference="Cassa Co.ca",
+            accounting_voice="Voci Scout",
+            transaction_type_reference=None,
+            unit_reference=None,
+            category_reference=None,
+        )
+
+        expenses = await prepare_portal_expenses([row], client)
+
+        self.assertIsNone(expenses[0].transaction_type)
+        self.assertIsNone(expenses[0].unit)
+        self.assertEqual(client.type_calls, 0)
+        self.assertEqual(client.unit_calls, 0)
+
     async def test_resolves_dynamic_portal_choices_without_submission(self) -> None:
         client = FakeBilancioClient()
         from bilancio.csv_import import CsvExpenseRow

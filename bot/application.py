@@ -5,7 +5,13 @@ import logging
 from collections.abc import Sequence
 from pathlib import Path
 
-from telegram import Update
+from telegram import (
+    BotCommand,
+    BotCommandScopeChat,
+    MenuButtonCommands,
+    ReplyKeyboardMarkup,
+    Update,
+)
 from telegram.error import TelegramError
 from telegram.ext import (
     Application,
@@ -31,7 +37,7 @@ from storage.pending import PendingReceiptStore
 logger = logging.getLogger(__name__)
 
 HELP_TEXT = (
-    "Comandi disponibili:\n"
+    "📋 Comandi disponibili\n\n"
     "/start - inizia a usare il bot\n"
     "/help - mostra questo aiuto\n"
     "/ultime - mostra le ultime 10 spese\n"
@@ -40,7 +46,28 @@ HELP_TEXT = (
     "/riprova - ritenta le spese in coda\n"
     "/testspesa - inserisce una spesa manuale (solo amministratore)\n"
     "/testbilancio - controlla il portale (solo amministratore)"
+    "\n/aggiornaopzioni - aggiorna le scelte AGESCI (solo amministratore)"
 )
+
+USER_COMMANDS = (
+    BotCommand("start", "Apri il menu del bot"),
+    BotCommand("help", "Guida e comandi"),
+    BotCommand("ultime", "Le tue ultime spese"),
+    BotCommand("annulla", "Annulla l’operazione in corso"),
+    BotCommand("coda", "Operazioni in attesa"),
+    BotCommand("riprova", "Ritenta le operazioni in coda"),
+)
+ADMIN_COMMANDS = (
+    *USER_COMMANDS,
+    BotCommand("testspesa", "Inserisci una spesa senza foto"),
+    BotCommand("testbilancio", "Verifica il collegamento AGESCI"),
+    BotCommand("aggiornaopzioni", "Rileggi casse e tipologie dal portale"),
+)
+
+
+async def configure_bot_menu(application: Application) -> None:
+    await application.bot.set_my_commands(USER_COMMANDS)
+    await application.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
 
 
 def create_application(
@@ -50,7 +77,12 @@ def create_application(
     analyzer: ReceiptAnalyzer | None = None,
     bilancio_client: BilancioClient | None = None,
 ) -> Application:
-    application = Application.builder().token(settings.bot_token).build()
+    application = (
+        Application.builder()
+        .token(settings.bot_token)
+        .post_init(configure_bot_menu)
+        .build()
+    )
     workflow = ReceiptWorkflow(
         settings=settings,
         database=database,
@@ -90,6 +122,7 @@ def create_application(
     application.add_handler(CommandHandler("riprova", retry_command))
     application.add_handler(CommandHandler("testspesa", manual_expense_command))
     application.add_handler(CommandHandler("testbilancio", test_bilancio_command))
+    application.add_handler(CommandHandler("aggiornaopzioni", refresh_options_command))
     application.add_handler(
         MessageHandler(
             filters.PHOTO | filters.Document.PDF,
@@ -124,10 +157,25 @@ async def start_command(
 ) -> None:
     if update.message is None:
         return
+    settings: Settings = context.application.bot_data["settings"]
+    rows = [["/ultime", "/coda"], ["/help", "/annulla"]]
+    if update.effective_user is not None and update.effective_user.id == settings.admin_user_id:
+        rows.insert(0, ["/testspesa", "/testbilancio"])
+        await context.bot.set_my_commands(
+            ADMIN_COMMANDS,
+            scope=BotCommandScopeChat(chat_id=settings.admin_user_id),
+        )
+    mode = "🧪 Modalità SIMULATA: nessun salvataggio sul portale." if settings.dry_run else (
+        "⚠️ Modalità REALE: la conferma finale può salvare sul portale."
+    )
     await update.message.reply_text(
-        "Ciao! Inviami la foto o il PDF di uno scontrino. "
-        "Per una prova manuale senza scontrino, l’amministratore può usare "
-        "/testspesa. Prima di registrare una spesa, ti mostrerò i dati da controllare."
+        "🧾 Benvenuto nel tuo archivio spese!\n\n"
+        "📷 Inviami la foto o il PDF di uno scontrino.\n"
+        "✍️ Per una spesa senza foto usa /testspesa (amministratore).\n"
+        "Prima di procedere ti mostrerò i dati da controllare.\n\n"
+        f"{mode}\n\n"
+        "Scegli un comando qui sotto oppure scrivi / per aprire i suggerimenti.",
+        reply_markup=ReplyKeyboardMarkup(rows, resize_keyboard=True),
     )
 
 
@@ -252,6 +300,28 @@ async def manual_expense_command(
 ) -> None:
     workflow: ReceiptWorkflow = context.application.bot_data["receipt_workflow"]
     await workflow.start_manual_expense(update, context)
+
+
+async def refresh_options_command(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if update.message is None or update.effective_user is None:
+        return
+    settings: Settings = context.application.bot_data["settings"]
+    if update.effective_user.id != settings.admin_user_id:
+        await update.message.reply_text("Comando riservato all’amministratore.")
+        return
+    client: BilancioClient | None = context.application.bot_data["bilancio_client"]
+    if client is None:
+        await update.message.reply_text("Il collegamento al portale non è configurato.")
+        return
+    await client.clear_options_cache()
+    await update.message.reply_text(
+        "🔄 Cache svuotata. Le prossime scelte saranno rilette dal portale "
+        "e potranno richiedere più tempo. Nessuna spesa è stata inserita.\n"
+        "Se avevi già aperto un elenco, usa /annulla e ricomincia."
+    )
 
 
 async def test_bilancio_command(

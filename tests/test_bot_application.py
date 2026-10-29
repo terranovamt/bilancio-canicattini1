@@ -7,12 +7,16 @@ from pathlib import Path
 from telegram.ext import ApplicationHandlerStop
 
 from bot.application import (
+    ADMIN_COMMANDS,
     HELP_TEXT,
+    USER_COMMANDS,
     _format_recent_expenses,
     authorize_update,
     cancel_command,
+    configure_bot_menu,
     help_command,
     queue_command,
+    refresh_options_command,
     start_command,
     test_bilancio_command,
 )
@@ -46,13 +50,66 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_start_message_is_in_italian(self) -> None:
         message = SimpleNamespace(reply_text=AsyncMock())
-        update = SimpleNamespace(message=message)
+        update = SimpleNamespace(
+            message=message, effective_user=SimpleNamespace(id=12345)
+        )
 
-        await start_command(update, SimpleNamespace())
+        context = self.make_context(settings=make_settings())
+        context.bot = SimpleNamespace(set_my_commands=AsyncMock())
+        await start_command(update, context)
 
         text = message.reply_text.await_args.args[0]
         self.assertIn("Inviami", text)
         self.assertIn("scontrino", text)
+        self.assertIn("SIMULATA", text)
+        keyboard = message.reply_text.await_args.kwargs["reply_markup"]
+        self.assertEqual(keyboard.keyboard[0][0].text, "/testspesa")
+        admin_call = context.bot.set_my_commands.await_args
+        self.assertEqual(admin_call.args[0], ADMIN_COMMANDS)
+        self.assertEqual(admin_call.kwargs["scope"].chat_id, 12345)
+
+    async def test_registers_slash_commands_without_requiring_known_admin_chat(self) -> None:
+        bot = SimpleNamespace(
+            set_my_commands=AsyncMock(), set_chat_menu_button=AsyncMock()
+        )
+        application = SimpleNamespace(bot=bot, bot_data={"settings": make_settings()})
+
+        await configure_bot_menu(application)
+
+        bot.set_my_commands.assert_awaited_once_with(USER_COMMANDS)
+        bot.set_chat_menu_button.assert_awaited_once()
+
+    async def test_non_admin_start_keyboard_hides_admin_commands(self) -> None:
+        message = SimpleNamespace(reply_text=AsyncMock())
+        await start_command(
+            SimpleNamespace(message=message, effective_user=SimpleNamespace(id=67890)),
+            self.make_context(settings=make_settings()),
+        )
+        keyboard = message.reply_text.await_args.kwargs["reply_markup"]
+        self.assertNotIn(
+            "/testspesa", [button.text for row in keyboard.keyboard for button in row]
+        )
+
+    async def test_refresh_options_invalidates_cache_without_submission(self) -> None:
+        client = SimpleNamespace(
+            clear_options_cache=AsyncMock(), create_expense=AsyncMock()
+        )
+        message = SimpleNamespace(reply_text=AsyncMock())
+        await refresh_options_command(
+            SimpleNamespace(message=message, effective_user=SimpleNamespace(id=12345)),
+            self.make_context(settings=make_settings(), bilancio_client=client),
+        )
+        client.clear_options_cache.assert_awaited_once()
+        client.create_expense.assert_not_awaited()
+
+    async def test_refresh_options_is_admin_only(self) -> None:
+        client = SimpleNamespace(clear_options_cache=AsyncMock())
+        message = SimpleNamespace(reply_text=AsyncMock())
+        await refresh_options_command(
+            SimpleNamespace(message=message, effective_user=SimpleNamespace(id=67890)),
+            self.make_context(settings=make_settings(), bilancio_client=client),
+        )
+        client.clear_options_cache.assert_not_awaited()
 
     async def test_help_lists_registered_commands_in_italian(self) -> None:
         message = SimpleNamespace(reply_text=AsyncMock())

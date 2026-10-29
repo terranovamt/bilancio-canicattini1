@@ -1,4 +1,6 @@
 .env
+.update-backups/
+.update.lock/
 LOCAL_NOTES.md
 .venv/
 /data

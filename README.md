@@ -4,11 +4,11 @@ Progetto per un bot Telegram privato: riceve una foto o un PDF, corregge e anali
 
 ## Stato attuale
 
-Il bot, l'analisi locale, l'archivio, SQLite, la coda dei ritentativi e il client Playwright hanno test automatici. Il client segue l'ordine del portale: anno scout ricavato dalla data, Tesoriere di gruppo, Prima Nota, poi le scelte dinamiche per la spesa. Può salvare se `DRY_RUN=false` e verifica che la riga compaia nella Prima Nota; un salvataggio reale non è ancora stato provato dal bot.
+Il bot, l'analisi locale, l'archivio, SQLite, la coda dei ritentativi e il client Playwright hanno test automatici. Il client segue l'ordine del portale: anno scout ricavato dalla data, Tesoriere di gruppo, Prima Nota, poi le scelte dinamiche. Il salvataggio reale da CSV è stato completato e verificato sul portale il 27 ottobre 2026.
 
-È disponibile anche `bilancio/csv_import.py` per preparare e simulare l'importazione di un CSV di spese con classificazioni AGESCI. Dopo la correzione della verifica del registro, la simulazione completa ha compilato tutte le 52 righe (4 entrate e 48 uscite) senza salvare spese e senza trovare duplicati. L'utente ha scelto la descrizione completa della tipologia `A.2` per la riga 8 e ha confermato la stessa scelta per le altre righe ambigue. Un primo tentativo reale si è fermato alla riga 2; dopo il ricaricamento non risultavano nuove registrazioni confermate. L'importazione va ripetuta solo dopo un nuovo controllo e un'autorizzazione esplicita.
+È disponibile anche `bilancio/csv_import.py` per importare CSV con classificazioni AGESCI. L'import completato comprendeva 112 movimenti: 80 entrate e 32 uscite. Due uscite già presenti sono state escluse dal nuovo invio; le altre 110 sono state elaborate e verificate nel registro. Due timeout di autenticazione hanno interrotto i primi blocchi, poi ripresi senza reinviare le righe già verificate. Il verificatore riconosce l'unità `Gruppo G1` anche quando il registro la mostra come `G1`.
 
-La modalità `DRY_RUN=true` è quella predefinita e non salva sul portale. Non impostare `DRY_RUN=false` finché non hai concordato una prova controllata: in quel modo il bot inserisce davvero la spesa. La ricevuta viene archiviata sul NAS e non viene allegata alla registrazione web.
+La modalità `DRY_RUN=true` è quella predefinita e non salva sul portale. Per ogni nuova registrazione reale, usa `DRY_RUN=false` solo per il processo autorizzato e dopo aver controllato i dati e il numero di righe. La ricevuta viene archiviata sul NAS e non viene allegata alla registrazione web.
 
 L'analisi delle ricevute è prevista in locale con Ollama. Non è configurato l'invio delle immagini a un servizio AI online. Il modello locale va scelto dopo aver verificato la memoria e le prestazioni disponibili sul NAS.
 
@@ -22,6 +22,8 @@ L'analisi delle ricevute è prevista in locale con Ollama. Non è configurato l'
 - `Dockerfile` e `docker-compose.yml`: esecuzione prevista su Synology.
 - `docs/GUIDA_SYNOLOGY.md`: istruzioni per preparare il NAS.
 - `docs/CONTESTO_PROGETTO.md`: decisioni e stato dettagliato del lavoro.
+- `aggiorna.sh`: aggiornamento sul NAS da un pacchetto estratto separatamente, senza sostituire credenziali o dati; procedura nella sezione 15 della guida Synology.
+- `scarica.sh`: download e deploy dal ramo Git `deploy` solo su comando dell'utente, senza timer. Prima configurazione in [Deploy Git sul Synology](docs/DEPLOY_GIT_SYNOLOGY.md).
 
 ## Configurazione privata
 
@@ -60,6 +62,10 @@ $env:DRY_RUN = "true"
 Il bot legge token e ID dal file `.env`; non inviare quel file o le sue credenziali in chat. La prova salva database, registri e diagnostica in `data-local`, e le ricevute in `scontrini-local`, cartelle escluse da Git. Per fermare il bot, torna alla finestra PowerShell e premi `Ctrl+C`.
 
 ### Prova manuale AGESCI senza ricevuta
+
+All'avvio il bot registra il menu dei comandi Telegram: scrivendo `/` compaiono i suggerimenti. Invia `/start` per visualizzare anche la tastiera rapida e, per l'amministratore, i comandi riservati. Il messaggio iniziale indica se la modalità è simulata o reale.
+
+Le casse, tipologie, unità e categorie lette dal portale vengono conservate in memoria per sei ore. La cache distingue anno scout, cassa, entrata/uscita, voce, tipologia e unità, così non mescola elenchi dipendenti. La prima lettura resta legata ai tempi del portale; le successive non aprono il browser. Un riavvio azzera la cache. Usa `/aggiornaopzioni` (amministratore) per svuotarla prima della scadenza; se un menu era già aperto, annulla e ricomincia. Il salvataggio e la verifica nel portale restano sempre operazioni reali di browser, anche quando i menu provengono dalla cache.
 
 L’amministratore può usare `/testspesa` per inserire data, descrizione e importo direttamente in Telegram, senza scontrino e senza AI. Il bot mostra poi le scelte del portale e un riepilogo finale.
 

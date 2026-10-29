@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -358,6 +359,76 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored.status, "dry_run")
         self.assertTrue(Path(stored.archive_path).is_file())
         self.assertIn("non ha salvato", message.reply_text.await_args.args[0])
+
+    async def test_manual_one_euro_income_and_expense_with_fake_live_client(self) -> None:
+        for direction in TransactionDirection:
+            with self.subTest(direction=direction):
+                portal = FakeBilancioClient()
+                portal.list_accounts = AsyncMock(
+                    return_value=[PortalOption("account", "Cassa Co.ca")]
+                )
+                workflow = ReceiptWorkflow(
+                    settings=replace(make_settings(), dry_run=False),
+                    database=self.database, analyzer=None,
+                    pending_store=PendingReceiptStore(self.root / "pending"),
+                    archive=FileArchive(self.root / "archive"),
+                    bilancio_client=portal,
+                )
+                user = SimpleNamespace(id=12345)
+                await workflow.start_manual_expense(
+                    SimpleNamespace(
+                        message=SimpleNamespace(reply_text=AsyncMock()),
+                        effective_user=user,
+                    ),
+                    SimpleNamespace(),
+                )
+                expense_id = self.database.get_conversation_state(user.id)[1]["expense_id"]
+                await workflow.handle_text(
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            text=f"29/10/2026 | PROVA {direction.value} | 1,00",
+                            reply_text=AsyncMock(),
+                        ),
+                        effective_user=user,
+                    ),
+                    SimpleNamespace(),
+                )
+                for callback in (
+                    "receipt:confirm", "receipt:choose:0",
+                    f"receipt:direction:{direction.value}",
+                    "receipt:voice:Voci Scout", "receipt:choose:0",
+                    "receipt:choose:0", "receipt:choose:0",
+                ):
+                    await workflow.handle_callback(
+                        SimpleNamespace(
+                            callback_query=self.make_query(callback), effective_user=user
+                        ),
+                        SimpleNamespace(),
+                    )
+                await workflow.handle_text(
+                    SimpleNamespace(
+                        message=SimpleNamespace(text="-", reply_text=AsyncMock()),
+                        effective_user=user,
+                    ),
+                    SimpleNamespace(),
+                )
+                self.assertEqual(portal.submitted, [])
+                message = SimpleNamespace(reply_text=AsyncMock())
+                await workflow.handle_callback(
+                    SimpleNamespace(
+                        callback_query=self.make_query("receipt:manual_save"),
+                        effective_message=message, effective_user=user,
+                    ),
+                    SimpleNamespace(),
+                )
+                self.assertEqual(len(portal.submitted), 1)
+                expense, dry_run = portal.submitted[0]
+                self.assertFalse(dry_run)
+                self.assertEqual(expense.amount, Decimal("1.00"))
+                self.assertEqual(expense.direction, direction)
+                self.assertEqual(expense.account.label, "Cassa Co.ca")
+                self.assertEqual(self.database.get_expense(expense_id).status, "submitted")
+                self.assertIsNone(self.database.get_conversation_state(user.id))
 
     def test_parses_user_entered_european_amount_and_date(self) -> None:
         updated = ReceiptWorkflow._apply_user_value(

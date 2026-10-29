@@ -111,8 +111,8 @@ class ReceiptWorkflow:
             "conferma prima di inserirla nel portale."
         )
         await message.reply_text(
-            "Prova manuale senza scontrino e senza analisi AI.\n"
-            "Scrivi data, descrizione e importo separati da |.\n"
+            "✍️ Spesa manuale · senza foto e senza AI\n\n"
+            "1. Scrivi data, descrizione e importo separati da |.\n"
             "Esempio: 26/10/2026 | Prova Telegram | 1,00\n"
             f"{mode_notice}\n"
             "Per interrompere in qualsiasi momento usa /annulla."
@@ -492,7 +492,7 @@ class ReceiptWorkflow:
         }
         await self._save_state(user_id, "awaiting_account", data)
         await query.edit_message_text(
-            "Scegli la cassa:",
+            "🏦 1/6 · Scegli la cassa:",
             reply_markup=self._option_keyboard(options),
         )
 
@@ -532,7 +532,7 @@ class ReceiptWorkflow:
             ]
         )
         await query.edit_message_text(
-            "Scegli il tipo di voce:",
+            "📚 3/6 · Scegli il tipo di voce:",
             reply_markup=keyboard,
         )
 
@@ -594,7 +594,7 @@ class ReceiptWorkflow:
         )
         await self._save_state(user_id, "awaiting_transaction_type", state_data)
         await query.edit_message_text(
-            "Scegli la tipologia:",
+            "🏷️ 4/6 · Scegli la tipologia:",
             reply_markup=self._option_keyboard(options),
         )
 
@@ -647,7 +647,7 @@ class ReceiptWorkflow:
                     ]
                 )
                 await query.edit_message_text(
-                    "Vuoi registrare un’entrata o un’uscita?",
+                    "↔️ 2/6 · Vuoi registrare un’entrata o un’uscita?",
                     reply_markup=keyboard,
                 )
                 return
@@ -665,7 +665,7 @@ class ReceiptWorkflow:
                     accounting_voice=accounting_voice,
                 )
                 next_state = "awaiting_unit"
-                prompt = "Scegli l’unità:"
+                prompt = "👥 5/6 · Scegli l’unità:"
             elif state == "awaiting_unit":
                 state_data.update(unit=self._serialize_option(selected))
                 next_options = await self._bilancio.list_categories(
@@ -685,7 +685,7 @@ class ReceiptWorkflow:
                     )
                     return
                 next_state = "awaiting_category"
-                prompt = "Scegli la categoria:"
+                prompt = "📂 6/6 · Scegli la categoria:"
             elif state == "awaiting_category":
                 state_data.update(category=self._serialize_option(selected))
                 await self._ask_for_notes(user_id, state_data)
