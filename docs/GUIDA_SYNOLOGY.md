@@ -547,9 +547,9 @@ Non importa in quale cartella si trovi il terminale: il comando usa percorsi com
 
 - Non copia, stampa o modifica `.env`.
 - Non sostituisce `data`, `scontrini` o `ollama-data` e non cambia i loro proprietari o permessi.
-- Richiede che il bot sia acceso in modalita simulata e controlla anche la configurazione del prossimo avvio. Se rileva la modalita reale o non puo verificarla, si ferma.
+- Funziona anche se il bot e spento: verifica la configurazione del prossimo avvio tramite un container temporaneo che esegue soltanto il controllo, non il bot. Richiede sempre `DRY_RUN=true`. Se il bot e acceso, verifica anche la modalita del processo corrente. Se rileva la modalita reale o non puo completare i controlli, si ferma.
 - Conserva i vecchi file del programma in `.update-backups`, dentro il progetto; questa cartella e esclusa da Git e dall'immagine Docker.
-- Se la costruzione fallisce, non ricrea il container: il precedente resta acceso, ma i file del programma su disco sono gia aggiornati. Non dichiarare concluso l'aggiornamento e conserva il backup.
+- Se la costruzione fallisce, non ricrea il container: se il precedente era acceso resta acceso; se era spento resta spento. I file del programma su disco sono gia aggiornati. Non dichiarare concluso l'aggiornamento e conserva il backup.
 - Dopo la ricreazione controlla il container e il database. La risposta a `/start` e ancora necessaria per verificare Telegram.
 
 Il backup automatico riguarda solo il programma, **non e un backup del database o delle ricevute**. Mantieni anche una copia protetta dei dati con il sistema di backup del NAS. Lo script non effettua ripristini automatici e non elimina i vecchi backup.

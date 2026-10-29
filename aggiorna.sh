@@ -43,10 +43,16 @@ done
 cd "$target_dir"
 # Validate privately: rendered Compose output contains credentials.
 docker compose config --quiet || fail "Configurazione installata non valida."
-dry_run=$(docker compose exec -T bot python -c \
-    'from config import Settings; print("true" if Settings.from_env().dry_run else "false")') \
-    || fail "Non riesco a verificare la modalita del bot in esecuzione."
-[ "$dry_run" = "true" ] || fail "Il bot e in modalita REALE: fermati e concorda prima l'aggiornamento."
+running_bot=$(docker compose ps --status running -q bot) \
+    || fail "Non riesco a verificare lo stato del bot."
+if [ -n "$running_bot" ]; then
+    dry_run=$(docker compose exec -T bot python -c \
+        'from config import Settings; print("true" if Settings.from_env().dry_run else "false")') \
+        || fail "Non riesco a verificare la modalita del bot in esecuzione."
+    [ "$dry_run" = "true" ] || fail "Il bot e in modalita REALE: fermati e concorda prima l'aggiornamento."
+else
+    printf 'Il bot e spento: verifico la configurazione del prossimo avvio senza avviare il bot.\n'
+fi
 docker compose run --rm --no-deps --entrypoint python bot -c \
     'from config import Settings; assert Settings.from_env().dry_run, "DRY_RUN must be true before updating"' \
     || fail "La configurazione del prossimo avvio non e una simulazione valida."
@@ -71,7 +77,7 @@ for item in $items; do
 done
 
 docker compose config --quiet || fail "Nuova configurazione non valida. Bot precedente non ricreato; conserva il backup."
-printf 'Costruisco la nuova immagine. Il bot precedente resta acceso durante la costruzione.\n'
+printf 'Costruisco la nuova immagine senza interrompere un eventuale bot in esecuzione.\n'
 docker compose build bot || fail "Costruzione fallita. Bot precedente non ricreato; conserva il backup e segnala l'errore."
 docker compose up -d --no-deps --force-recreate bot \
     || fail "Avvio fallito. Non cancellare i dati; conserva il backup e segnala l'errore."

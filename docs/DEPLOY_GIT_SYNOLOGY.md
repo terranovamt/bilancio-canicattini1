@@ -151,11 +151,11 @@ Puoi rilanciare il comando anche per la stessa versione, dopo aver risolto un er
 
 ## 7. Limiti e recupero dagli errori
 
-- Restano i controlli di sicurezza di `aggiorna.sh`: bot acceso e `DRY_RUN=true` sia nella configurazione corrente sia in quella del prossimo avvio.
+- Puoi aggiornare anche con il bot spento: un container temporaneo controlla soltanto la configurazione del prossimo avvio, senza avviare il bot o elaborare la coda. Serve sempre `DRY_RUN=true`. Se il bot e acceso, viene verificata anche la modalita del processo corrente.
 - Nessun aggiornamento Git cambia automaticamente la modalità simulata o reale.
 - `.env`, `data`, `scontrini` e `ollama-data` non vengono copiati, cancellati o inseriti nella copia Git.
 - Il vecchio codice viene conservato in `.update-backups` nel progetto attivo; questo non sostituisce il backup dei dati.
-- Non esiste ancora un ripristino automatico dell'immagine precedente. Se la costruzione fallisce, il vecchio container resta acceso; se la ricreazione o il controllo di salute falliscono, occorre esaminare l'errore prima di dichiarare riuscito il deploy.
+- Non esiste ancora un ripristino automatico dell'immagine precedente. Se la costruzione fallisce, il vecchio container mantiene il suo stato (acceso o spento); se la ricreazione o il controllo di salute falliscono, occorre esaminare l'errore prima di dichiarare riuscito il deploy.
 - Se un comando viene interrotto bruscamente o il NAS si spegne, può rimanere una cartella di blocco. Non cancellarla senza prima verificare che nessun aggiornamento sia ancora in esecuzione.
 - Non modificare i file nella copia Git NAS: lavora sul PC, pubblica la versione e poi richiedi il download.
 - Non configurare **Utilità di pianificazione**, timer o webhook per questa procedura.

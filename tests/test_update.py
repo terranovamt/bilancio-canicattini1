@@ -63,6 +63,9 @@ class UpdateScriptTests(unittest.TestCase):
             "#!/bin/sh\n"
             'printf "%s\\n" "$*" >> "$MOCK_CALLS"\n'
             'case "$*" in\n'
+            '  "compose ps --status running -q bot")\n'
+            '    [ "${MOCK_PS_FAIL:-0}" = "0" ] || exit 1\n'
+            '    if [ "${MOCK_BOT_STOPPED:-0}" = "0" ]; then printf "test-container\\n"; fi ;;\n'
             '  "compose exec "*) printf "%s\\n" "${MOCK_RUNNING_DRY_RUN:-true}" ;;\n'
             '  "compose run "*) [ "${MOCK_CONFIG_REAL:-0}" = "0" ] ;;\n'
             '  "compose build bot") [ "${MOCK_BUILD_FAIL:-0}" = "0" ] ;;\n'
@@ -119,6 +122,29 @@ class UpdateScriptTests(unittest.TestCase):
         result = self.run_update(MOCK_RUNNING_DRY_RUN="false")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("modalita REALE", result.stderr)
+        self.assertFalse((self.target / ".update-backups").exists())
+        self.assert_private_files_preserved()
+
+    def test_stopped_bot_updates_without_exec_and_checks_next_configuration(self) -> None:
+        result = self.run_update(MOCK_BOT_STOPPED="1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.calls.read_text(encoding="utf-8")
+        self.assertNotIn("compose exec", calls)
+        self.assertIn("compose run --rm --no-deps --entrypoint python bot", calls)
+        self.assertIn("compose up -d --no-deps --force-recreate bot", calls)
+        self.assert_private_files_preserved()
+
+    def test_stopped_bot_with_live_next_configuration_is_rejected(self) -> None:
+        result = self.run_update(MOCK_BOT_STOPPED="1", MOCK_CONFIG_REAL="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("prossimo avvio", result.stderr)
+        self.assertFalse((self.target / ".update-backups").exists())
+        self.assert_private_files_preserved()
+
+    def test_status_query_failure_is_not_treated_as_stopped_bot(self) -> None:
+        result = self.run_update(MOCK_PS_FAIL="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("stato del bot", result.stderr)
         self.assertFalse((self.target / ".update-backups").exists())
         self.assert_private_files_preserved()
 
