@@ -306,12 +306,68 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         stored = self.database.get_expense(expense_id)
         self.assertIsNotNone(stored)
         assert stored is not None
-        self.assertEqual(stored.status, "dry_run")
+        self.assertEqual(stored.status, "submitted")
         self.assertIsNone(stored.archive_path)
         self.assertIsNone(self.database.get_conversation_state(user.id))
         self.assertEqual(len(portal.submitted), 1)
-        self.assertTrue(portal.submitted[0][1])
+        self.assertTrue(make_settings().dry_run)
+        self.assertFalse(portal.submitted[0][1])
         self.assertTrue(portal.submitted[0][0].accounting_voice == "Voci Scout")
+        self.assertIn("registrata e verificata", final_message.reply_text.await_args.args[0])
+
+    async def test_failed_manual_entry_is_not_retried_automatically(self) -> None:
+        portal = FakeBilancioClient()
+        portal.create_expense = AsyncMock(side_effect=BilancioClientError("Not verified"))
+        workflow = self._manual_portal_workflow(portal)
+        user = SimpleNamespace(id=12345)
+        expense_id = await self._start_manual(workflow, user)
+        for data in (
+            "receipt:confirm",
+            "receipt:choose:0",
+            "receipt:direction:uscita",
+            "receipt:choose:0",
+        ):
+            await self._tap(workflow, user, data)
+        message = SimpleNamespace(reply_text=AsyncMock())
+        query = self.make_query("receipt:manual_save")
+        await workflow.handle_callback(
+            SimpleNamespace(callback_query=query, message=message, effective_user=user),
+            SimpleNamespace(),
+        )
+
+        self.assertFalse(portal.create_expense.await_args.kwargs["dry_run"])
+        self.assertEqual(self.database.get_expense(expense_id).status, "failed")
+        self.assertEqual(
+            [
+                expense.expense_id
+                for expense in self.database.list_retryable_expenses(user.id)
+                if expense.status == "queued"
+            ],
+            [],
+        )
+        self.assertIsNone(self.database.get_conversation_state(user.id))
+        self.assertIn("Non la riproverò", message.reply_text.await_args.args[0])
+
+    async def test_receipts_still_follow_dry_run_setting(self) -> None:
+        portal = FakeBilancioClient()
+        workflow = ReceiptWorkflow(
+            settings=make_settings(),
+            database=self.database,
+            analyzer=self.analyzer,
+            pending_store=PendingReceiptStore(self.root / "pending"),
+            archive=FileArchive(self.root / "archive"),
+            bilancio_client=portal,
+        )
+        _, receipt_update, receipt_context = self.make_photo_update(b"receipt-dry")
+        await workflow.receive_receipt(receipt_update, receipt_context)
+        for data in (
+            "receipt:confirm",
+            "receipt:choose:0",
+            "receipt:direction:uscita",
+            "receipt:choose:0",
+        ):
+            await self._tap(workflow, SimpleNamespace(id=12345), data)
+        self.assertTrue(portal.submitted[0][1])
 
     async def test_legacy_unit_prompt_skips_removed_portal_options(self) -> None:
         portal = FakeBilancioClient()

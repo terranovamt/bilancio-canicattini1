@@ -55,7 +55,7 @@ USER_HELP_TEXT = (
 ADMIN_HELP_TEXT = (
     f"{USER_HELP_TEXT}\n\n"
     "🔧 Amministratore\n"
-    "/testspesa - prova di inserimento con valori predefiniti\n"
+    "/testspesa - inserisce davvero una spesa a mano (senza foto)\n"
     "/testbilancio - controlla il portale\n"
     "/aggiornaopzioni - rilegge casse e tipologie AGESCI\n"
     "/pulisci - svuota coda, ultime spese e log"
@@ -71,7 +71,7 @@ USER_COMMANDS = (
 )
 ADMIN_COMMANDS = (
     *USER_COMMANDS,
-    BotCommand("testspesa", "Inserisci una spesa senza foto"),
+    BotCommand("testspesa", "Inserisci davvero una spesa a mano"),
     BotCommand("testbilancio", "Verifica il collegamento AGESCI"),
     BotCommand("aggiornaopzioni", "Rileggi casse e tipologie dal portale"),
     BotCommand("pulisci", "Svuota coda, ultime spese e log"),
@@ -194,13 +194,13 @@ async def start_command(
             ADMIN_COMMANDS,
             scope=BotCommandScopeChat(chat_id=settings.admin_user_id),
         )
-        mode = "🧪 Modalità SIMULATA: nessun salvataggio sul portale." if settings.dry_run else (
-            "⚠️ Modalità REALE: la conferma finale salva sul portale."
+        mode = "🧪 Scontrini in modalità SIMULATA: nessun salvataggio sul portale." if settings.dry_run else (
+            "⚠️ Scontrini in modalità REALE: la conferma finale salva sul portale."
         )
         text = (
             "🧾 Archivio spese · amministratore\n\n"
             "📷 Inviami la foto o il PDF di uno scontrino.\n"
-            "✍️ /testspesa prepara una prova con valori predefiniti da modificare.\n"
+            "✍️ /testspesa inserisce DAVVERO una spesa a mano, dopo un’ultima conferma.\n"
             "🔄 /aggiornaopzioni rilegge casse e tipologie dal portale.\n"
             "🧹 /pulisci svuota coda, ultime spese e log.\n\n"
             f"{mode}"

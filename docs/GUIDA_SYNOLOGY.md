@@ -397,24 +397,24 @@ Con la versione aggiornata, `/start` mostra anche una tastiera con scorciatoie e
 
 Un container acceso non basta: la risposta Telegram conferma anche che il bot riesce a collegarsi e che il tuo ID è autorizzato. Il controllo di salute del container `bot` verifica il database, non l'accesso a Telegram o ad AGESCI.
 
-## 12. Su Telegram: prova una spesa senza foto e senza AI
+## 12. Su Telegram: inserisci una spesa a mano (solo amministratore)
 
-Questa prova accede al portale con le credenziali configurate, ma deve restare simulata.
+`/testspesa` è il modo per l'amministratore di inserire a mano una spesa, senza foto e senza AI. **Salva davvero nel portale**, anche se `DRY_RUN=true`: quell'impostazione vale solo per gli scontrini. Prima del salvataggio il bot chiede sempre un'ultima conferma.
 
 1. Invia `/testspesa`.
-2. Leggi il riepilogo proposto dal bot: data di oggi, descrizione «Prova Telegram», importo 0,10 € e modalità SIMULATA.
-3. Se vuoi cambiare un valore, premi **📅 Data**, **💶 Importo** o **✏️ Descrizione** e invia il nuovo valore.
+2. Leggi il riepilogo proposto dal bot: data di oggi, descrizione «Prova Telegram» e importo 0,10 €.
+3. Cambia i valori con **📅 Data**, **💶 Importo** o **✏️ Descrizione** e invia il nuovo valore.
 4. Premi **✅ Conferma**.
-5. Scegli la cassa proposta dal bot.
+5. Scegli la cassa.
 6. Scegli entrata o uscita.
 7. Scegli la tipologia: compaiono prima le più usate; premi **➕ Altre tipologie** se quella giusta non c'è. Unità e categoria vengono impostate dal bot.
-8. Leggi il riepilogo completo.
-9. Verifica data, anno scout, descrizione, importo e scelte contabili.
-10. Procedi soltanto se il riepilogo indica chiaramente **SIMULATA**.
-11. Conferma la simulazione.
-12. Attendi la risposta che indica il completamento senza salvataggio reale.
+8. Leggi il riepilogo completo e verifica data, anno scout, descrizione, importo, cassa e tipologia.
+9. Premi **✅ CONFERMA INSERIMENTO REALE** solo se tutto è corretto; altrimenti premi **Annulla**.
+10. Attendi il messaggio «Spesa manuale registrata e verificata nel portale».
 
-Puoi interrompere prima della conferma finale con `/annulla`. Non fare clic su Salva nel portale per completare questa prova.
+Se compare «❌ Non sono riuscito a registrare e verificare la spesa manuale», il bot non riprova da solo: apri il portale e controlla se la spesa c'è. Ripeti `/testspesa` solo se non compare, per evitare doppioni.
+
+Puoi interrompere prima della conferma finale con `/annulla`.
 
 ### Tempi dei menu e aggiornamento delle opzioni
 

@@ -469,7 +469,10 @@ class ReceiptWorkflow:
                 await query.edit_message_text("Questa conferma non è più disponibile.")
                 return
             notes_text = state_data.get("portal_notes")
-            await self._show_progress(query, self._submission_progress_text())
+            await self._show_progress(
+                query,
+                self._submission_progress_text(self._uses_dry_run(expense.payload)),
+            )
             await self._submit_expense(
                 update,
                 context,
@@ -532,8 +535,12 @@ class ReceiptWorkflow:
         except TelegramError:
             logger.warning("Could not show Telegram progress message")
 
-    def _submission_progress_text(self) -> str:
-        if self._settings.dry_run:
+    def _uses_dry_run(self, payload: dict[str, object]) -> bool:
+        # Manual admin entries are always real; DRY_RUN applies to receipts.
+        return self._settings.dry_run and payload.get("manual_entry") is not True
+
+    def _submission_progress_text(self, dry_run: bool) -> str:
+        if dry_run:
             return "⏳ Eseguo la prova simulata sul portale… Non premere altri pulsanti."
         return (
             "⏳ Registro l’operazione nel portale e verifico il salvataggio… "
@@ -885,7 +892,7 @@ class ReceiptWorkflow:
                 reply_markup=self._manual_final_confirmation_keyboard(),
             )
             return
-        await self._show_progress(query, self._submission_progress_text())
+        await self._show_progress(query, self._submission_progress_text(self._uses_dry_run(payload)))
         await self._submit_expense(
             update,
             context,
@@ -924,7 +931,7 @@ class ReceiptWorkflow:
                 reply_markup=self._manual_final_confirmation_keyboard(),
             )
             return
-        await self._show_progress(query, self._submission_progress_text())
+        await self._show_progress(query, self._submission_progress_text(self._uses_dry_run(payload)))
         await self._submit_expense(
             update,
             context,
@@ -1032,13 +1039,14 @@ class ReceiptWorkflow:
                 expense_id,
                 payload,
             )
+            dry_run = self._uses_dry_run(payload)
             result = await self._bilancio.create_expense(
                 portal_expense,
-                dry_run=self._settings.dry_run,
+                dry_run=dry_run,
             )
             if not result.verified:
                 raise BilancioClientError("Portal result could not be verified")
-            if self._settings.dry_run and not result.dry_run:
+            if dry_run and not result.dry_run:
                 await asyncio.to_thread(
                     self._database.update_expense_status,
                     expense_id,
@@ -1054,6 +1062,20 @@ class ReceiptWorkflow:
         except (BilancioClientError, OSError, ValueError, KeyError) as error:
             logger.error("Expense submission failed: %s", type(error).__name__)
             debug_path = Path(self._settings.data_path) / "debug"
+            if payload.get("manual_entry") is True:
+                await asyncio.to_thread(
+                    self._database.update_expense_status,
+                    expense_id,
+                    "failed",
+                )
+                await self._clear_state(user_id)
+                await message.reply_text(
+                    "❌ Non sono riuscito a registrare e verificare la spesa manuale. "
+                    "Non la riproverò in automatico.\n"
+                    "Controlla nel portale se compare: se non c’è, ripeti /testspesa."
+                    f"\nDiagnostica: {debug_path}"
+                )
+                return
             await self._notify_admin(
                 context,
                 "Non ho potuto verificare una registrazione AGESCI. "
@@ -1095,16 +1117,10 @@ class ReceiptWorkflow:
                         self._pending_store.delete,
                         pending_path,
                     )
-                if payload.get("manual_entry") is True:
-                    await message.reply_text(
-                        "Non ho potuto verificare la registrazione manuale. "
-                        "L’operazione è in coda per un nuovo tentativo."
-                    )
-                else:
-                    await message.reply_text(
-                        "Non ho potuto verificare la registrazione. La ricevuta è "
-                        "conservata sul NAS e l’operazione è in coda per un nuovo tentativo."
-                    )
+                await message.reply_text(
+                    "Non ho potuto verificare la registrazione. La ricevuta è "
+                    "conservata sul NAS e l’operazione è in coda per un nuovo tentativo."
+                )
             else:
                 await self._clear_state(user_id)
                 await message.reply_text(
@@ -1307,18 +1323,14 @@ class ReceiptWorkflow:
             except ValueError:
                 pass
         amount = str(payload["total_amount"]).replace(".", ",")
-        mode = (
-            "🧪 Modalità SIMULATA: il portale non salverà nulla."
-            if self._settings.dry_run
-            else "⚠️ Modalità REALE: prima dell’inserimento ti chiederò un’ultima conferma."
-        )
         return (
             "✍️ Spesa manuale · senza foto e senza AI\n\n"
             f"Data: {transaction_date}\n"
             f"Descrizione: {payload['merchant']}\n"
             f"Importo: {amount} EUR\n\n"
             "Premi Conferma per usare questi valori oppure modificali con i pulsanti.\n"
-            f"{mode}"
+            "⚠️ Inserimento REALE nel portale: prima di salvare ti chiederò "
+            "un’ultima conferma."
         )
 
     @staticmethod
@@ -1362,11 +1374,7 @@ class ReceiptWorkflow:
             if state_data.get("direction") == TransactionDirection.INCOME.value
             else "Uscita"
         )
-        action = (
-            "SIMULAZIONE: premendo il pulsante il portale NON salverà la spesa."
-            if self._settings.dry_run
-            else "ATTENZIONE: premendo il pulsante inserirai DAVVERO la spesa."
-        )
+        action = "ATTENZIONE: premendo il pulsante inserirai DAVVERO la spesa nel portale."
         return (
             "Ultimo controllo prima di procedere:\n"
             f"Data: {payload['date']}\n"
@@ -1382,12 +1390,9 @@ class ReceiptWorkflow:
             f"{action}"
         )
 
-    def _manual_final_confirmation_keyboard(self) -> InlineKeyboardMarkup:
-        button_text = (
-            "Esegui prova simulata"
-            if self._settings.dry_run
-            else "CONFERMA INSERIMENTO REALE"
-        )
+    @staticmethod
+    def _manual_final_confirmation_keyboard() -> InlineKeyboardMarkup:
+        button_text = "✅ CONFERMA INSERIMENTO REALE"
         return InlineKeyboardMarkup(
             [
                 [

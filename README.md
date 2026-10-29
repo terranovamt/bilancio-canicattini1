@@ -69,11 +69,11 @@ Le casse e le tipologie `Voci Scout` vengono lette dal portale in sottofondo cir
 
 Nel passaggio delle tipologie il bot mostra prima le 6 più usate per quella cassa e direzione; in fondo c'è il pulsante **➕ Altre tipologie** con quelle mancanti. All'inizio, quando non ci sono ancora spese registrate, mostra le prime 6 nell'ordine del portale.
 
-L’amministratore può usare `/testspesa` per una prova senza scontrino e senza AI. Il bot propone subito valori predefiniti: data di oggi, descrizione «Prova Telegram» e importo 0,10 €. Puoi cambiarli con i pulsanti **📅 Data**, **💶 Importo** e **✏️ Descrizione**, poi premi **✅ Conferma**. Il bot chiede cassa e direzione, usa `Voci Scout` e mostra le tipologie disponibili per quella scelta. Imposta l’unità predefinita associata alla cassa; se per quell'anno scout il portale non offre alcuna unità («No results»), lascia l'unità vuota. Lascia la categoria vuota. Prima di un inserimento reale mostra un riepilogo e chiede conferma.
+L’amministratore può usare `/testspesa` per inserire a mano una spesa reale, senza scontrino e senza AI. Il bot propone subito valori predefiniti: data di oggi, descrizione «Prova Telegram» e importo 0,10 €. Puoi cambiarli con i pulsanti **📅 Data**, **💶 Importo** e **✏️ Descrizione**, poi premi **✅ Conferma**. Il bot chiede cassa e direzione, usa `Voci Scout` e mostra le tipologie disponibili per quella scelta. Imposta l’unità predefinita associata alla cassa; se per quell'anno scout il portale non offre alcuna unità («No results»), lascia l'unità vuota. Lascia la categoria vuota. Prima del salvataggio mostra un riepilogo e chiede un'ultima conferma.
 
-- Con `DRY_RUN=true`, il portale non salva la spesa.
-- Con `DRY_RUN=false`, il pulsante finale inserisce davvero la spesa nel portale.
-- Usa `/annulla` per interrompere prima della conferma finale.
+- `/testspesa` salva **sempre davvero** nel portale, anche con `DRY_RUN=true`: quell'impostazione vale solo per gli scontrini.
+- Usa `/annulla` o il pulsante **Annulla** per interrompere prima della conferma finale.
+- Se il salvataggio non viene verificato, il bot non riprova da solo: controlla nel portale e ripeti `/testspesa` solo se la spesa non c'è.
 - Durante le operazioni lente il messaggio diventa «⏳ …» e i pulsanti spariscono. Se tocchi di nuovo un pulsante vecchio, il bot lo ignora e mostra «Questa scelta non è più attiva».
 - Se il portale non risponde mentre il bot legge casse o tipologie, la prova manuale viene annullata in automatico, senza inserire nulla: puoi ripartire subito con `/testspesa`. Per uno scontrino, invece, il file resta salvato e il bot propone **Conferma** per riprovare oppure **Annulla**.
 - Un nuovo `/testspesa` annulla da solo una prova manuale rimasta aperta.
