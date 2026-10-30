@@ -18,15 +18,16 @@ Per provare questi messaggi attiva prima **Modalità PROVA** da Amministrazione 
 ✅ Modalità REALE: dopo la tipologia e il dettaglio facoltativo salvo nel portale, senza altre conferme.
 ```
 
+Menu fisso in basso, al posto della tastiera del telefono:
+
 ```text
-[📷 Nuovo scontrino]
-[💰 Nuova entrata]
+[📷 Nuovo scontrino] [💰 Nuova entrata]
 [📊 Riepilogo] [📋 Ultime operazioni]
-[⏳ Operazioni in attesa]
-[❓ Aiuto] [✖️ Annulla operazione]
+[⏳ Operazioni in attesa] [❓ Aiuto]
+[✖️ Annulla operazione]
 ```
 
-I pulsanti sono sotto il messaggio. All'avvio la vecchia tastiera con i comandi slash viene rimossa; i comandi scritti restano disponibili come alternativa.
+Il menu resta visibile durante tutta la conversazione; il campo del messaggio mostra `Scegli dal menu o invia una foto`. Un pulsante premuto compare in chat come messaggio dell'utente e la risposta arriva in un nuovo messaggio. I comandi scritti restano disponibili come alternativa. Dopo un aggiornamento serve un `/start` per ricevere il menu nuovo.
 
 ### 2 · Avvio — amministratore
 
@@ -38,13 +39,13 @@ La modalità è indicata per tutti. Se l'amministratore ha attivato la prova, l'
 ```
 
 ```text
-[📷 Nuovo scontrino]
-[💰 Nuova entrata]
+[📷 Nuovo scontrino] [💰 Nuova entrata]
 [📊 Riepilogo] [📋 Ultime operazioni]
-[⏳ Operazioni in attesa]
-[❓ Aiuto] [✖️ Annulla operazione]
-[⚙️ Amministrazione]
+[⏳ Operazioni in attesa] [❓ Aiuto]
+[✖️ Annulla operazione] [⚙️ Amministrazione]
 ```
+
+**⚙️ Amministrazione** apre un messaggio con i pulsanti sotto il messaggio:
 
 La schermata Amministrazione contiene:
 
@@ -55,10 +56,9 @@ La schermata Amministrazione contiene:
 [🔄 Aggiorna casse e tipologie]
 [🔖 Versione e aggiornamenti]
 [🧹 Pulisci cronologia]
-[🏠 Menu principale]
 ```
 
-Versione attiva e disponibile vengono mostrate nella schermata **Versione e aggiornamenti**, con **Installa aggiornamento**, **Indietro** e **Menu principale**. Il pulsante di installazione apre la conferma, non installa subito. La pulizia mantiene la propria conferma.
+Versione attiva e disponibile vengono mostrate nella schermata **Versione e aggiornamenti**, con **Installa aggiornamento** e **Indietro**. Il pulsante di installazione apre la conferma, non installa subito. La pulizia mantiene la propria conferma.
 
 In prova il primo pulsante diventa **✅ Torna ai salvataggi reali**. La scelta resta nel database anche dopo il riavvio e vale per tutti i nuovi inserimenti; quelli già iniziati mantengono la loro modalità.
 
@@ -89,7 +89,7 @@ Dopo la tipologia scrivi un dettaglio o saltalo e registri subito, senza altre c
 🧪 Lì puoi anche attivare o disattivare la modalità prova.
 ```
 
-Le schermate hanno **Menu principale**; gli strumenti amministratore hanno anche **Indietro**. Il ritorno al menu non cancella un inserimento. I moduli conservano correzione e annullamento, non conferme aggiuntive. Le schermate informative sono accessibili durante le attese dell'AI o del portale; salvataggi e altre azioni che cambiano dati restano sequenziali.
+Le schermate non hanno più **Menu principale**: il menu resta in basso. Gli strumenti amministratore hanno **Indietro**. Usare il menu non cancella un inserimento. I moduli conservano correzione e annullamento, non conferme aggiuntive. Le schermate informative sono accessibili durante le attese dell'AI o del portale; salvataggi e altre azioni che cambiano dati restano sequenziali.
 
 ## B. Inserimento da scontrino
 
@@ -200,7 +200,6 @@ Che categoria vuoi? Scrivi "-" per lasciarla vuota.
 [📅 Data] [💶 Importo] [✏️ Descrizione]
 [🏷️ Categoria]
 [Annulla]
-[🏠 Menu principale]
 ```
 
 ### 8 · Entrata o uscita
@@ -328,18 +327,18 @@ I campi vuoti non compaiono. La riga 👥 manca anche quando il portale non offr
 
 ### 13 · Inserimento manuale: «Nuova entrata» / Amministrazione → «Inserisci a mano»
 
-**💰 Nuova entrata** è nel menu principale ed è disponibile a tutti gli utenti autorizzati; **✍️ Inserisci a mano** (entrata o uscita) è nella schermata ⚙️ Amministrazione. Restano disponibili anche `/entrata` e, per l'amministratore, `/manual`. Si apre un modulo unico: ogni dato scritto viene tolto dalla chat e il modulo si ripresenta aggiornato in fondo, con i pulsanti sempre visibili.
+**💰 Nuova entrata** è nel menu principale ed è disponibile a tutti gli utenti autorizzati; **✍️ Inserisci a mano** (entrata o uscita) è nella schermata ⚙️ Amministrazione. Restano disponibili anche `/entrata` e, per l'amministratore, `/manual`. Si apre un modulo unico che chiede un dato alla volta, con i tasti adatti al campo: calendario per la data, tastiera normale per la descrizione, tastierino numerico per l'importo. Ogni dato scritto viene tolto dalla chat e il modulo si ripresenta aggiornato in fondo; i tasti del calendario e del tastierino modificano lo stesso messaggio.
 
 ```text
 💰 Nuova entrata a mano
 
-Scrivi qui sotto il dato richiesto: il modulo si aggiorna e i pulsanti restano in fondo. Per cambiare un campo premi il suo pulsante.
+Usa i tasti sotto il modulo oppure scrivi il dato richiesto: il modulo si aggiorna e i pulsanti restano in fondo. Per cambiare un campo premi il suo pulsante.
 
 📅 Data: da inserire
 ✏️ Descrizione: da inserire
 💶 Importo: da inserire
 
-👉 📅 Scrivi la data come giorno-mese-anno, ad esempio 29-10-2026, 29/10/26 o 2-3-26.
+👉 📅 Scegli il giorno dal calendario o premi «Oggi»/«Ieri». Puoi anche scriverla come giorno-mese-anno, ad esempio 29-10-2026, 29/10/26 o 2-3-26.
 
 Poi sceglierai cassa e tipologia: dopo la tipologia scrivi un dettaglio o premi «Salva senza dettaglio» e il bot registra subito, senza altre conferme.
 
@@ -347,13 +346,17 @@ Poi sceglierai cassa e tipologia: dopo la tipologia scrivi un dettaglio o premi 
 ```
 
 ```text
-[📅 Oggi]
+[📅 Oggi] [Ieri]
+[◀️] [Ottobre 2026] [·]
+[L] [M] [M] [G] [V] [S] [D]
+[·] [·] [1] [2] [3] [4] [5]
+…
+[27] [28] [29] [·] [·] [·] [·]
 [📅 Data] [✏️ Descrizione] [💶 Importo]
 [Annulla]
-[🏠 Menu principale]
 ```
 
-«Inserisci a mano» usa il titolo `✍️ Nuova operazione a mano (entrata o uscita)`. **📅 Oggi** compare solo quando è richiesta la data. Dopo la data:
+«Inserisci a mano» usa il titolo `✍️ Nuova operazione a mano (entrata o uscita)`. Il calendario compare solo quando è richiesta la data: ◀️/▶️ cambiano mese senza andare oltre il mese corrente, i giorni futuri e le caselle vuote sono `·` e non fanno nulla. Dopo la data:
 
 ```text
 📅 Data: 02/03/2026
@@ -363,7 +366,23 @@ Poi sceglierai cassa e tipologia: dopo la tipologia scrivi un dettaglio o premi 
 👉 ✏️ Scrivi la descrizione dell’operazione.
 ```
 
-Se il valore non è valido, il modulo mostra `⚠️ Non ho capito il valore scritto. Riprova.` e ripete la richiesta. Le altre richieste sono `💶 Scrivi l’importo (es. 12,50).`
+Quando è richiesto l'importo compare il tastierino; mentre componi, il modulo mostra il valore, ad esempio `💶 Importo: 12,5 € ✏️`:
+
+```text
+👉 💶 Componi l’importo con i tasti qui sotto e premi «Conferma importo», oppure scrivilo (es. 12,50).
+```
+
+```text
+[1] [2] [3]
+[4] [5] [6]
+[7] [8] [9]
+[,] [0] [⌫]
+[✅ Conferma importo]
+[📅 Data] [✏️ Descrizione] [💶 Importo]
+[Annulla]
+```
+
+Il tastierino accetta al massimo due decimali. Se il valore non è valido (anche vuoto o zero), il modulo mostra `⚠️ Non ho capito il valore scritto. Riprova.` e ripete la richiesta.
 
 Dopo aver compilato i dati:
 

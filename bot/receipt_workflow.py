@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import calendar
 import logging
 import re
 from datetime import date, datetime, timedelta, timezone
@@ -11,7 +12,7 @@ from typing import Protocol, runtime_checkable
 import uuid
 
 from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
-from telegram.error import NetworkError, TelegramError
+from telegram.error import BadRequest, NetworkError, TelegramError
 from telegram.ext import ContextTypes
 
 from bilancio.client import (
@@ -63,6 +64,9 @@ _CALLBACK_STATES = {
     "confirm": {"awaiting_confirmation"},
     "edit": {"awaiting_confirmation", "awaiting_account", "awaiting_receipt_data", "awaiting_edit"},
     "today": {"awaiting_receipt_data", "awaiting_edit"},
+    "cal": {"awaiting_receipt_data", "awaiting_edit"},
+    "day": {"awaiting_receipt_data", "awaiting_edit"},
+    "key": {"awaiting_receipt_data", "awaiting_edit"},
     "manual_save": {"awaiting_manual_final_confirmation"},
     "direction": {"awaiting_direction"},
     "voice": {"awaiting_accounting_voice"},
@@ -86,6 +90,8 @@ _TOP_TYPES_COUNT = 6
 _ANALYSIS_PROGRESS_INTERVAL_SECONDS = 30
 _FORM_STATES = {"awaiting_receipt_data", "awaiting_edit"}
 _NOTES_MAX_LENGTH = 500
+_AMOUNT_MAX_DIGITS = 7
+_CALENDAR_BLANK = "·"
 _FORM_KEYS = {"form_chat_id", "form_message_id"}
 _DATE_PATTERN = re.compile(r"(\d{1,2})\s*[-/.\s]\s*(\d{1,2})\s*[-/.\s]\s*(\d{4}|\d{2})")
 _ISO_DATE_PATTERN = re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})")
@@ -106,6 +112,82 @@ def parse_italian_date(value: str) -> date:
         if len(match.group(3)) == 2:
             year += 2000
     return date(year, month, day)
+
+
+def _month_start(value: date) -> date:
+    return value.replace(day=1)
+
+
+def _calendar_rows(shown: date, today: date) -> list[list[InlineKeyboardButton]]:
+    """Build an inline month grid; future days are not selectable."""
+    first = _month_start(shown)
+    previous = _month_start(first - timedelta(days=1))
+    following = _month_start(first + timedelta(days=32))
+    forward = (
+        InlineKeyboardButton("▶️", callback_data=f"receipt:cal:{following:%Y-%m}")
+        if following <= _month_start(today)
+        else InlineKeyboardButton(_CALENDAR_BLANK, callback_data="receipt:noop")
+    )
+    rows = [
+        [
+            InlineKeyboardButton("◀️", callback_data=f"receipt:cal:{previous:%Y-%m}"),
+            InlineKeyboardButton(
+                f"{texts.MONTH_NAMES[first.month - 1]} {first.year}",
+                callback_data="receipt:noop",
+            ),
+            forward,
+        ],
+        [
+            InlineKeyboardButton(label, callback_data="receipt:noop")
+            for label in texts.CALENDAR_WEEKDAYS
+        ],
+    ]
+    for week in calendar.Calendar(firstweekday=0).monthdayscalendar(first.year, first.month):
+        row = []
+        for day in week:
+            current = first.replace(day=day) if day else None
+            if current is None or current > today:
+                row.append(InlineKeyboardButton(_CALENDAR_BLANK, callback_data="receipt:noop"))
+            else:
+                row.append(
+                    InlineKeyboardButton(
+                        str(day), callback_data=f"receipt:day:{current.isoformat()}"
+                    )
+                )
+        rows.append(row)
+    return rows
+
+
+def _amount_keypad_rows() -> list[list[InlineKeyboardButton]]:
+    rows = [
+        [InlineKeyboardButton(digit, callback_data=f"receipt:key:{digit}") for digit in group]
+        for group in ("123", "456", "789")
+    ]
+    rows.append([
+        InlineKeyboardButton(",", callback_data="receipt:key:comma"),
+        InlineKeyboardButton("0", callback_data="receipt:key:0"),
+        InlineKeyboardButton("⌫", callback_data="receipt:key:back"),
+    ])
+    rows.append([InlineKeyboardButton(texts.AMOUNT_CONFIRM_BUTTON, callback_data="receipt:key:ok")])
+    return rows
+
+
+def next_amount_input(current: str, key: str) -> str:
+    """Apply one keypad press to the amount typed so far (Italian decimal comma)."""
+    if key == "back":
+        return current[:-1]
+    if key == "comma":
+        return current if "," in current else (current or "0") + ","
+    if len(key) != 1 or not key.isdigit():
+        raise ValueError("Unsupported keypad key")
+    whole, separator, decimals = current.partition(",")
+    if separator and len(decimals) >= 2:
+        return current
+    if not separator and len(whole) >= _AMOUNT_MAX_DIGITS:
+        return current
+    if current == "0":
+        return key
+    return current + key
 _ANALYSIS_PHASE_TEXTS = {
     AnalysisPhase.PREPARING_IMAGE: texts.ANALYSIS_PREPARING_IMAGE,
     AnalysisPhase.LOADING_MODEL: texts.ANALYSIS_LOADING_MODEL,
@@ -553,6 +635,9 @@ class ReceiptWorkflow:
         if action != "receipt":
             await query.answer()
             return
+        if value == "noop":
+            await query.answer()
+            return
         if user.id in self._busy_users:
             await query.answer(_BUSY_TEXT)
             return
@@ -633,23 +718,76 @@ class ReceiptWorkflow:
                 else self._prompt_for(field_name),
                 reply_markup=self._navigation_keyboard(cancel=True),
             )
-        elif value == "today":
+        elif value == "today" or value.startswith("day:"):
             if not self._is_manual_form(state, state_data, expense.payload):
                 await query.edit_message_text(texts.STALE_BUTTON)
                 return
-            updated = {**expense.payload, "date": date.today().isoformat()}
-            await asyncio.to_thread(self._database.update_expense_payload, expense_id, updated)
-            missing = missing_required_fields(self._receipt_from_payload(updated))
-            if missing:
-                await self._edit_manual_form(
-                    query, user_id, "awaiting_receipt_data", {"expense_id": expense_id},
-                    updated, missing[0],
+            try:
+                chosen = (
+                    date.today()
+                    if value == "today"
+                    else date.fromisoformat(value.split(":", 1)[1])
+                )
+            except ValueError:
+                await query.edit_message_text(texts.STALE_BUTTON)
+                return
+            if chosen > date.today():
+                return
+            updated = {**expense.payload, "date": chosen.isoformat()}
+            await self._complete_form_field(
+                query, context, user_id, expense_id, updated
+            )
+        elif value.startswith("cal:"):
+            if (
+                not self._is_manual_form(state, state_data, expense.payload)
+                or self._form_field(state, state_data, expense.payload) != "date"
+            ):
+                await query.edit_message_text(texts.STALE_BUTTON)
+                return
+            try:
+                shown = date.fromisoformat(value.split(":", 1)[1] + "-01")
+            except ValueError:
+                await query.edit_message_text(texts.STALE_BUTTON)
+                return
+            await self._edit_manual_form(
+                query, user_id, state, state_data, expense.payload, "date",
+                month=min(shown, _month_start(date.today())),
+            )
+        elif value.startswith("key:"):
+            if (
+                not self._is_manual_form(state, state_data, expense.payload)
+                or self._form_field(state, state_data, expense.payload) != "total_amount"
+            ):
+                await query.edit_message_text(texts.STALE_BUTTON)
+                return
+            key = value.split(":", 1)[1]
+            typed = state_data.get("amount_input")
+            typed = typed if isinstance(typed, str) else ""
+            if key == "ok":
+                try:
+                    updated = self._apply_user_value(expense.payload, "total_amount", typed)
+                    self._receipt_from_payload(updated)
+                except (ValueError, TypeError):
+                    await self._edit_manual_form(
+                        query, user_id, state, state_data, expense.payload,
+                        "total_amount", invalid=True,
+                    )
+                    return
+                await self._complete_form_field(
+                    query, context, user_id, expense_id, updated
                 )
                 return
-            await query.edit_message_text(
-                texts.MANUAL_FORM_DONE.format(details=texts.operation_details(updated, {}))
+            try:
+                typed_next = next_amount_input(typed, key)
+            except ValueError:
+                await query.edit_message_text(texts.STALE_BUTTON)
+                return
+            if typed_next == typed:
+                return
+            await self._edit_manual_form(
+                query, user_id, state, {**state_data, "amount_input": typed_next},
+                expense.payload, "total_amount",
             )
-            await self._offer_accounts(user_id, expense_id, updated, query.message, context)
         elif value == "confirm":
             if self._bilancio is None:
                 await query.edit_message_text(
@@ -766,7 +904,12 @@ class ReceiptWorkflow:
         return state != "awaiting_edit" or state_data.get("edit_field") in _MANUAL_EDIT_PROMPTS
 
     def _manual_form_text(
-        self, payload: dict[str, object], field_name: str | None, *, invalid: bool = False
+        self,
+        payload: dict[str, object],
+        field_name: str | None,
+        *,
+        invalid: bool = False,
+        amount_input: object = None,
     ) -> str:
         return texts.manual_form(
             payload,
@@ -774,13 +917,39 @@ class ReceiptWorkflow:
             prompt=_MANUAL_EDIT_PROMPTS.get(field_name) if field_name else None,
             mode=self._mode_text(payload),
             invalid=invalid,
+            amount_input=(
+                amount_input
+                if field_name == "total_amount" and isinstance(amount_input, str)
+                else None
+            ),
         )
 
     @staticmethod
-    def _manual_form_keyboard(field_name: str | None) -> InlineKeyboardMarkup:
-        rows = []
+    def _manual_form_keyboard(
+        field_name: str | None,
+        payload: dict[str, object] | None = None,
+        *,
+        month: date | None = None,
+    ) -> InlineKeyboardMarkup:
+        rows: list[list[InlineKeyboardButton]] = []
         if field_name == "date":
-            rows.append([InlineKeyboardButton(texts.TODAY_BUTTON, callback_data="receipt:today")])
+            today = date.today()
+            if month is None:
+                try:
+                    current = date.fromisoformat(str((payload or {}).get("date")))
+                except ValueError:
+                    current = today
+                month = min(current, today)
+            rows.append([
+                InlineKeyboardButton(texts.TODAY_BUTTON, callback_data="receipt:today"),
+                InlineKeyboardButton(
+                    texts.YESTERDAY_BUTTON,
+                    callback_data=f"receipt:day:{(today - timedelta(days=1)).isoformat()}",
+                ),
+            ])
+            rows.extend(_calendar_rows(month, today))
+        elif field_name == "total_amount":
+            rows.extend(_amount_keypad_rows())
         rows.extend([
             [
                 InlineKeyboardButton(texts.DATE_BUTTON, callback_data="receipt:edit:date"),
@@ -788,9 +957,37 @@ class ReceiptWorkflow:
                 InlineKeyboardButton(texts.AMOUNT_BUTTON, callback_data="receipt:edit:total_amount"),
             ],
             [InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")],
-            [InlineKeyboardButton(texts.HOME_BUTTON, callback_data="menu:home")],
         ])
         return InlineKeyboardMarkup(rows)
+
+    def _form_field(
+        self, state: str, state_data: dict[str, object], payload: dict[str, object]
+    ) -> str | None:
+        if state == "awaiting_edit":
+            field_name = state_data.get("edit_field")
+            return field_name if isinstance(field_name, str) else None
+        return self._next_missing_field(payload)
+
+    async def _complete_form_field(
+        self,
+        query: CallbackQuery,
+        context: ContextTypes.DEFAULT_TYPE,
+        user_id: int,
+        expense_id: str,
+        updated: dict[str, object],
+    ) -> None:
+        await asyncio.to_thread(self._database.update_expense_payload, expense_id, updated)
+        missing = missing_required_fields(self._receipt_from_payload(updated))
+        if missing:
+            await self._edit_manual_form(
+                query, user_id, "awaiting_receipt_data", {"expense_id": expense_id},
+                updated, missing[0],
+            )
+            return
+        await query.edit_message_text(
+            texts.MANUAL_FORM_DONE.format(details=texts.operation_details(updated, {}))
+        )
+        await self._offer_accounts(user_id, expense_id, updated, query.message, context)
 
     @staticmethod
     def _form_data(
@@ -813,8 +1010,11 @@ class ReceiptWorkflow:
         invalid: bool = False,
     ) -> None:
         sent = await message.reply_text(
-            self._manual_form_text(payload, field_name, invalid=invalid),
-            reply_markup=self._manual_form_keyboard(field_name),
+            self._manual_form_text(
+                payload, field_name, invalid=invalid,
+                amount_input=state_data.get("amount_input"),
+            ),
+            reply_markup=self._manual_form_keyboard(field_name, payload),
         )
         await self._save_state(
             user_id,
@@ -832,6 +1032,9 @@ class ReceiptWorkflow:
         state_data: dict[str, object],
         payload: dict[str, object],
         field_name: str,
+        *,
+        month: date | None = None,
+        invalid: bool = False,
     ) -> None:
         form = query.message
         await self._save_state(
@@ -841,10 +1044,17 @@ class ReceiptWorkflow:
                 state_data, getattr(form, "chat_id", None), getattr(form, "message_id", None)
             ),
         )
-        await query.edit_message_text(
-            self._manual_form_text(payload, field_name),
-            reply_markup=self._manual_form_keyboard(field_name),
-        )
+        try:
+            await query.edit_message_text(
+                self._manual_form_text(
+                    payload, field_name, invalid=invalid,
+                    amount_input=state_data.get("amount_input"),
+                ),
+                reply_markup=self._manual_form_keyboard(field_name, payload, month=month),
+            )
+        except BadRequest as error:
+            if "not modified" not in str(error).lower():
+                raise
 
     async def _handle_manual_form_text(
         self,
@@ -1074,7 +1284,6 @@ class ReceiptWorkflow:
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton(texts.INCOME, callback_data="receipt:direction:entrata")],
                     [InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")],
-                    [InlineKeyboardButton(texts.HOME_BUTTON, callback_data="menu:home")],
                 ]),
             )
             return
@@ -1292,7 +1501,6 @@ class ReceiptWorkflow:
                 [
                     directions,
                     [InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")],
-                    [InlineKeyboardButton(texts.HOME_BUTTON, callback_data="menu:home")],
                 ]
             )
             await query.edit_message_text(
@@ -1606,7 +1814,6 @@ class ReceiptWorkflow:
                 [
                     [InlineKeyboardButton(texts.NOTES_SKIP_BUTTON, callback_data="receipt:no_notes")],
                     [InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")],
-                    [InlineKeyboardButton(texts.HOME_BUTTON, callback_data="menu:home")],
                 ]
             ),
         )
@@ -1737,12 +1944,12 @@ class ReceiptWorkflow:
         return texts.MANUAL_CONFIRMATION.format(details=texts.operation_details(payload, {}))
 
     @staticmethod
-    def _navigation_keyboard(*, cancel: bool = False) -> InlineKeyboardMarkup:
-        rows = []
-        if cancel:
-            rows.append([InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")])
-        rows.append([InlineKeyboardButton(texts.HOME_BUTTON, callback_data="menu:home")])
-        return InlineKeyboardMarkup(rows)
+    def _navigation_keyboard(*, cancel: bool = False) -> InlineKeyboardMarkup | None:
+        if not cancel:
+            return None
+        return InlineKeyboardMarkup(
+            [[InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")]]
+        )
 
     @staticmethod
     def _manual_confirmation_keyboard() -> InlineKeyboardMarkup:
@@ -1755,7 +1962,6 @@ class ReceiptWorkflow:
                 ],
                 [InlineKeyboardButton(texts.DESCRIPTION_BUTTON, callback_data="receipt:edit:merchant")],
                 [InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")],
-                [InlineKeyboardButton(texts.HOME_BUTTON, callback_data="menu:home")],
             ]
         )
 
@@ -1782,7 +1988,6 @@ class ReceiptWorkflow:
                     InlineKeyboardButton(texts.EDIT_CATEGORY_BUTTON, callback_data="receipt:edit:suggested_category"),
                 ],
                 [InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")],
-                [InlineKeyboardButton(texts.HOME_BUTTON, callback_data="menu:home")],
             ]
         )
 
@@ -1809,7 +2014,6 @@ class ReceiptWorkflow:
                     )
                 ]
             )
-        rows.append([InlineKeyboardButton(texts.HOME_BUTTON, callback_data="menu:home")])
         return InlineKeyboardMarkup(rows)
 
     @staticmethod

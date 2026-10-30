@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 from pathlib import Path
 
-from telegram import Update
+from telegram import ReplyKeyboardMarkup, Update
 from telegram.error import TimedOut
 from telegram.ext import ApplicationHandlerStop
 
@@ -134,7 +134,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
                         await asyncio.wait_for(
                             processor.process_update(update, quick()), timeout=0.5
                         )
-                    self.assertEqual(response.await_count, 1 if command == "/help" else 2)
+                    self.assertEqual(response.await_count, 1)
                     second.assert_not_awaited()
 
                 blocked_update = Update.de_json(
@@ -207,11 +207,16 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Mandami", text)
         self.assertIn("scontrino", text)
         self.assertIn("REALE", text)
+        message.reply_text.assert_awaited_once()
         keyboard = message.reply_text.await_args.kwargs["reply_markup"]
-        buttons = [button for row in keyboard.inline_keyboard for button in row]
-        self.assertNotIn("menu:manual", [button.callback_data for button in buttons])
-        self.assertIn("menu:income", [button.callback_data for button in buttons])
-        self.assertIn("menu:admin", [button.callback_data for button in buttons])
+        self.assertIsInstance(keyboard, ReplyKeyboardMarkup)
+        self.assertTrue(keyboard.is_persistent)
+        self.assertTrue(keyboard.resize_keyboard)
+        buttons = [button for row in keyboard.keyboard for button in row]
+        labels = [button.text for button in buttons]
+        self.assertNotIn(texts.MENU_MANUAL_BUTTON, labels)
+        self.assertIn(texts.MENU_INCOME_BUTTON, labels)
+        self.assertIn(texts.MENU_ADMIN_BUTTON, labels)
         admin_buttons = [
             button.callback_data
             for row in _admin_keyboard().inline_keyboard
@@ -221,9 +226,6 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("menu:income", admin_buttons)
         self.assertFalse(any("/" in button.text for button in buttons))
         self.assertNotIn("/", text)
-        self.assertTrue(
-            message.reply_text.await_args_list[0].kwargs["reply_markup"].remove_keyboard
-        )
         admin_call = context.bot.set_my_commands.await_args
         self.assertEqual(admin_call.args[0], ADMIN_COMMANDS)
         self.assertEqual(admin_call.kwargs["scope"].chat_id, 12345)
@@ -281,15 +283,10 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
             self.make_context(settings=make_settings()),
         )
         keyboard = message.reply_text.await_args.kwargs["reply_markup"]
-        self.assertNotIn(
-            "menu:manual", [button.callback_data for row in keyboard.inline_keyboard for button in row]
-        )
-        self.assertIn(
-            "menu:income", [button.callback_data for row in keyboard.inline_keyboard for button in row]
-        )
-        self.assertNotIn("menu:admin", [
-            button.callback_data for row in keyboard.inline_keyboard for button in row
-        ])
+        labels = [button.text for row in keyboard.keyboard for button in row]
+        self.assertNotIn(texts.MENU_MANUAL_BUTTON, labels)
+        self.assertIn(texts.MENU_INCOME_BUTTON, labels)
+        self.assertNotIn(texts.MENU_ADMIN_BUTTON, labels)
         text = message.reply_text.await_args.args[0]
         self.assertIn("REALE", text)
         for admin_detail in ("/testspesa", "/pulisci", "/aggiornaopzioni", "SIMULATA"):
@@ -402,7 +399,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         buttons = [b.callback_data for row in edit.kwargs["reply_markup"].inline_keyboard for b in row]
         self.assertEqual(buttons, [
             f"summary:{start_year - 1}", f"summary:{start_year}",
-            f"summary:details:{start_year}", "menu:home",
+            f"summary:details:{start_year}",
         ])
         self.assertFalse(context.application.bot_data["ledger_summary_running"])
 

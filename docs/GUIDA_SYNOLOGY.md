@@ -393,7 +393,7 @@ Se `docker compose` non è disponibile, fermati e comunica versione di DSM e Con
 9. Invia `/help`.
 10. Verifica che compaia l'elenco dei comandi.
 
-Con la versione aggiornata, `/start` mostra anche una tastiera con scorciatoie e l'indicazione SIMULATA/REALE. Scrivendo `/` nel campo del messaggio, Telegram propone i comandi. L'amministratore deve inviare `/start` dopo l'aggiornamento per registrare i suggerimenti dei comandi riservati nella propria chat. Se non compaiono subito, chiudi e riapri la chat.
+Con la versione aggiornata, `/start` mostra il menu fisso in basso e l'indicazione PROVA/REALE; dopo ogni aggiornamento che cambia il menu invia `/start` una volta. Scrivendo `/` nel campo del messaggio, Telegram propone i comandi. L'amministratore deve inviare `/start` dopo l'aggiornamento per registrare i suggerimenti dei comandi riservati nella propria chat. Se non compaiono subito, chiudi e riapri la chat.
 
 Un container acceso non basta: la risposta Telegram conferma anche che il bot riesce a collegarsi e che il tuo ID è autorizzato. Il controllo di salute del container `bot` verifica il database, non l'accesso a Telegram o ad AGESCI.
 
@@ -402,7 +402,7 @@ Un container acceso non basta: la risposta Telegram conferma anche che il bot ri
 **Nuova entrata** si trova nel menu principale (oppure `/entrata`) e permette a ogni utente autorizzato di inserire un'entrata senza foto e senza AI. Nell'uso normale salva davvero, senza conferma finale; in modalità prova non salva. Per seguire questa guida controlla prima che il menu mostri **Modalità PROVA**.
 
 1. Dal menu principale premi **💰 Nuova entrata**.
-2. Compila il modulo scrivendo data, descrizione e importo. Il tuo messaggio viene tolto e il modulo si ripresenta aggiornato in fondo, con i pulsanti. La data va scritta come giorno-mese-anno, ad esempio `29-10-2026`, `29/10/26` o `2-3-26`; puoi anche premere **📅 Oggi**.
+2. Compila il modulo, un dato alla volta: scegli la data dal calendario (oppure **📅 Oggi**/**Ieri**), scrivi la descrizione e componi l'importo con il tastierino, poi premi **✅ Conferma importo**. Puoi anche scrivere data e importo: la data come giorno-mese-anno, ad esempio `29-10-2026`, `29/10/26` o `2-3-26`. Il tuo messaggio viene tolto e il modulo si ripresenta aggiornato in fondo, con i pulsanti.
 3. Se serve, cambia un valore con **📅 Data**, **✏️ Descrizione** o **💶 Importo** nel modulo.
 4. Scegli la cassa. La direzione è già Entrata.
 5. Scegli la tipologia: compaiono prima le più usate; premi **Mostra altre** se quella giusta non c'è. Questa scelta avvia subito la simulazione o il salvataggio secondo la modalità iniziale. Unità e categoria vengono impostate dal bot.

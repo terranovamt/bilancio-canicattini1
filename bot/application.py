@@ -15,7 +15,7 @@ from telegram import (
     InlineKeyboardMarkup,
     MenuButtonCommands,
     MessageEntity,
-    ReplyKeyboardRemove,
+    ReplyKeyboardMarkup,
     Update,
 )
 from telegram.error import BadRequest, TelegramError
@@ -105,11 +105,19 @@ class ResponsiveUpdateProcessor(BaseUpdateProcessor):
     ) -> None:
         query = update.callback_query if isinstance(update, Update) else None
         if query is not None and query.data in {
-            "menu:home", "menu:help", "menu:receipt", "menu:admin", "menu:version"
+            "menu:home", "menu:help", "menu:receipt", "menu:admin", "menu:version",
+            "receipt:noop",
         }:
             await coroutine
             return
         message = update.message if isinstance(update, Update) else None
+        if (
+            message is not None
+            and not message.entities
+            and MENU_LABELS.get((message.text or "").strip()) in _READ_ONLY_ACTIONS
+        ):
+            await coroutine
+            return
         if message is not None and message.text and message.entities:
             entity = message.entities[0]
             command = message.text.split(maxsplit=1)[0].split("@", 1)[0].lower()
@@ -235,6 +243,7 @@ def create_application(
     application.add_handler(
         CallbackQueryHandler(receipt_callback, pattern=r"^receipt:")
     )
+    application.add_handler(MessageHandler(filters.Text(list(MENU_LABELS)), menu_text))
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, receipt_text)
     )
@@ -276,11 +285,8 @@ async def start_command(
             scope=BotCommandScopeChat(chat_id=settings.admin_user_id),
         )
     await update.message.reply_text(
-        texts.HOME_BUTTON, reply_markup=ReplyKeyboardRemove()
-    )
-    await update.message.reply_text(
         _home_text(await _test_mode(context, settings)),
-        reply_markup=_home_keyboard(_is_admin(update, settings)),
+        reply_markup=_menu_keyboard(_is_admin(update, settings)),
     )
 
 
@@ -294,29 +300,49 @@ def _home_text(test_mode: bool) -> str:
     return f"{texts.HOME_TEXT}\n\n{mode}"
 
 
-def _navigation_keyboard(*, admin: bool = False) -> InlineKeyboardMarkup:
-    rows = []
+def _navigation_rows(*, admin: bool = False) -> list[list[InlineKeyboardButton]]:
+    # The main menu lives in the persistent reply keyboard; only admin tools need "Back".
     if admin:
-        rows.append([InlineKeyboardButton(texts.BACK_BUTTON, callback_data="menu:admin")])
-    rows.append([InlineKeyboardButton(texts.HOME_BUTTON, callback_data="menu:home")])
-    return InlineKeyboardMarkup(rows)
+        return [[InlineKeyboardButton(texts.BACK_BUTTON, callback_data="menu:admin")]]
+    return []
 
 
-def _home_keyboard(admin: bool) -> InlineKeyboardMarkup:
+def _navigation_keyboard(*, admin: bool = False) -> InlineKeyboardMarkup | None:
+    rows = _navigation_rows(admin=admin)
+    return InlineKeyboardMarkup(rows) if rows else None
+
+
+def _menu_keyboard(admin: bool) -> ReplyKeyboardMarkup:
     rows = [
-        [InlineKeyboardButton(texts.MENU_RECEIPT_BUTTON, callback_data="menu:receipt")],
-        [InlineKeyboardButton(texts.MENU_INCOME_BUTTON, callback_data="menu:income")],
+        [texts.MENU_RECEIPT_BUTTON, texts.MENU_INCOME_BUTTON],
+        [texts.MENU_SUMMARY_BUTTON, texts.MENU_LATEST_BUTTON],
+        [texts.MENU_QUEUE_BUTTON, texts.MENU_HELP_BUTTON],
+        [texts.MENU_CANCEL_BUTTON],
     ]
-    rows.extend([
-        [InlineKeyboardButton(texts.MENU_SUMMARY_BUTTON, callback_data="menu:summary"),
-         InlineKeyboardButton(texts.MENU_LATEST_BUTTON, callback_data="menu:latest")],
-        [InlineKeyboardButton(texts.MENU_QUEUE_BUTTON, callback_data="menu:queue")],
-        [InlineKeyboardButton(texts.MENU_HELP_BUTTON, callback_data="menu:help"),
-         InlineKeyboardButton(texts.MENU_CANCEL_BUTTON, callback_data="menu:cancel")],
-    ])
     if admin:
-        rows.append([InlineKeyboardButton(texts.MENU_ADMIN_BUTTON, callback_data="menu:admin")])
-    return InlineKeyboardMarkup(rows)
+        rows[-1].append(texts.MENU_ADMIN_BUTTON)
+    return ReplyKeyboardMarkup(
+        rows,
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder=texts.MENU_PLACEHOLDER,
+    )
+
+
+MENU_LABELS = {
+    texts.MENU_RECEIPT_BUTTON: "receipt",
+    texts.MENU_INCOME_BUTTON: "income",
+    texts.MENU_SUMMARY_BUTTON: "summary",
+    texts.MENU_LATEST_BUTTON: "latest",
+    texts.MENU_QUEUE_BUTTON: "queue",
+    texts.MENU_HELP_BUTTON: "help",
+    texts.MENU_CANCEL_BUTTON: "cancel",
+    texts.MENU_ADMIN_BUTTON: "admin",
+}
+_READ_ONLY_ACTIONS = {"home", "help", "receipt", "admin", "version"}
+_ADMIN_ACTIONS = {
+    "admin", "manual", "health", "options", "version", "update", "clean", "test_on", "test_off",
+}
 
 
 def _admin_keyboard(test_mode: bool = False) -> InlineKeyboardMarkup:
@@ -330,12 +356,11 @@ def _admin_keyboard(test_mode: bool = False) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(texts.MENU_OPTIONS_BUTTON, callback_data="menu:options")],
         [InlineKeyboardButton(texts.MENU_VERSION_BUTTON, callback_data="menu:version")],
         [InlineKeyboardButton(texts.MENU_CLEAN_BUTTON, callback_data="menu:clean")],
-        [InlineKeyboardButton(texts.HOME_BUTTON, callback_data="menu:home")],
     ])
 
 
 async def _edit_menu_screen(
-    query: CallbackQuery, text: str, keyboard: InlineKeyboardMarkup
+    query: CallbackQuery, text: str, keyboard: InlineKeyboardMarkup | None
 ) -> None:
     if (
         getattr(query.message, "text", None) == text
@@ -346,7 +371,7 @@ async def _edit_menu_screen(
 
 
 async def _show_command_screen(
-    update: Update, text: str, keyboard: InlineKeyboardMarkup
+    update: Update, text: str, keyboard: InlineKeyboardMarkup | None
 ) -> None:
     query = getattr(update, "callback_query", None)
     if query is not None:
@@ -363,26 +388,51 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     settings: Settings = context.application.bot_data["settings"]
     admin = _is_admin(update, settings)
     action = str(query.data).removeprefix("menu:")
-    if action in {"admin", "manual", "health", "options", "version", "update", "clean", "test_on", "test_off"} and not admin:
+    if action in _ADMIN_ACTIONS and not admin:
         await query.answer(texts.ADMIN_ONLY)
         return
     await query.answer()
+    await _run_menu_action(update, context, action, admin)
+
+
+async def menu_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.message
+    if message is None or message.text is None:
+        return
+    action = MENU_LABELS.get(message.text.strip())
+    if action is None:
+        return
+    settings: Settings = context.application.bot_data["settings"]
+    admin = _is_admin(update, settings)
+    if action in _ADMIN_ACTIONS and not admin:
+        await message.reply_text(texts.ADMIN_ONLY)
+        return
+    await _run_menu_action(update, context, action, admin)
+
+
+async def _run_menu_action(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, action: str, admin: bool
+) -> None:
+    settings: Settings = context.application.bot_data["settings"]
     if action == "home":
-        await _edit_menu_screen(
-            query, _home_text(await _test_mode(context, settings)), _home_keyboard(admin)
-        )
+        # Old inline menus point here: answer with a new message that restores the keyboard.
+        message = getattr(update, "effective_message", None) or update.message
+        if message is not None:
+            await message.reply_text(
+                _home_text(await _test_mode(context, settings)),
+                reply_markup=_menu_keyboard(admin),
+            )
     elif action == "help":
-        await _edit_menu_screen(
-            query,
-            ADMIN_HELP_TEXT if admin else USER_HELP_TEXT,
-            _navigation_keyboard(),
+        await _show_command_screen(
+            update, ADMIN_HELP_TEXT if admin else USER_HELP_TEXT, None
         )
     elif action == "receipt":
-        await _edit_menu_screen(query, texts.MENU_RECEIPT, _navigation_keyboard())
+        await _show_command_screen(update, texts.MENU_RECEIPT, None)
     elif action == "admin":
         test_mode = await _test_mode(context, settings)
-        await _edit_menu_screen(
-            query, texts.MENU_ADMIN + "\n\n" + (texts.MODE_TRIAL if test_mode else texts.MODE_REAL),
+        await _show_command_screen(
+            update,
+            texts.MENU_ADMIN + "\n\n" + (texts.MODE_TRIAL if test_mode else texts.MODE_REAL),
             _admin_keyboard(test_mode),
         )
     elif action in {"test_on", "test_off"}:
@@ -392,11 +442,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await asyncio.to_thread(database.set_test_mode, enabled)
         except sqlite3.Error as error:
             logger.error("Could not change test mode: %s", type(error).__name__)
-            await query.edit_message_text(texts.MODE_CHANGE_FAILED, reply_markup=_navigation_keyboard(admin=True))
+            await _show_command_screen(
+                update, texts.MODE_CHANGE_FAILED, _navigation_keyboard(admin=True)
+            )
             return
         logger.info("Test mode changed: enabled=%s", enabled)
-        await _edit_menu_screen(
-            query,
+        await _show_command_screen(
+            update,
             texts.MODE_CHANGED.format(mode=texts.MODE_TRIAL if enabled else texts.MODE_REAL),
             _admin_keyboard(enabled),
         )
@@ -404,10 +456,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         status = await asyncio.to_thread(_version_status, context, settings)
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(texts.MENU_UPDATE_BUTTON, callback_data="menu:update")],
-            *_navigation_keyboard(admin=True).inline_keyboard,
+            *_navigation_rows(admin=True),
         ])
-        await _edit_menu_screen(
-            query,
+        await _show_command_screen(
+            update,
             status.replace("/aggiorna", "premi «Installa aggiornamento»"),
             keyboard,
         )
@@ -422,7 +474,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         }
         handler = handlers.get(action)
         if handler is None:
-            await query.edit_message_text(texts.MENU_UNKNOWN, reply_markup=_navigation_keyboard())
+            await _show_command_screen(update, texts.MENU_UNKNOWN, None)
             return
         await handler(update, context)
 
@@ -480,7 +532,7 @@ async def update_command(
             [
                 [InlineKeyboardButton(texts.UPDATE_YES, callback_data="admin:update:yes")],
                 [InlineKeyboardButton(texts.UPDATE_NO, callback_data="admin:update:no")],
-                *_navigation_keyboard(admin=True).inline_keyboard,
+                *_navigation_rows(admin=True),
             ]
         ),
     )
@@ -772,7 +824,7 @@ async def queue_command(
         "\n".join(lines),
         InlineKeyboardMarkup([
             [InlineKeyboardButton(texts.MENU_RETRY, callback_data="menu:retry")],
-            *_navigation_keyboard().inline_keyboard,
+            *_navigation_rows(),
         ]),
     )
 
@@ -889,7 +941,7 @@ def _summary_keyboard(start_year: int, today: date) -> InlineKeyboardMarkup:
             buttons,
             [InlineKeyboardButton(texts.REFRESH_BUTTON, callback_data=f"summary:{start_year}")],
             [InlineKeyboardButton(texts.DETAILS_BUTTON, callback_data=f"summary:details:{start_year}")],
-            *_navigation_keyboard().inline_keyboard,
+            *_navigation_rows(),
         ]
     )
 
@@ -1150,7 +1202,7 @@ async def clean_command(
             [
                 [InlineKeyboardButton(texts.CLEAN_YES, callback_data="admin:clean:yes")],
                 [InlineKeyboardButton(texts.CLEAN_NO, callback_data="admin:clean:no")],
-                *_navigation_keyboard(admin=True).inline_keyboard,
+                *_navigation_rows(admin=True),
             ]
         ),
     )

@@ -2,7 +2,7 @@ import asyncio
 import tempfile
 import unittest
 from dataclasses import replace
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,7 +17,7 @@ from bilancio.client import (
     TransactionDirection,
     default_unit_for_account,
 )
-from bot.receipt_workflow import ReceiptWorkflow, parse_italian_date
+from bot.receipt_workflow import ReceiptWorkflow, next_amount_input, parse_italian_date
 from bot import messages as texts
 from config import Settings
 from db.database import Database
@@ -934,6 +934,87 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         assert state is not None
         return state[1]["expense_id"]
 
+    def test_amount_keypad_composes_italian_decimal_amounts(self) -> None:
+        value = ""
+        for key in ("0", "1", "2", "comma", "comma", "5", "0", "9"):
+            value = next_amount_input(value, key)
+        self.assertEqual(value, "12,50")
+        self.assertEqual(next_amount_input("", "comma"), "0,")
+        self.assertEqual(next_amount_input("12,5", "back"), "12,")
+        self.assertEqual(next_amount_input("", "back"), "")
+        self.assertEqual(next_amount_input("1234567", "8"), "1234567")
+        with self.assertRaises(ValueError):
+            next_amount_input("1", "x")
+
+    def test_date_calendar_hides_future_days_and_next_month(self) -> None:
+        today = date.today()
+        markup = ReceiptWorkflow._manual_form_keyboard("date", {"date": None})
+        buttons = [b.callback_data for row in markup.inline_keyboard for b in row]
+        self.assertEqual(buttons[:2], [
+            "receipt:today", f"receipt:day:{(today - timedelta(days=1)).isoformat()}",
+        ])
+        self.assertIn(f"receipt:day:{today.isoformat()}", buttons)
+        self.assertNotIn(f"receipt:day:{(today + timedelta(days=1)).isoformat()}", buttons)
+        self.assertFalse(any(
+            b.startswith("receipt:cal:") and b > f"receipt:cal:{today:%Y-%m}" for b in buttons
+        ))
+        self.assertTrue(all(b.text for row in markup.inline_keyboard for b in row))
+        self.assertNotIn("menu:home", buttons)
+
+    async def test_manual_form_calendar_and_keypad_fill_fields_by_buttons(self) -> None:
+        portal = FakeBilancioClient()
+        workflow = self._manual_portal_workflow(portal)
+        user = SimpleNamespace(id=12345)
+        await workflow.start_manual_expense(
+            SimpleNamespace(message=SimpleNamespace(reply_text=AsyncMock()), effective_user=user),
+            SimpleNamespace(), collect_data=True, direction=TransactionDirection.INCOME,
+        )
+        expense_id = self.database.get_conversation_state(12345)[1]["expense_id"]
+
+        noop = await self._tap(workflow, user, "receipt:noop")
+        noop.answer.assert_awaited_once()
+        noop.edit_message_text.assert_not_awaited()
+
+        previous = (date.today().replace(day=1) - timedelta(days=1)).replace(day=1)
+        query = await self._tap(workflow, user, f"receipt:cal:{previous:%Y-%m}")
+        buttons = [
+            b.callback_data
+            for row in query.edit_message_text.await_args.kwargs["reply_markup"].inline_keyboard
+            for b in row
+        ]
+        self.assertIn(f"receipt:day:{previous.isoformat()}", buttons)
+
+        future = await self._tap(
+            workflow, user, f"receipt:day:{(date.today() + timedelta(days=1)).isoformat()}"
+        )
+        future.edit_message_text.assert_not_awaited()
+        self.assertIsNone(self.database.get_expense(expense_id).payload["date"])
+
+        query = await self._tap(workflow, user, f"receipt:day:{previous.isoformat()}")
+        self.assertEqual(self.database.get_expense(expense_id).payload["date"], previous.isoformat())
+        self.assertIn(texts.MANUAL_MERCHANT, query.edit_message_text.await_args.args[0])
+
+        early = await self._tap(workflow, user, "receipt:key:1")
+        early.edit_message_text.assert_awaited_once_with(texts.STALE_BUTTON)
+
+        await workflow.handle_text(
+            SimpleNamespace(
+                message=SimpleNamespace(text="Quota", reply_text=AsyncMock()), effective_user=user
+            ),
+            SimpleNamespace(),
+        )
+        empty = await self._tap(workflow, user, "receipt:key:ok")
+        self.assertIn(texts.MANUAL_FORM_INVALID, empty.edit_message_text.await_args.args[0])
+        for key in ("1", "2", "comma", "5"):
+            query = await self._tap(workflow, user, f"receipt:key:{key}")
+        self.assertIn("12,5 \u20ac", query.edit_message_text.await_args.args[0])
+        self.assertIsNone(self.database.get_expense(expense_id).payload["total_amount"])
+
+        await self._tap(workflow, user, "receipt:key:ok")
+        self.assertEqual(Decimal(str(self.database.get_expense(expense_id).payload["total_amount"])), Decimal("12.5"))
+        self.assertEqual(self.database.get_conversation_state(12345)[0], "awaiting_account")
+        self.assertEqual(portal.submitted, [])
+
     async def _tap(self, workflow: ReceiptWorkflow, user, data: str, context=None):
         query = self.make_query(data)
         await workflow.handle_callback(
@@ -1025,7 +1106,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             for row in prompt.kwargs["reply_markup"].inline_keyboard
             for button in row
         ]
-        self.assertEqual(buttons, ["receipt:no_notes", "receipt:cancel", "menu:home"])
+        self.assertEqual(buttons, ["receipt:no_notes", "receipt:cancel"])
 
         too_long = SimpleNamespace(text="x" * 501, reply_text=AsyncMock())
         await workflow.handle_text(
@@ -1158,8 +1239,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         labels = [row[0].text for row in markup.inline_keyboard]
         self.assertEqual(
             labels,
-            ["Tipo 8", "Tipo 3", "Tipo 0", "Tipo 1", "Tipo 2", "Tipo 4", "➕ Mostra altre (4)",
-             texts.HOME_BUTTON],
+            ["Tipo 8", "Tipo 3", "Tipo 0", "Tipo 1", "Tipo 2", "Tipo 4", "➕ Mostra altre (4)"],
         )
         self.database.transaction_type_usage.assert_called_once_with("Cassa Co.ca", "entrata")
 
@@ -1168,7 +1248,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [row[0].callback_data for row in more_markup.inline_keyboard],
             ["receipt:choose:5", "receipt:choose:6", "receipt:choose:7", "receipt:choose:9",
-             "receipt:cancel", "menu:home"],
+             "receipt:cancel"],
         )
 
         await self._tap(workflow, user, "receipt:choose:9")

@@ -100,10 +100,12 @@ Il bot legge token e ID dal file `.env`; non inviare quel file o le sue credenzi
 
 Per un'entrata senza ricevuta, qualunque utente autorizzato può premere **💰 Nuova entrata** nel menu principale (oppure scrivere `/entrata`):
 
-1. Compila il modulo: data, descrizione e importo. Ogni volta che scrivi un dato, il tuo messaggio viene tolto e il modulo si aggiorna in fondo alla chat, con i pulsanti sempre visibili.
-2. La data va scritta come **giorno-mese-anno**: valgono `29-10-2026`, `29/10/2026`, `29.10.26` o `2-3-26` (giorno e mese anche con una sola cifra, anno anche con due: `26` diventa `2026`). Puoi anche premere **📅 Oggi**.
-3. Per correggere un campo premi **📅 Data**, **✏️ Descrizione** o **💶 Importo** nel modulo.
-4. Scegli cassa e tipologia: la direzione è già Entrata. Dopo la tipologia scrivi un dettaglio (diventa la nota nel portale) oppure premi **💾 Salva senza dettaglio**: il salvataggio parte subito, senza conferma aggiuntiva. Per una prova senza salvataggio attiva prima **Modalità PROVA** da Amministrazione.
+1. Il modulo chiede un dato alla volta: data, descrizione e importo. Ogni volta che scrivi un dato, il tuo messaggio viene tolto e il modulo si aggiorna in fondo alla chat, con i pulsanti sempre visibili.
+2. **Data**: scegli il giorno dal calendario sotto il modulo (con ◀️/▶️ cambi mese; i giorni futuri non sono selezionabili) oppure premi **📅 Oggi** o **Ieri**. Puoi anche scriverla come **giorno-mese-anno**: valgono `29-10-2026`, `29/10/2026`, `29.10.26` o `2-3-26` (giorno e mese anche con una sola cifra, anno anche con due: `26` diventa `2026`).
+3. **Descrizione**: scrivila con la tastiera normale.
+4. **Importo**: componilo con il tastierino numerico sotto il modulo (cifre, virgola e ⌫), poi premi **✅ Conferma importo**; oppure scrivilo, ad esempio `12,50`. I tasti modificano lo stesso messaggio, senza aggiungere messaggi in chat.
+5. Per correggere un campo premi **📅 Data**, **✏️ Descrizione** o **💶 Importo** nel modulo.
+6. Scegli cassa e tipologia: la direzione è già Entrata. Dopo la tipologia scrivi un dettaglio (diventa la nota nel portale) oppure premi **💾 Salva senza dettaglio**: il salvataggio parte subito, senza conferma aggiuntiva. Per una prova senza salvataggio attiva prima **Modalità PROVA** da Amministrazione.
 
 Per inserire a mano un'entrata **o un'uscita senza ricevuta**, l'amministratore può aprire **⚙️ Amministrazione** e premere **✍️ Inserisci a mano** (oppure scrivere `/manual`):
 
@@ -111,7 +113,7 @@ Per inserire a mano un'entrata **o un'uscita senza ricevuta**, l'amministratore 
 2. Scegli cassa, **Entrata** o **Uscita**, poi la tipologia. Scrivi un dettaglio o premi **💾 Salva senza dettaglio**: il salvataggio parte senza un'altra conferma.
 3. Attendi l'esito verificato. Se la modalità prova era attiva all'inizio, non viene salvato nulla nel portale.
 
-Telegram non permette veri campi di input dentro la chat senza una pagina web esterna: per questo il modulo è un messaggio che si aggiorna. Sticker, audio, video e file diversi da foto o PDF vengono eliminati dalla chat e il bot ricorda cosa inviare.
+Telegram non permette veri campi di input dentro la chat senza una pagina web esterna, né permette al bot di aprire la tastiera numerica del telefono: per questo il modulo è un messaggio che si aggiorna, con calendario e tastierino fatti di pulsanti. Sticker, audio, video e file diversi da foto o PDF vengono eliminati dalla chat e il bot ricorda cosa inviare.
 
 Il vecchio `/testspesa` è stato rimosso per non confondere una prova con un inserimento reale: usa **Inserisci a mano** e scegli la modalità desiderata in Amministrazione.
 
@@ -135,11 +137,11 @@ L'aggiornamento del programma non riscrive la configurazione privata: un valore 
 
 Per usare il bot non occorre ricordare i comandi:
 
-1. Su Telegram premi **Avvia**, oppure invia `/start` una volta. La vecchia tastiera con gli slash viene rimossa.
-2. Scegli un pulsante sotto il messaggio: **📷 Nuovo scontrino**, **📊 Riepilogo**, **📋 Ultime operazioni**, **⏳ Operazioni in attesa** o **❓ Aiuto**.
+1. Su Telegram premi **Avvia**, oppure invia `/start` una volta. Al posto della tastiera del telefono compare il **menu fisso in basso**; dopo un aggiornamento del bot invia `/start` una volta per vedere il menu nuovo.
+2. Premi un pulsante del menu in basso: **📷 Nuovo scontrino**, **💰 Nuova entrata**, **📊 Riepilogo**, **📋 Ultime operazioni**, **⏳ Operazioni in attesa**, **❓ Aiuto** o **✖️ Annulla operazione**. Il pulsante premuto compare in chat come un tuo messaggio e il bot risponde con un nuovo messaggio: è il funzionamento normale di Telegram. Per scrivere un testo usa l'icona della tastiera accanto al campo del messaggio.
 3. Se sei amministratore, trovi anche **⚙️ Amministrazione**, che contiene **✍️ Inserisci a mano** (entrate e uscite senza ricevuta) e gli strumenti di gestione. **💰 Nuova entrata** è invece nel menu principale, per tutti gli utenti autorizzati. La modalità prova/reale è indicata per tutti; gli inserimenti manuali seguono la stessa modalità degli scontrini.
-4. Usa **🏠 Menu principale** per tornare alla schermata iniziale. Negli strumenti amministratore trovi anche **⬅️ Indietro**. Il menu non cancella i dati di un inserimento già aperto.
-5. Per interrompere un inserimento premi **Annulla** nel suo messaggio, oppure **✖️ Annulla operazione** nel menu principale.
+4. I messaggi non hanno più il pulsante **🏠 Menu principale**: il menu resta sempre in basso. Negli strumenti amministratore trovi **⬅️ Indietro**. Il menu non cancella i dati di un inserimento già aperto.
+5. Per interrompere un inserimento premi **Annulla** nel suo messaggio, oppure **✖️ Annulla operazione** nel menu in basso.
 
 In **Amministrazione** trovi modalità prova, verifica del collegamento, aggiornamento casse e tipologie, versione e aggiornamenti del bot, pulizia della cronologia. **Attiva modalità prova** disabilita i salvataggi nel portale per tutti i nuovi inserimenti; **Torna ai salvataggi reali** ripristina il funzionamento normale. Installazione degli aggiornamenti e pulizia mantengono le proprie conferme. Versione attiva e disponibile si consultano da **Versione e aggiornamenti**.
 

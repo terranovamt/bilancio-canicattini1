@@ -6,7 +6,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-from telegram import Bot, InlineKeyboardMarkup, Update
+from datetime import date, timedelta
+
+from telegram import Bot, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 
 from bot import application, messages
 from bot.receipt_workflow import ReceiptWorkflow
@@ -53,13 +55,27 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
             effective_user=SimpleNamespace(id=user_id), callback_query=query,
         )
 
+    def text_update(self, text: str, user_id: int = 12345) -> SimpleNamespace:
+        message = SimpleNamespace(text=text, entities=(), reply_text=AsyncMock())
+        return SimpleNamespace(
+            message=message, effective_message=message,
+            effective_user=SimpleNamespace(id=user_id), callback_query=None,
+        )
+
     @staticmethod
-    def callback_values(markup: InlineKeyboardMarkup) -> list[str]:
+    def callback_values(markup: InlineKeyboardMarkup | None) -> list[str]:
+        if markup is None:
+            return []
         return [
             button.callback_data
             for row in markup.inline_keyboard
             for button in row
         ]
+
+    @staticmethod
+    def rendered(update: SimpleNamespace):
+        edited = update.callback_query.edit_message_text.await_args
+        return edited if edited is not None else update.effective_message.reply_text.await_args
 
     async def test_home_and_help_are_slash_free_and_preserve_pending_entry(self) -> None:
         update = self.update("manual")
@@ -71,10 +87,15 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
                 await application.menu_callback(update, self.context)
                 query = update.callback_query
                 query.answer.assert_awaited_once_with()
-                rendered = query.edit_message_text.await_args
+                rendered = self.rendered(update)
                 self.assertNotIn("/", rendered.args[0])
-                for row in rendered.kwargs["reply_markup"].inline_keyboard:
-                    self.assertTrue(all("/" not in button.text for button in row))
+                markup = rendered.kwargs["reply_markup"]
+                if action == "home":
+                    self.assertIsInstance(markup, ReplyKeyboardMarkup)
+                    query.edit_message_text.assert_not_awaited()
+                elif markup is not None:
+                    for row in markup.inline_keyboard:
+                        self.assertTrue(all("/" not in button.text for button in row))
                 self.assertEqual(self.database.get_conversation_state(12345), state)
                 self.portal.create_expense.assert_not_awaited()
 
@@ -116,7 +137,7 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
                 await application.menu_callback(home, self.context)
                 self.assertIn(
                     messages.MODE_TRIAL if expected else messages.MODE_REAL,
-                    home.callback_query.edit_message_text.await_args.args[0],
+                    home.effective_message.reply_text.await_args.args[0],
                 )
         self.portal.create_expense.assert_not_awaited()
 
@@ -159,13 +180,22 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
                 reply = update.effective_message.reply_text.await_args
                 self.assertIn(messages.MANUAL_DATE, reply.args[0])
                 self.assertNotRegex(reply.args[0], r"/[a-zA-Z]")
+                buttons = self.callback_values(reply.kwargs["reply_markup"])
+                today = date.today()
                 self.assertEqual(
-                    self.callback_values(reply.kwargs["reply_markup"]),
+                    buttons[:2],
+                    ["receipt:today", f"receipt:day:{(today - timedelta(days=1)).isoformat()}"],
+                )
+                self.assertIn(f"receipt:day:{today.isoformat()}", buttons)
+                self.assertNotIn(f"receipt:day:{(today + timedelta(days=1)).isoformat()}", buttons)
+                self.assertEqual(
+                    buttons[-4:],
                     [
-                        "receipt:today", "receipt:edit:date", "receipt:edit:merchant",
-                        "receipt:edit:total_amount", "receipt:cancel", "menu:home",
+                        "receipt:edit:date", "receipt:edit:merchant",
+                        "receipt:edit:total_amount", "receipt:cancel",
                     ],
                 )
+                self.assertNotIn("menu:home", buttons)
                 self.portal.create_expense.assert_not_awaited()
                 await self.workflow.cancel_current(12345)
 
@@ -193,7 +223,7 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.database.get_conversation_state(12345))
         reply = update.effective_message.reply_text.await_args
         self.assertEqual(reply.args[0], messages.CANCELLED)
-        self.assertIn("menu:home", self.callback_values(reply.kwargs["reply_markup"]))
+        self.assertNotIn("menu:home", self.callback_values(reply.kwargs.get("reply_markup")))
 
     async def test_admin_tools_and_summary_accept_callback_messages(self) -> None:
         self.portal.health_check = AsyncMock()
@@ -208,7 +238,10 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
                 await application.menu_callback(update, self.context)
                 reply = update.effective_message.reply_text.await_args
                 self.assertIsNotNone(reply)
-                self.assertIn("menu:home", self.callback_values(reply.kwargs["reply_markup"]))
+                buttons = self.callback_values(reply.kwargs.get("reply_markup"))
+                self.assertNotIn("menu:home", buttons)
+                if action != "summary":
+                    self.assertIn("menu:admin", buttons)
         self.portal.health_check.assert_awaited_once()
         self.portal.clear_options_cache.assert_awaited_once()
         self.portal.create_expense.assert_not_awaited()
@@ -232,23 +265,59 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
             await application.menu_callback(update, self.context)
             reply = update.callback_query.edit_message_text.await_args
             self.assertIsNotNone(reply)
-            self.assertIn("menu:home", self.callback_values(reply.kwargs["reply_markup"]))
+            self.assertNotIn("menu:home", self.callback_values(reply.kwargs.get("reply_markup")))
 
-    async def test_repeated_home_button_does_not_repeat_identical_edit(self) -> None:
-        update = self.update("home")
+    async def test_repeated_admin_button_does_not_repeat_identical_edit(self) -> None:
+        update = self.update("admin")
         query = update.callback_query
-        query.message.text = application._home_text(False)
-        query.message.reply_markup = application._home_keyboard(True)
+        query.message.text = messages.MENU_ADMIN + "\n\n" + messages.MODE_REAL
+        query.message.reply_markup = application._admin_keyboard(False)
         await application.menu_callback(update, self.context)
         query.answer.assert_awaited_once_with()
         query.edit_message_text.assert_not_awaited()
+
+    async def test_old_home_button_restores_persistent_menu_keyboard(self) -> None:
+        for user_id, admin in ((12345, True), (67890, False)):
+            with self.subTest(admin=admin):
+                update = self.update("home", user_id=user_id)
+                await application.menu_callback(update, self.context)
+                markup = update.effective_message.reply_text.await_args.kwargs["reply_markup"]
+                self.assertIsInstance(markup, ReplyKeyboardMarkup)
+                self.assertTrue(markup.is_persistent)
+                labels = [button.text for row in markup.keyboard for button in row]
+                self.assertIn(messages.MENU_INCOME_BUTTON, labels)
+                self.assertEqual(messages.MENU_ADMIN_BUTTON in labels, admin)
+
+    async def test_menu_labels_route_text_to_actions(self) -> None:
+        update = self.text_update(messages.MENU_HELP_BUTTON, user_id=67890)
+        await application.menu_text(update, self.context)
+        self.assertEqual(update.message.reply_text.await_args.args[0], application.USER_HELP_TEXT)
+
+        update = self.text_update(messages.MENU_ADMIN_BUTTON, user_id=67890)
+        await application.menu_text(update, self.context)
+        update.message.reply_text.assert_awaited_once_with(messages.ADMIN_ONLY)
+
+        update = self.text_update(messages.MENU_ADMIN_BUTTON)
+        await application.menu_text(update, self.context)
+        self.assertIn("menu:manual", self.callback_values(
+            update.message.reply_text.await_args.kwargs["reply_markup"]
+        ))
+
+    async def test_menu_label_during_form_is_not_taken_as_description(self) -> None:
+        await application.menu_callback(self.update("income", user_id=67890), self.context)
+        _, data = self.database.get_conversation_state(67890)
+        update = self.text_update(messages.MENU_CANCEL_BUTTON, user_id=67890)
+        await application.menu_text(update, self.context)
+        self.assertIsNone(self.database.get_conversation_state(67890))
+        self.assertEqual(update.message.reply_text.await_args.args[0], messages.CANCELLED)
+        stored = self.database.get_expense(data["expense_id"])
+        self.assertTrue(stored is None or stored.payload["merchant"] is None)
 
     async def test_unknown_action_has_explicit_message_and_home_button(self) -> None:
         update = self.update("unknown")
         await application.menu_callback(update, self.context)
         reply = update.callback_query.edit_message_text.await_args
         self.assertEqual(reply.args[0], messages.MENU_UNKNOWN)
-        self.assertEqual(self.callback_values(reply.kwargs["reply_markup"]), ["menu:home"])
 
     async def test_read_only_menu_bypasses_slow_work_but_actions_do_not(self) -> None:
         processor = application.ResponsiveUpdateProcessor()
@@ -286,6 +355,20 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
                 )
                 response.assert_awaited_once()
                 mutation.assert_not_awaited()
+            for label in (messages.MENU_HELP_BUTTON, messages.MENU_RECEIPT_BUTTON):
+                response = AsyncMock()
+                text_update = Update.de_json({
+                    "update_id": 3,
+                    "message": {
+                        "message_id": 3, "date": 0, "text": label,
+                        "chat": {"id": 12345, "type": "private"},
+                        "from": {"id": 12345, "is_bot": False, "first_name": "Test"},
+                    },
+                }, bot)
+                await asyncio.wait_for(
+                    processor.process_update(text_update, response()), timeout=0.5
+                )
+                response.assert_awaited_once()
         finally:
             release.set()
             await asyncio.gather(blocked, queued)

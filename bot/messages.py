@@ -11,7 +11,6 @@ HOME_TEXT = (
     "📷 Mandami una foto o un PDF dello scontrino, oppure scegli cosa fare "
     "con i pulsanti qui sotto."
 )
-HOME_BUTTON = "🏠 Menu principale"
 BACK_BUTTON = "⬅️ Indietro"
 MENU_HELP = (
     "❓ Come funziona\n\n"
@@ -38,7 +37,8 @@ MENU_RECEIPT = (
     "Dopo la tipologia scrivi un dettaglio o saltalo: registro senza altre conferme."
 )
 MENU_ADMIN = "⚙️ Strumenti amministratore\n\nScegli un’operazione."
-MENU_UNKNOWN = "Questo pulsante non è disponibile. Torna al menu principale."
+MENU_PLACEHOLDER = "Scegli dal menu o invia una foto"
+MENU_UNKNOWN = "Questo pulsante non è disponibile. Usa il menu in basso."
 MENU_RETRY = "🔄 Riprova operazioni"
 MENU_RECEIPT_BUTTON = "📷 Nuovo scontrino"
 MENU_MANUAL_BUTTON = "✍️ Inserisci a mano"
@@ -203,10 +203,14 @@ EDIT_MERCHANT = "Come si chiama il negozio?"
 EDIT_AMOUNT = "Qual è l'importo giusto? (es. 12,50)"
 EDIT_CATEGORY = 'Che categoria vuoi? Scrivi "-" per lasciarla vuota.'
 MANUAL_DATE = (
-    "📅 Scrivi la data come giorno-mese-anno, ad esempio 29-10-2026, 29/10/26 o 2-3-26."
+    "📅 Scegli il giorno dal calendario o premi «Oggi»/«Ieri». Puoi anche scriverla come "
+    "giorno-mese-anno, ad esempio 29-10-2026, 29/10/26 o 2-3-26."
 )
 MANUAL_MERCHANT = "✏️ Scrivi la descrizione dell’operazione."
-MANUAL_AMOUNT = "💶 Scrivi l’importo (es. 12,50)."
+MANUAL_AMOUNT = (
+    "💶 Componi l’importo con i tasti qui sotto e premi «Conferma importo», "
+    "oppure scrivilo (es. 12,50)."
+)
 MANUAL_DESCRIPTION = "Prova Telegram"
 MANUAL_CONFIRMATION = (
     "✍️ Operazione a mano, senza ricevuta\n\n{details}\n\n"
@@ -215,12 +219,13 @@ MANUAL_CONFIRMATION = (
 MANUAL_FORM_TITLE = "✍️ Nuova operazione a mano (entrata o uscita)"
 INCOME_FORM_TITLE = "💰 Nuova entrata a mano"
 MANUAL_FORM_HINT = (
-    "Scrivi qui sotto il dato richiesto: il modulo si aggiorna e i pulsanti restano in fondo. "
-    "Per cambiare un campo premi il suo pulsante."
+    "Usa i tasti sotto il modulo oppure scrivi il dato richiesto: il modulo si aggiorna "
+    "e i pulsanti restano in fondo. Per cambiare un campo premi il suo pulsante."
 )
 MANUAL_FORM_DATE = "📅 Data: {value}"
 MANUAL_FORM_DESCRIPTION = "✏️ Descrizione: {value}"
 MANUAL_FORM_AMOUNT = "💶 Importo: {value}"
+MANUAL_FORM_AMOUNT_TYPING = "{value} € ✏️"
 MANUAL_FORM_EMPTY = "da inserire"
 MANUAL_FORM_INVALID = "⚠️ Non ho capito il valore scritto. Riprova."
 MANUAL_FORM_NEXT = "👉 {prompt}"
@@ -229,14 +234,17 @@ MANUAL_FORM_FOOTER = (
 )
 MANUAL_FORM_DONE = "✍️ Dati inseriti:\n\n{details}"
 TODAY_BUTTON = "📅 Oggi"
+YESTERDAY_BUTTON = "Ieri"
+CALENDAR_WEEKDAYS = ("L", "M", "M", "G", "V", "S", "D")
+AMOUNT_CONFIRM_BUTTON = "✅ Conferma importo"
 UNSUPPORTED_MESSAGE = (
     "Sticker, audio, video e altri file non sono supportati e non li conservo. "
     "Usa i pulsanti, scrivi il dato richiesto oppure invia una foto o un PDF della ricevuta."
 )
 MANUAL_FAILED = (
     "❌ Non sono riuscito a salvare la spesa e non riproverò da solo.\n\n"
-    "{details}\n\n👉 Controlla nel portale se compare. Se non c'è, riparti da "
-    "⚙️ Amministrazione con «Inserisci a mano» o «Nuova entrata»."
+    "{details}\n\n👉 Controlla nel portale se compare. Se non c'è, riparti con "
+    "«Nuova entrata» oppure, da ⚙️ Amministrazione, con «Inserisci a mano»."
 )
 MANUAL_FORMAT = (
     "Non ho capito 🙂 Scrivi data (giorno-mese-anno), descrizione e importo separati da «|», "
@@ -558,9 +566,14 @@ def manual_form(
     prompt: str | None,
     mode: str,
     invalid: bool = False,
+    amount_input: str | None = None,
 ) -> str:
     description = safe_text(payload.get("merchant"))
-    amount = amount_text(payload)
+    amount = (
+        MANUAL_FORM_AMOUNT_TYPING.format(value=safe_text(amount_input))
+        if amount_input
+        else amount_text(payload)
+    )
     sections = [
         INCOME_FORM_TITLE if income_only else MANUAL_FORM_TITLE,
         MANUAL_FORM_HINT,

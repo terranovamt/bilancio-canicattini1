@@ -147,7 +147,6 @@ class TelegramMessagesTests(unittest.TestCase):
             ("🏪 Negozio", "receipt:edit:merchant"),
             ("🏷️ Categoria", "receipt:edit:suggested_category"),
             ("Annulla", "receipt:cancel"),
-            (messages.HOME_BUTTON, "menu:home"),
         ])
 
 
