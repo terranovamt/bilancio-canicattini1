@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from urllib.parse import urlsplit
 
 
 class ConfigurationError(ValueError):
@@ -65,33 +64,6 @@ def _parse_boolean(value: str, name: str, default: bool) -> bool:
     raise ConfigurationError(f"Setting {name} must be true or false")
 
 
-def _local_service_url(
-    environ: Mapping[str, str],
-    name: str,
-    default: str,
-) -> str:
-    value = _optional_text(environ, name) or default
-    try:
-        parsed = urlsplit(value)
-        hostname = parsed.hostname
-        parsed.port
-    except ValueError as error:
-        raise ConfigurationError(f"Setting {name} must be a valid local URL") from error
-    local_hosts = {"ollama", "localhost", "127.0.0.1", "::1"}
-    if (
-        parsed.scheme != "http"
-        or hostname is None
-        or hostname.casefold() not in local_hosts
-        or parsed.path not in {"", "/"}
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise ConfigurationError(f"Setting {name} must point to a local HTTP service")
-    return value.rstrip("/")
-
-
 @dataclass(frozen=True, slots=True)
 class Settings:
     bot_token: str = field(repr=False)
@@ -102,8 +74,8 @@ class Settings:
     bilancio_url: str | None
     bilancio_user: str | None = field(repr=False)
     bilancio_password: str | None = field(repr=False)
-    local_vision_url: str
-    local_vision_model: str | None
+    gemini_api_key: str | None = field(repr=False)
+    gemini_model: str | None
     playwright_browser_channel: str | None
     data_path: str
     storage_path: str
@@ -111,7 +83,7 @@ class Settings:
     dry_run: bool
     puid: int | None
     pgid: int | None
-    local_vision_timeout_seconds: int = 600
+    ai_timeout_seconds: int = 600
 
     @classmethod
     def from_env(
@@ -152,6 +124,12 @@ class Settings:
             raise ConfigurationError(
                 "Setting PLAYWRIGHT_BROWSER_CHANNEL must be chrome, msedge, or empty"
             )
+        gemini_api_key = _optional_text(source, "GEMINI_API_KEY")
+        gemini_model = _optional_text(source, "GEMINI_MODEL")
+        if gemini_model is not None and gemini_api_key is None:
+            raise ConfigurationError(
+                "Setting GEMINI_MODEL requires GEMINI_API_KEY"
+            )
 
         return cls(
             bot_token=bot_token,
@@ -162,12 +140,8 @@ class Settings:
             bilancio_url=bilancio_url,
             bilancio_user=bilancio_user,
             bilancio_password=bilancio_password,
-            local_vision_url=_local_service_url(
-                source,
-                "LOCAL_VISION_URL",
-                "http://ollama:11434",
-            ),
-            local_vision_model=_optional_text(source, "LOCAL_VISION_MODEL"),
+            gemini_api_key=gemini_api_key,
+            gemini_model=gemini_model or ("gemini-1.5-flash" if gemini_api_key else None),
             playwright_browser_channel=playwright_browser_channel,
             data_path=_optional_text(source, "DATA_PATH") or "/data",
             storage_path=_optional_text(source, "STORAGE_PATH") or "/scontrini",
@@ -175,8 +149,10 @@ class Settings:
             dry_run=_parse_boolean(source.get("DRY_RUN", ""), "DRY_RUN", False),
             puid=_optional_non_negative_integer(source, "PUID"),
             pgid=_optional_non_negative_integer(source, "PGID"),
-            local_vision_timeout_seconds=_positive_integer(
-                _optional_text(source, "LOCAL_VISION_TIMEOUT_SECONDS") or "600",
-                "LOCAL_VISION_TIMEOUT_SECONDS",
+            ai_timeout_seconds=_positive_integer(
+                _optional_text(source, "GEMINI_TIMEOUT_SECONDS")
+                or _optional_text(source, "LOCAL_VISION_TIMEOUT_SECONDS")
+                or "600",
+                "GEMINI_TIMEOUT_SECONDS",
             ),
         )

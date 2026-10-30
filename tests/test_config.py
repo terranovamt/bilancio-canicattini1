@@ -20,9 +20,9 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.storage_path, "/scontrini")
         self.assertEqual(settings.timezone, "Europe/Rome")
         self.assertFalse(settings.dry_run)
-        self.assertEqual(settings.local_vision_url, "http://ollama:11434")
-        self.assertIsNone(settings.local_vision_model)
-        self.assertEqual(settings.local_vision_timeout_seconds, 600)
+        self.assertIsNone(settings.gemini_api_key)
+        self.assertIsNone(settings.gemini_model)
+        self.assertEqual(settings.ai_timeout_seconds, 600)
         self.assertIsNone(settings.anthropic_api_key)
         self.assertIsNone(settings.bilancio_url)
         self.assertIsNone(settings.playwright_browser_channel)
@@ -86,38 +86,37 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaisesRegex(ConfigurationError, "BILANCIO_URL"):
             Settings.from_env(self.environ)
 
-    def test_accepts_local_ollama_service_url(self) -> None:
-        self.environ["LOCAL_VISION_URL"] = "http://ollama:11434/"
-        self.environ["LOCAL_VISION_MODEL"] = "local-test-model"
+    def test_accepts_gemini_key_and_model(self) -> None:
+        self.environ["GEMINI_API_KEY"] = "test-key"
+        self.environ["GEMINI_MODEL"] = "gemini-1.5-flash"
 
         settings = Settings.from_env(self.environ)
 
-        self.assertEqual(settings.local_vision_url, "http://ollama:11434")
-        self.assertEqual(settings.local_vision_model, "local-test-model")
+        self.assertEqual(settings.gemini_api_key, "test-key")
+        self.assertEqual(settings.gemini_model, "gemini-1.5-flash")
 
-    def test_loads_local_vision_timeout_and_rejects_invalid_values(self) -> None:
-        self.environ["LOCAL_VISION_TIMEOUT_SECONDS"] = "180"
-        self.assertEqual(Settings.from_env(self.environ).local_vision_timeout_seconds, 180)
-        self.environ["LOCAL_VISION_TIMEOUT_SECONDS"] = "600"
+    def test_loads_ai_timeout_and_rejects_invalid_values(self) -> None:
+        self.environ["GEMINI_TIMEOUT_SECONDS"] = "180"
+        self.assertEqual(Settings.from_env(self.environ).ai_timeout_seconds, 180)
+        self.environ["GEMINI_TIMEOUT_SECONDS"] = "600"
         self.assertEqual(
-            Settings.from_env(self.environ).local_vision_timeout_seconds, 600
+            Settings.from_env(self.environ).ai_timeout_seconds, 600
         )
         for value in ("0", "-1", "abc", "1.5"):
             with self.subTest(value=value):
-                self.environ["LOCAL_VISION_TIMEOUT_SECONDS"] = value
-                with self.assertRaisesRegex(ConfigurationError, "LOCAL_VISION_TIMEOUT_SECONDS"):
+                self.environ["GEMINI_TIMEOUT_SECONDS"] = value
+                with self.assertRaisesRegex(ConfigurationError, "GEMINI_TIMEOUT_SECONDS"):
                     Settings.from_env(self.environ)
 
-    def test_rejects_remote_vision_service_url(self) -> None:
-        self.environ["LOCAL_VISION_URL"] = "https://vision.example.com"
+    def test_defaults_model_when_key_is_set(self) -> None:
+        self.environ["GEMINI_API_KEY"] = "test-key"
+        settings = Settings.from_env(self.environ)
+        self.assertEqual(settings.gemini_model, "gemini-1.5-flash")
 
-        with self.assertRaisesRegex(ConfigurationError, "local HTTP service"):
-            Settings.from_env(self.environ)
+    def test_rejects_model_without_key(self) -> None:
+        self.environ["GEMINI_MODEL"] = "gemini-1.5-flash"
 
-    def test_rejects_non_root_local_vision_url_path(self) -> None:
-        self.environ["LOCAL_VISION_URL"] = "http://ollama:11434/remote-proxy"
-
-        with self.assertRaisesRegex(ConfigurationError, "local HTTP service"):
+        with self.assertRaisesRegex(ConfigurationError, "GEMINI_MODEL"):
             Settings.from_env(self.environ)
 
     def test_accepts_installed_browser_channel_for_local_testing(self) -> None:

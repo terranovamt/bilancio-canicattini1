@@ -9,7 +9,7 @@ from config import Settings
 from db.database import Database
 from logging_config import configure_logging
 from bilancio.playwright_client import PlaywrightBilancioClient
-from vision.ollama_client import OllamaReceiptAnalyzer
+from vision.gemini_client import GeminiReceiptAnalyzer
 
 
 def main() -> None:
@@ -20,12 +20,12 @@ def main() -> None:
     database = Database(data_path / "bot.sqlite3")
     database.initialize()
     analyzer = (
-        OllamaReceiptAnalyzer(
-            base_url=settings.local_vision_url,
-            model=settings.local_vision_model,
-            timeout_seconds=settings.local_vision_timeout_seconds,
+        GeminiReceiptAnalyzer(
+            api_key=settings.gemini_api_key,
+            model=settings.gemini_model,
+            timeout_seconds=settings.ai_timeout_seconds,
         )
-        if settings.local_vision_model
+        if settings.gemini_api_key and settings.gemini_model
         else None
     )
     bilancio_client = None

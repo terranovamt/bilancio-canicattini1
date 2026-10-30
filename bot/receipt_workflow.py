@@ -28,7 +28,7 @@ from config import Settings
 from db.database import Database
 from storage.archive import FileArchive
 from storage.pending import MAX_PENDING_RECEIPT_BYTES, PendingReceiptStore, has_receipt_file
-from vision.ollama_client import (
+from vision.gemini_client import (
     AnalysisPhase,
     AnalysisProgress,
     LocalVisionError,
@@ -407,7 +407,7 @@ class ReceiptWorkflow:
                     "Receipt analyzer is not configured",
                     code=VisionFailureCode.NOT_CONFIGURED,
                 )
-            async with asyncio.timeout(self._settings.local_vision_timeout_seconds):
+            async with asyncio.timeout(self._settings.ai_timeout_seconds):
                 receipt = await self._analyze_receipt(file_bytes, file_name, progress_message)
         except (LocalVisionError, ReceiptParseError, ImagePreprocessingError, TimeoutError) as error:
             code = (
@@ -435,7 +435,7 @@ class ReceiptWorkflow:
             )
             reply = texts.ANALYSIS_FAILED.format(prompt=_FIELD_PROMPTS["date"])
             diagnostic = texts.ai_admin_diagnostic(
-                code.value, status, self._settings.local_vision_timeout_seconds
+                code.value, status, self._settings.ai_timeout_seconds
             )
             if user.id == self._settings.admin_user_id:
                 reply = texts.AI_FAILURE_WITH_DIAGNOSTIC.format(

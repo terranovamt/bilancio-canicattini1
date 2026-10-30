@@ -171,17 +171,15 @@ ANALYSIS_PREPARING_IMAGE = (
 )
 ANALYSIS_LOADING_MODEL = (
     "⏳ Analisi in corso ({seconds} secondi).\n"
-    "Fase 2 di 4: Ollama sta caricando il modello in memoria. "
-    "La prima analisi dopo una pausa è la più lenta."
+    "Fase 2 di 4: preparo la richiesta per Gemini."
 )
 ANALYSIS_READING_IMAGE = (
     "⏳ Analisi in corso ({seconds} secondi).\n"
-    "Fase 3 di 4: il modello è pronto e sta leggendo l’immagine. "
-    "È la fase più lunga e non mostra avanzamenti finché non inizia a scrivere."
+    "Fase 3 di 4: OCR locale in corso per recuperare il testo della ricevuta."
 )
 ANALYSIS_RECEIVING = (
     "⏳ Analisi in corso ({seconds} secondi).\n"
-    "Fase 4 di 4: il modello sta scrivendo i dati ({characters} caratteri finora). "
+    "Fase 4 di 4: Gemini sta scrivendo i dati ({characters} caratteri finora). "
     "Aspetto la risposta completa prima di usarla."
 )
 ANALYSIS_FINISHED = "📷 Attesa dell’analisi terminata. Trovi il risultato o le istruzioni nel messaggio successivo."
@@ -353,25 +351,25 @@ FILE_UNREADABLE = (
 )
 RECEIPT_DUPLICATE = "Questo scontrino l'ho già ricevuto, non lo rielaboro."
 ANALYSIS_FAILED = (
-    "⚠️ Non sono riuscito a leggere lo scontrino con l’AI locale. "
-    "Ho conservato il file temporaneo, senza inviarlo a servizi AI online. "
+    "⚠️ Non sono riuscito a leggere lo scontrino con OCR+Gemini. "
+    "Ho conservato il file temporaneo. "
     "Inseriamo i dati a mano: data, descrizione e importo, poi cassa e tipologia. "
     "La ricevuta sarà archiviata quando confermi l’operazione; Annulla elimina "
     "la copia temporanea.\n\n{prompt}"
 )
-ADMIN_ANALYSIS_FAILED = "L'analisi locale di una ricevuta non è riuscita. Il file non è stato inviato a servizi online."
+ADMIN_ANALYSIS_FAILED = "L'analisi OCR+Gemini di una ricevuta non è riuscita."
 AI_FAILURE_REASONS = {
-    "timeout": "Ollama non ha risposto entro il tempo configurato. La causa può essere il caricamento iniziale o l'elaborazione lenta sulla CPU; non è una prova di memoria insufficiente.",
-    "connection": "Il bot non riesce a comunicare con Ollama. Verifica che il servizio sia avviato e raggiungibile nella rete Docker.",
-    "model_not_found": "Ollama non trova il modello richiesto. Confronta LOCAL_VISION_MODEL con l'elenco di ollama list.",
-    "memory": "Ollama ha segnalato memoria insufficiente. Controlla la RAM libera del NAS e gli altri servizi in esecuzione.",
-    "unsupported_model": "Ollama ha segnalato un modello o una funzione non supportati. Verifica versione del servizio e supporto delle immagini.",
-    "service_error": "Ollama ha restituito un errore non classificato. Il corpo grezzo non viene mostrato: può contenere dati privati.",
+    "timeout": "Gemini non ha risposto entro il tempo configurato.",
+    "connection": "Il bot non riesce a comunicare con Gemini. Verifica la connessione Internet del NAS.",
+    "model_not_found": "Gemini non trova il modello richiesto. Controlla GEMINI_MODEL.",
+    "memory": "Il servizio AI ha segnalato risorse insufficienti. Riprova dopo qualche minuto.",
+    "unsupported_model": "Gemini ha segnalato un modello o una funzione non supportati. Verifica GEMINI_MODEL.",
+    "service_error": "Gemini ha restituito un errore non classificato. Il corpo grezzo non viene mostrato: può contenere dati privati.",
     "invalid_response": "Il servizio non ha restituito una risposta JSON valida nel formato atteso.",
-    "incomplete_response": "Ollama ha restituito una risposta incompleta o interrotta per limite di generazione. I dati non vengono accettati.",
-    "empty_result": "La risposta di Ollama non contiene un risultato utilizzabile per la ricevuta.",
+    "incomplete_response": "Gemini ha restituito una risposta incompleta o interrotta. I dati non vengono accettati.",
+    "empty_result": "La risposta di Gemini non contiene un risultato utilizzabile per la ricevuta.",
     "invalid_receipt": "Il risultato del modello non rispetta lo schema dei dati: JSON non valido o valori non ammessi. Nessun dato viene inventato.",
-    "not_configured": "Il modello non è configurato nel bot. Imposta LOCAL_VISION_MODEL e ricrea il container bot.",
+    "not_configured": "Gemini non è configurato nel bot. Imposta GEMINI_API_KEY e ricrea il container bot.",
     "preprocessing": "Il file non può essere preparato per l'analisi: formato, immagine o PDF non supportati o non leggibili.",
 }
 AI_ADMIN_DIAGNOSTIC = (

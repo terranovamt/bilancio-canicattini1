@@ -12,12 +12,12 @@ Il comportamento predefinito è **REALE** (`DRY_RUN=false`): dopo l'ultima scelt
 
 La modalità scelta dall'amministratore vale per tutti i nuovi inserimenti, fino alla disattivazione, anche dopo un riavvio. È conservata nel database e prevale su `DRY_RUN`; in assenza di una scelta usa il valore di `.env`, ora reale per impostazione predefinita. **Per un NAS già configurato con `DRY_RUN=true`, dopo l'aggiornamento premi «Torna ai salvataggi reali» una volta**: il programma non modifica automaticamente `.env`. Ogni operazione conserva la modalità iniziale, anche nei ritentativi; le vecchie code senza modalità registrata vengono riprovate solo in simulazione, per non trasformare vecchie prove in inserimenti reali.
 
-L'analisi delle ricevute è prevista in locale con Ollama. Non è configurato l'invio delle immagini a un servizio AI online. Il modello locale va scelto dopo aver verificato la memoria e le prestazioni disponibili sul NAS.
+L'analisi delle ricevute usa OCR locale e Gemini. Se l'analisi non riesce, il bot mantiene il file temporaneo e chiede i campi manualmente.
 
 ## Componenti
 
 - `bot/`: comandi Telegram, accesso autorizzato, inserimenti e ritentativi. I testi e le etichette sono centralizzati in [`bot/messages.py`](bot/messages.py); gli esempi sono nel [catalogo dei messaggi](docs/PREVIEW_MESSAGGI_TELEGRAM.md).
-- `vision/`: correzione locale dell'immagine, schema dei dati e client Ollama.
+- `vision/`: correzione locale dell'immagine, OCR, schema dei dati e client Gemini.
 - `storage/`: conservazione temporanea e archivio permanente delle ricevute.
 - `db/`: spese, stati, duplicati e coda SQLite.
 - `bilancio/`: interfaccia e client Playwright; selettori osservati e opzioni lette dinamicamente dal portale.
@@ -37,7 +37,7 @@ Il punto di contatto e **Manager**: mantiene la visione del progetto, assegna in
 | [Manager](.github/agents/manager.agent.md) | Dialogo con te, contesto, coordinamento e verifica finale. |
 | [Sviluppo bot e archivio](.github/agents/bot-python.agent.md) | Telegram, accessi, archivio, database, coda, integrazione e deploy generale. |
 | [Automazione portale AGESCI](.github/agents/agesci-portal.agent.md) | Client del portale, Playwright, selettori, CSV e verifica delle registrazioni. |
-| [AI locale Ollama](.github/agents/ollama-ai.agent.md) | Analisi locale delle ricevute, modelli, prompt, immagini/PDF, errori e risorse Ollama. |
+| [AI locale Ollama](.github/agents/ollama-ai.agent.md) | Analisi ricevute (OCR+Gemini), prompt, immagini/PDF, errori e prestazioni. |
 | [Doctor agenti](.github/agents/doctor.agent.md) | Coerenza di agenti e istruzioni, documentazione collegata, ripetizioni, riferimenti obsoleti e pulizia sicura. |
 
 Sul PC, in VS Code:
@@ -64,29 +64,28 @@ Il Doctor lavora su richiesta o quando il Manager rileva incoerenze rilevanti: n
 
 1. Crea `.env` copiando `.env.example`.
 2. Inserisci lì token, ID autorizzati e credenziali: non inviarli in chat e non inserirli in GitHub.
-3. Lascia vuoto `LOCAL_VISION_MODEL` finché non è stato scelto un modello compatibile con il NAS.
+3. Inserisci `GEMINI_API_KEY` e, se vuoi, `GEMINI_MODEL` (default `gemini-1.5-flash`).
 4. Per l'uso normale lascia `DRY_RUN=false`; per una prova imposta esplicitamente `DRY_RUN=true` e verifica che Telegram mostri **Modalità PROVA**. Una scelta salvata nel menu Amministrazione prevale su questa variabile.
 
-Il file `.env`, le ricevute, il database e i modelli locali sono esclusi sia da Git sia dal contesto di creazione dell'immagine Docker.
+Il file `.env`, le ricevute e il database sono esclusi sia da Git sia dal contesto di creazione dell'immagine Docker.
 
 ## Prova locale sul PC
 
-Per usare lo stesso modello locale previsto per il NAS:
+Per provare OCR+Gemini sul PC:
 
-1. Installa Ollama per Windows dal sito ufficiale e avvialo.
-2. Apri PowerShell nella cartella del progetto e scarica il modello con `ollama pull qwen3-vl:2b`.
-3. Crea l'ambiente Python e installa i pacchetti, se non l'hai già fatto:
+1. Crea l'ambiente Python e installa i pacchetti, se non l'hai già fatto:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-4. Avvia il bot dalla stessa finestra di PowerShell. Questi valori valgono solo per questa prova e non modificano `.env`:
+2. Avvia il bot dalla stessa finestra di PowerShell. Questi valori valgono solo per questa prova e non modificano `.env`:
 
 ```powershell
-$env:LOCAL_VISION_URL = "http://127.0.0.1:11434"
-$env:LOCAL_VISION_MODEL = "qwen3-vl:2b"
+$env:GEMINI_API_KEY = "inserisci-qui-la-chiave"
+$env:GEMINI_MODEL = "gemini-1.5-flash"
+$env:GEMINI_TIMEOUT_SECONDS = "600"
 $env:DATA_PATH = "$PWD\data-local"
 $env:STORAGE_PATH = "$PWD\scontrini-local"
 $env:PLAYWRIGHT_BROWSER_CHANNEL = "chrome"
@@ -117,17 +116,17 @@ Telegram non permette veri campi di input dentro la chat senza una pagina web es
 
 Il vecchio `/testspesa` è stato rimosso per non confondere una prova con un inserimento reale: usa **Inserisci a mano** e scegli la modalità desiderata in Amministrazione.
 
-Inviando una foto o un PDF, invece, la direzione è già **Uscita**. Se l'AI locale non riesce a leggerlo, anche per timeout, ricevi un avviso e puoi compilare data, descrizione e importo a mano, poi scegliere cassa e tipologia senza dover selezionare di nuovo Uscita. File e stato per il recupero manuale vengono conservati prima di avviare l'AI. L'attesa totale dell'analisi è limitata da `LOCAL_VISION_TIMEOUT_SECONDS`. Il file resta temporaneamente sul NAS: compare nell'archivio `scontrini` quando avvii il salvataggio, con i dati e la cassa scelti. `/annulla` elimina la copia temporanea, non le ricevute già archiviate. La compilazione a mano mantiene la modalità con cui hai inviato la ricevuta. Questo percorso è disponibile agli stessi utenti autorizzati che possono inviare scontrini, anche se il modello non è configurato. Fuori dal percorso manuale dell'amministratore, un'uscita senza file resta bloccata, anche nei ritentativi della coda.
+Inviando una foto o un PDF, invece, la direzione è già **Uscita**. Il bot prova prima un OCR locale e poi Gemini. Se non riesce a leggere il documento, anche per timeout, ricevi un avviso e puoi compilare data, descrizione e importo a mano, poi scegliere cassa e tipologia senza dover selezionare di nuovo Uscita. File e stato per il recupero manuale vengono conservati prima di avviare l'AI. L'attesa totale dell'analisi è limitata da `GEMINI_TIMEOUT_SECONDS` (oppure `LOCAL_VISION_TIMEOUT_SECONDS` per compatibilità). Il file resta temporaneamente sul NAS: compare nell'archivio `scontrini` quando avvii il salvataggio, con i dati e la cassa scelti. `/annulla` elimina la copia temporanea, non le ricevute già archiviate. La compilazione a mano mantiene la modalità con cui hai inviato la ricevuta. Questo percorso è disponibile agli stessi utenti autorizzati che possono inviare scontrini, anche se Gemini non è configurato. Fuori dal percorso manuale dell'amministratore, un'uscita senza file resta bloccata, anche nei ritentativi della coda.
 
 ### Attesa dell'analisi immagini
 
-Ollama invia la risposta progressivamente, ma il bot usa i dati solo quando la risposta è completa e valida. Al modello si chiedono solo data, esercente, totale e confidenza, per accorciare la fase di scrittura. Durante l'attesa aggiorna lo stesso messaggio ogni 30 secondi indicando la fase: preparazione dell'immagine, caricamento del modello, lettura dell'immagine o scrittura dei dati (con il numero di caratteri ricevuti). La fase si ricava dallo stato locale di Ollama (`/api/ps`). Non mostra frammenti della ricevuta o del ragionamento e non registra dati parziali. Alla fine il log del bot riporta i tempi di ogni fase (caricamento, lettura dell'immagine, scrittura), senza contenuti della ricevuta. Lo streaming non rende il modello più veloce e la lettura dell'immagine può durare diversi minuti.
+Il bot usa i dati solo quando la risposta è completa e valida. Durante l'attesa aggiorna lo stesso messaggio ogni 30 secondi indicando la fase: preparazione dell'immagine, OCR locale, invio a Gemini e scrittura dei dati (con il numero di caratteri ricevuti). Non mostra frammenti della ricevuta o del ragionamento e non registra dati parziali.
 
 Il limite predefinito è **600 secondi (10 minuti)** per l'analisi, compresa la preparazione dell'immagine. Se scade o la risposta si interrompe, il file resta conservato e il bot chiede i dati a mano. `/start` e l'aiuto restano disponibili durante l'attesa.
 
 Per un NAS già configurato:
 
-1. Controlla localmente il valore `LOCAL_VISION_TIMEOUT_SECONDS` nella configurazione privata, senza condividerla.
+1. Controlla localmente il valore `GEMINI_TIMEOUT_SECONDS` nella configurazione privata, senza condividerla.
 2. Se contiene ancora `180` e vuoi attendere fino a 10 minuti, portalo a `600`.
 3. Dalla cartella attiva sul NAS ricrea il bot con `sudo docker compose up -d --force-recreate bot`, quando nessuno sta inserendo un'operazione.
 

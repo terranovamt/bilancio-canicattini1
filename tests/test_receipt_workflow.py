@@ -25,7 +25,7 @@ from storage.archive import FileArchive
 from storage.pending import PendingReceiptStore
 from vision.receipt_schema import ReceiptData
 from vision.receipt_schema import ReceiptParseError
-from vision.ollama_client import (
+from vision.gemini_client import (
     AnalysisPhase,
     AnalysisProgress,
     LocalVisionError,
@@ -153,7 +153,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             result = await self.workflow._analyze_receipt(b"image", "test.png", progress)
         rendered = [call.args[0] for call in progress.edit_text.await_args_list]
         self.assertTrue(any("Non ho ancora ricevuto dati" in text for text in rendered))
-        self.assertTrue(any("sta leggendo l’immagine" in text for text in rendered))
+        self.assertTrue(any("OCR locale in corso" in text for text in rendered))
         self.assertTrue(any("42 caratteri finora" in text for text in rendered))
         self.assertEqual(rendered[-1], texts.ANALYSIS_FINISHED)
         self.assertFalse(any("Negozio" in text for text in rendered))
@@ -182,7 +182,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.Event().wait()
 
         self.workflow._analyzer = SimpleNamespace(analyze_with_progress=analyze_with_progress)
-        self.workflow._settings = replace(make_settings(), local_vision_timeout_seconds=1)
+        self.workflow._settings = replace(make_settings(), ai_timeout_seconds=1)
         message, update, context = self.make_photo_update(b"progress-timeout")
         progress = SimpleNamespace(edit_text=AsyncMock())
         message.reply_text.return_value = progress
@@ -248,7 +248,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             return self.analyzer.receipt
 
         self.workflow._settings = replace(
-            make_settings(), local_vision_timeout_seconds=1
+            make_settings(), ai_timeout_seconds=1
         )
         self.workflow._analyzer = SimpleNamespace(analyze=stalled_analysis)
         message, update, context = self.make_photo_update(b"stalled-receipt")
@@ -1335,7 +1335,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
                     context.bot.send_message.assert_not_awaited()
                     self.assertIn("Codice: memory", text)
                     self.assertIn("HTTP 500", text)
-                    self.assertIn("memoria insufficiente", text)
+                    self.assertIn("insufficienti", text)
                 else:
                     self.assertNotIn("Diagnosi AI", text)
                     self.assertNotIn("memory", text)

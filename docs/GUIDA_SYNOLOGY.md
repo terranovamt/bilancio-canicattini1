@@ -12,16 +12,16 @@ Lo scopo iniziale è avviare il bot e provare una spesa simulata. Solo dopo si i
 - **DSM**: la pagina di amministrazione del Synology che apri nel browser.
 - **Container Manager**: l'applicazione Synology che esegue il programma in ambienti separati chiamati container.
 - **Servizio `bot`**: il programma che risponde su Telegram e usa il browser per AGESCI.
-- **Servizio `ollama`**: il programma locale che eseguirà il modello per capire le foto.
+- **OCR locale + Gemini**: il bot prova prima l'estrazione testo locale, poi usa Gemini per leggere i campi.
 - **File `.env`**: le impostazioni private, compresi token e password. Non va condiviso.
 
-Le tre cartelle da creare sono normali cartelle vuote, non programmi da installare:
+Le cartelle da creare sono normali cartelle vuote, non programmi da installare:
 
 | Cartella | Che cosa conterrà |
 | --- | --- |
 | `data` | Database delle operazioni, stato degli accessi al portale, file temporanei e registri degli errori. |
 | `scontrini` | Foto e PDF archiviati, organizzati per anno e mese. |
-| `ollama-data` | File del modello AI, così non devi riscaricarli dopo ogni riavvio. |
+| `data` | Include anche i registri tecnici dell'analisi OCR+Gemini. |
 
 Il programma le riempirà da solo. Si trovano fuori dai container: i contenuti restano anche quando ricrei il programma. **Non cancellarle per risolvere un errore.** Anche i dati delle prove possono restare sul NAS.
 
@@ -29,7 +29,7 @@ Il programma le riempirà da solo. Si trovano fuori dai container: i contenuti r
 
 Non devi già saper fare queste operazioni. Segui le sottosezioni in ordine. Per ogni passaggio è indicato dove agire e che risultato aspettarti.
 
-Non inviare token, password, codici di verifica o ricevute in questa chat. Non serve GitHub per questa installazione. Non servono Python, Chrome o Ollama installati direttamente in DSM.
+Non inviare token, password, codici di verifica o ricevute in questa chat. Non serve GitHub per questa installazione. Non servono Python o Chrome installati direttamente in DSM.
 
 ### 2.1. Controlla che il NAS sia acceso
 
@@ -208,16 +208,13 @@ Non usare la copia del progetto già presente sul PC con database, ricevute o ca
 
 Se trovi `bilancio_canicattini1` dentro un'altra `bilancio_canicattini1`, il percorso giusto è quello più interno che contiene `docker-compose.yml`. Non avviare il progetto dalla cartella esterna.
 
-## 5. Sul NAS: crea le tre cartelle vuote
+## 5. Sul NAS: crea le cartelle vuote
 
 1. In File Station entra nella cartella che contiene `docker-compose.yml`.
 2. Premi **Crea → Crea cartella**.
 3. Scrivi esattamente `data` e conferma.
 4. Premi nuovamente **Crea → Crea cartella**.
 5. Scrivi esattamente `scontrini` e conferma.
-6. Premi nuovamente **Crea → Crea cartella**.
-7. Scrivi esattamente `ollama-data` e conferma.
-
 Non creare file con questi nomi: devono essere cartelle. Non devi inserire nulla al loro interno.
 
 Alla fine, nella stessa finestra devono comparire almeno:
@@ -237,8 +234,7 @@ bilancio_canicattini1
 ├── storage
 ├── vision
 ├── data
-├── scontrini
-└── ollama-data
+└── scontrini
 ```
 
 ## 6. Dal PC: apri un collegamento al terminale del NAS
@@ -293,7 +289,7 @@ PUID e PGID non sono l'ID Telegram. Sono i numeri con cui il NAS identifica l'ut
 
 Se i permessi sono ereditati dalla cartella condivisa, può essere necessario controllarli in **Pannello di controllo → Cartella condivisa → docker → Modifica → Permessi**. Non rimuovere permessi di altri progetti e non concedere accesso a tutti. Se il NAS è condiviso con altre persone, chiedi all'amministratore prima di modificarli.
 
-Il servizio `bot` usa PUID e PGID per scrivere in `data` e `scontrini`. Il servizio Ollama usa l'utente previsto dalla propria immagine e scrive separatamente in `ollama-data`: non forzare permessi universali per aggirare un errore.
+Il servizio `bot` usa PUID e PGID per scrivere in `data` e `scontrini`: non forzare permessi universali per aggirare un errore.
 
 ## 9. Sul NAS: crea il file privato `.env`
 
@@ -320,8 +316,9 @@ Il servizio `bot` usa PUID e PGID per scrivere in `data` e `scontrini`. Il servi
 ANTHROPIC_API_KEY=
 ANTHROPIC_MODEL=
 PLAYWRIGHT_BROWSER_CHANNEL=
-LOCAL_VISION_URL=http://ollama:11434
-LOCAL_VISION_MODEL=
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-1.5-flash
+GEMINI_TIMEOUT_SECONDS=600
 DATA_PATH=/data
 STORAGE_PATH=/scontrini
 TZ=Europe/Rome
@@ -382,8 +379,8 @@ Se `docker compose` non è disponibile, fermati e comunica versione di DSM e Con
 
 ## 11. Controlla che il programma risponda davvero
 
-1. Nel risultato di `docker compose ps`, cerca i servizi `bot` e `ollama`.
-2. Attendi che risultino in esecuzione; il controllo di salute può richiedere qualche minuto.
+1. Nel risultato di `docker compose ps`, cerca il servizio `bot`.
+2. Attendi che risulti in esecuzione; il controllo di salute può richiedere qualche minuto.
 3. Se compaiono `Exited`, `Restarting` o `unhealthy`, non proseguire con le spese: consulta la sezione errori.
 4. Sul telefono apri Telegram.
 5. Cerca il tuo bot `@bilanciocanicattini1_bot`.
@@ -428,39 +425,21 @@ Un riavvio del bot svuota la cache in memoria. Questa modifica non rende istanta
 
 Se è richiesto un accesso manuale o un codice di verifica, fermati e segnala soltanto il tipo di richiesta: questa guida non configura una schermata browser interattiva sul NAS. Non inviare codici in chat.
 
-## 13. Solo dopo: scarica il modello per leggere le foto
+## 13. Solo dopo: attiva Gemini per leggere le foto
 
-Il DS1522+ lavora qui con la CPU, non con una GPU. Con gli 8 GB di RAM dichiarati, `qwen3-vl:2b` è il candidato iniziale, non una garanzia di prestazioni: l'analisi potrebbe essere lenta o non avere memoria sufficiente. Il download richiede circa 1,9 GB, oltre allo spazio delle immagini Docker.
-
-1. Torna nel terminale SSH, sempre nella cartella del progetto.
-2. Scarica il modello:
-
-```sh
-sudo docker compose exec ollama ollama pull qwen3-vl:2b
-```
-
-3. Attendi la conclusione del download senza chiudere il terminale.
-4. Controlla i modelli installati:
-
-```sh
-sudo docker compose exec ollama ollama list
-```
-
-5. Verifica che compaia `qwen3-vl:2b`.
-6. In File Station riapri il file `.env`.
-7. Cambia soltanto `LOCAL_VISION_MODEL=` in `LOCAL_VISION_MODEL=qwen3-vl:2b`.
-8. Salva il file.
-9. Nel terminale SSH ricrea il servizio bot:
+1. In File Station riapri il file `.env`.
+2. Inserisci `GEMINI_API_KEY=` con la tua chiave privata.
+3. Lascia `GEMINI_MODEL=gemini-1.5-flash` oppure imposta un altro modello Gemini compatibile.
+4. Salva il file.
+5. Nel terminale SSH ricrea il servizio bot:
 
 ```sh
 sudo docker compose up -d --force-recreate bot
 ```
 
-10. Controlla di nuovo stato e registri con i comandi della sezione 10.
+6. Controlla di nuovo stato e registri con i comandi della sezione 10.
 
-**Un semplice riavvio del container non rilegge necessariamente le variabili del file `.env`: per questo usiamo la ricreazione.** La ricreazione non cancella le tre cartelle di dati.
-
-Il download usa Internet, ma il modello analizza poi le immagini sul NAS. Non serve una chiave Anthropic. Telegram riceve comunque la foto che invii nella chat del bot.
+**Un semplice riavvio del container non rilegge necessariamente le variabili del file `.env`: per questo usiamo la ricreazione.** La ricreazione non cancella le cartelle di dati.
 
 ## 14. Su Telegram: prova una foto
 
@@ -470,32 +449,32 @@ Se la lettura locale fallisce, il mittente può compilare i dati a mano conserva
 
 | Codice | Significato e controllo |
 | --- | --- |
-| `timeout` | Ollama non ha risposto entro l'attesa configurata. Non dimostra memoria insufficiente. Controlla se il NAS sta ancora lavorando. |
-| `connection` | Collegamento locale non riuscito: verifica che il servizio Ollama sia avviato. |
-| `model_not_found` | Il servizio segnala che manca il modello: confronta `LOCAL_VISION_MODEL` con `sudo docker compose exec ollama ollama list`. |
-| `memory` | Il servizio segnala memoria insufficiente: verifica la RAM libera nel Monitoraggio risorse DSM. |
-| `unsupported_model` | Il servizio segnala modello, immagini o versione non supportati. |
+| `timeout` | Gemini non ha risposto entro l'attesa configurata. |
+| `connection` | Il bot non riesce a raggiungere Gemini: verifica Internet sul NAS. |
+| `model_not_found` | Gemini non trova il modello indicato in `GEMINI_MODEL`. |
+| `memory` | Il servizio AI ha segnalato risorse insufficienti; riprova più tardi. |
+| `unsupported_model` | Gemini segnala modello o funzione non supportati. |
 | `invalid_response`, `empty_result`, `invalid_receipt` | Risposta mancante o non valida; il bot non inventa i dati. |
 | `incomplete_response` | Risposta interrotta o limitata: i dati vengono rifiutati anche se sembrano JSON valido. |
-| `not_configured` | Il bot non ha un modello configurato: verifica la configurazione privata e ricrea il container. |
+| `not_configured` | Gemini non è configurato: verifica `GEMINI_API_KEY` e ricrea il container. |
 | `preprocessing` | Il file non può essere preparato per l'analisi. |
-| `service_error` | Altro errore Ollama; viene mostrato lo stato HTTP, quando disponibile, ma non il corpo grezzo. |
+| `service_error` | Altro errore del servizio AI; viene mostrato lo stato HTTP, quando disponibile, ma non il corpo grezzo. |
 
 Il bot non chiede al modello di spiegare il proprio guasto: usa il tipo di eccezione e classifica gli errori noti restituiti dal servizio. Risposte grezze, ragionamento del modello, nomi di file, URL e dati della ricevuta non vengono inclusi nella diagnosi. Puoi condividere codice e stato HTTP, non i registri completi.
 
-Il client chiede `think=false` per evitare ragionamento non necessario dove supportato, mantiene l'output JSON strutturato e rifiuta risposte incomplete. Questo non garantisce tempi o qualità del modello sul NAS.
+Il client mantiene l'output JSON strutturato e rifiuta risposte incomplete. Questo non garantisce tempi o qualità del modello.
 
-L'analisi usa una risposta progressiva. Ogni 30 secondi il messaggio Telegram indica il tempo trascorso e la fase (1 preparazione immagine, 2 caricamento del modello, 3 lettura dell'immagine, 4 scrittura dei dati); i dati vengono utilizzati soltanto dopo la conclusione e la validazione della risposta. Nessun frammento viene mostrato o salvato nel portale. Nelle fasi 2 e 3 non arrivano ancora dati: lo streaming non rende Ollama più veloce.
+Ogni 30 secondi il messaggio Telegram indica il tempo trascorso e la fase (1 preparazione immagine, 2 OCR locale, 3 invio a Gemini, 4 scrittura dei dati); i dati vengono utilizzati soltanto dopo la conclusione e la validazione della risposta.
 
-Per vedere i dettagli apri **Container Manager** → **Container** → container del bot → **Dettagli** → **Registro**. Troverai righe come `Local receipt analysis phase: reading_image` e, alla fine, `Local receipt analysis finished: total=… load=… image_and_prompt=… answer=…`, con i secondi di ogni fase. Se l'analisi scade, il registro indica la fase raggiunta (`timed out during phase …`). Il registro del container `ollama` mostra invece il caricamento del modello e la durata complessiva della richiesta `POST /api/chat`.
+Per vedere i dettagli apri **Container Manager** → **Container** → container del bot → **Dettagli** → **Registro**. Se l'analisi scade, il registro indica la fase raggiunta.
 
 Il timeout predefinito è ora di 10 minuti. Se la configurazione privata contiene ancora `180`, il valore esplicito resta valido; per aumentarlo, quando il NAS ha memoria sufficiente, imposta:
 
 ```dotenv
-LOCAL_VISION_TIMEOUT_SECONDS=600
+GEMINI_TIMEOUT_SECONDS=600
 ```
 
-Dopo la modifica, quando nessuno sta inserendo un'operazione, dalla cartella attiva ricrea soltanto il bot con `sudo docker compose up -d --force-recreate bot`. L'impostazione limita l'analisi complessiva (preparazione e risposta), oltre ai timeout HTTP di Ollama; non riguarda il download Telegram. Il limite totale resta valido anche se continuano ad arrivare frammenti. Se scade, il bot conserva il file e richiede i dati a mano. Non è una garanzia di completamento del modello sul NAS.
+Dopo la modifica, quando nessuno sta inserendo un'operazione, dalla cartella attiva ricrea soltanto il bot con `sudo docker compose up -d --force-recreate bot`. L'impostazione limita l'analisi complessiva (OCR + Gemini); non riguarda il download Telegram. Se scade, il bot conserva il file e richiede i dati a mano.
 
 ### Trasferimento Telegram e prova
 
@@ -545,7 +524,7 @@ sudo docker compose up -d --force-recreate bot
 
 **Metodo Git, scelto per gli aggiornamenti successivi:** segui la [guida al deploy Git manuale](DEPLOY_GIT_SYNOLOGY.md) per collegare una sola volta il NAS al repository privato. Dopo la configurazione non serviranno ZIP: il NAS scaricherà e installerà solo quando esegui tu il comando. Un push da solo non attiva alcun aggiornamento. Il metodo ZIP qui sotto rimane un'alternativa.
 
-I nuovi pacchetti includono `aggiorna.sh`. Questo file aggiorna solo il programma, costruisce l'immagine, ricrea solo il bot e controlla la salute del container. Non reinstalla Ollama e non riscarica il modello.
+I nuovi pacchetti includono `aggiorna.sh`. Questo file aggiorna solo il programma, costruisce l'immagine, ricrea solo il bot e controlla la salute del container.
 
 Non serve copiare i file a mano e non serve rifare l'installazione iniziale. Il pacchetto deve provenire da una fonte fidata: lo script esegue il codice che contiene.
 
@@ -583,7 +562,7 @@ Non importa in quale cartella si trovi il terminale: il comando usa percorsi com
 #### Che cosa protegge lo script
 
 - Non copia, stampa o modifica `.env`.
-- Non sostituisce `data`, `scontrini` o `ollama-data` e non cambia i loro proprietari o permessi.
+- Non sostituisce `data` o `scontrini` e non cambia i loro proprietari o permessi.
 - Funziona anche se il bot e spento: verifica la configurazione del prossimo avvio tramite un container temporaneo che esegue soltanto il controllo, non il bot. Consente sia la modalita reale sia la prova; non riscrive `.env` o la scelta salvata nel database. Se non puo completare i controlli, si ferma.
 - Conserva i vecchi file del programma in `.update-backups`, dentro il progetto; questa cartella e esclusa da Git e dall'immagine Docker.
 - Se la costruzione fallisce, non ricrea il container: se il precedente era acceso resta acceso; se era spento resta spento. Anche i file del programma su disco vengono riportati alla versione precedente.
@@ -609,13 +588,13 @@ Non eliminare database o ricevute per ripartire. Non usare comandi di pulizia Do
 | Errore Telegram `Conflict` | Ferma l'altra copia del bot con lo stesso token. |
 | Errore HTTPS/certificato | Fermati e verifica la rete; non disabilitare la verifica dei certificati. |
 | Opzioni AGESCI assenti o accesso fallito | Controlla le credenziali localmente e conserva la diagnostica; non provare un salvataggio reale. |
-| Modello non trovato | Controlla `ollama list` e che `.env` usi lo stesso nome del modello scaricato. |
+| Modello non trovato | Controlla che `.env` usi un valore valido in `GEMINI_MODEL`. |
 | Foto molto lenta o memoria insufficiente | Controlla l'uso RAM in Monitoraggio risorse DSM; non ripetere l'invio in continuazione. |
 
-Per vedere anche gli errori di Ollama:
+Per vedere i dettagli del bot:
 
 ```sh
-sudo docker compose logs --tail=80 ollama
+sudo docker compose logs --tail=120 bot
 ```
 
 Prima di chiedere aiuto:
