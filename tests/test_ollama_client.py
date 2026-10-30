@@ -258,7 +258,10 @@ class OllamaReceiptAnalyzerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(captured_request["think"])
         user_message = captured_request["messages"][1]
         self.assertEqual(user_message["images"], ["cHJvY2Vzc2VkLWltYWdl"])
-        self.assertIn("format", captured_request)
+        self.assertEqual(
+            set(captured_request["format"]["properties"]),
+            {"date", "merchant", "total_amount", "confidence"},
+        )
 
     async def test_surfaces_local_service_connection_failure(self) -> None:
         async def handler(request: httpx.Request) -> httpx.Response:

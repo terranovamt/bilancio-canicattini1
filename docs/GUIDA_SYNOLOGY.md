@@ -4,7 +4,7 @@ Questa guida parte da un PC Windows e da un NAS con DSM 7.2. I nomi dei pulsanti
 
 Lo scopo iniziale è avviare il bot e provare una spesa simulata. Solo dopo si installa il modello per leggere le foto.
 
-**Questa guida descrive prove esplicite: imposta `DRY_RUN=true` e verifica su Telegram «Modalità PROVA» prima di iniziare.** Se il bot ha già una scelta salvata, usa **Amministrazione → Attiva modalità prova**: la scelta nel menu prevale su `.env`. Nell'uso normale il default è reale e l'ultima tipologia salva senza conferma aggiuntiva. Non eseguire prove reali senza autorizzazione.
+**Questa guida descrive prove esplicite: imposta `DRY_RUN=true` e verifica su Telegram «Modalità PROVA» prima di iniziare.** Se il bot ha già una scelta salvata, usa **Amministrazione → Attiva modalità prova**: la scelta nel menu prevale su `.env`. Nell'uso normale il default è reale e dopo la tipologia il dettaglio facoltativo (scritto o saltato) salva senza conferma aggiuntiva. Non eseguire prove reali senza autorizzazione.
 
 ## 1. Che cosa stiamo installando
 
@@ -410,9 +410,9 @@ Un container acceso non basta: la risposta Telegram conferma anche che il bot ri
 
 Se compare «❌ Non sono riuscito a salvare la spesa e non riproverò da solo», apri il portale e controlla se la spesa c'è. Ripeti l'inserimento solo se non compare, per evitare doppioni.
 
-Puoi interrompere prima dell'ultima scelta contabile con **Annulla**.
+Puoi interrompere con **Annulla** fino alla richiesta del dettaglio.
 
-**Inserisci a mano** (in **⚙️ Amministrazione**, oppure `/manual`) permette sia entrate sia uscite senza ricevuta, con lo stesso modulo; `/testspesa` non è più disponibile. Sticker, audio, video e file diversi da foto o PDF vengono eliminati dalla chat. Una foto/PDF imposta invece Uscita automaticamente: se l'AI non la legge, il bot conserva il file temporaneo e ti chiede i dati a mano. Il file entra nell'archivio `scontrini` all'ultima scelta contabile; prima rimane in attesa. **Annulla** elimina la copia temporanea. Tutti i percorsi rispettano la modalità con cui sono iniziati.
+**Inserisci a mano** (in **⚙️ Amministrazione**, oppure `/manual`) permette sia entrate sia uscite senza ricevuta, con lo stesso modulo; `/testspesa` non è più disponibile. Sticker, audio, video e file diversi da foto o PDF vengono eliminati dalla chat. Una foto/PDF imposta invece Uscita automaticamente: se l'AI non la legge, il bot conserva il file temporaneo e ti chiede i dati a mano. Il file entra nell'archivio `scontrini` quando parte il salvataggio, dopo il dettaglio facoltativo; prima rimane in attesa. **Annulla** elimina la copia temporanea. Tutti i percorsi rispettano la modalità con cui sono iniziati.
 
 ### Tempi dei menu e aggiornamento delle opzioni
 
@@ -514,7 +514,7 @@ Condividi soltanto la riga trovata: contiene il passaggio (`get_file`, `download
 5. Controlla data, descrizione e importo estratti.
 6. Correggi i dati errati seguendo le domande del bot.
 7. Completa le scelte contabili.
-8. L'ultima tipologia avvia la prova senza conferme aggiuntive: verifica il messaggio **Prova riuscita! Nel portale non è stato salvato nulla**.
+8. Dopo la tipologia premi **💾 Salva senza dettaglio** (o scrivi un dettaglio): la prova parte senza conferme aggiuntive; verifica il messaggio **Prova riuscita! Nel portale non è stato salvato nulla**.
 9. Dopo la risposta finale, apri `scontrini` in File Station e cerca il documento nella sottocartella dell'anno e del mese.
 
 La ricevuta viene archiviata quando completi le scelte contabili, e non viene allegata all'operazione AGESCI. Se l'analisi fallisce, un avviso spiega che il file è conservato temporaneamente: puoi inserire data, descrizione e importo a mano e continuare mantenendo la modalità iniziale. Se il NAS diventa troppo lento, fermati: non sostituire il modello con un servizio online senza una decisione esplicita.

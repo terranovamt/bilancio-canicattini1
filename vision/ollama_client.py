@@ -11,16 +11,20 @@ from enum import Enum
 import httpx
 
 from vision.preprocess import preprocess_receipt
-from vision.receipt_schema import ReceiptData, ReceiptParseError, parse_receipt_json
+from vision.receipt_schema import (
+    ReceiptAnalysis,
+    ReceiptData,
+    ReceiptParseError,
+    parse_analysis_json,
+)
 
 _SYSTEM_PROMPT = """
-You analyze receipt images. Return only one JSON object that follows the supplied
-JSON schema. Do not include Markdown, explanations, or text outside the JSON.
-Use an ISO date in YYYY-MM-DD format. Use null for unknown scalar fields and an
-empty array when no reliable VAT breakdown or line items can be read. Never
-guess a value. Keep confidence between 0 and 1 and lower it when any field is
-uncertain. Read the merchant, total, currency, VAT, payment method, line items,
-and suggested category from the receipt.
+You read receipt images. Return only one JSON object that follows the supplied
+JSON schema, with no Markdown or other text. Fields: date of the receipt as
+YYYY-MM-DD, merchant name as printed, total amount paid as a number, and
+confidence between 0 and 1. Italian receipts write dates as day/month/year.
+Use null for a field you cannot read. Never guess a value; lower confidence
+when any field is uncertain.
 """.strip()
 
 logger = logging.getLogger(__name__)
@@ -240,7 +244,7 @@ class OllamaReceiptAnalyzer:
             ],
             "stream": True,
             "think": False,
-            "format": ReceiptData.model_json_schema(),
+            "format": ReceiptAnalysis.model_json_schema(),
             "options": {"temperature": 0},
         }
 
@@ -281,7 +285,7 @@ class OllamaReceiptAnalyzer:
                 code=VisionFailureCode.EMPTY_RESULT,
             )
         try:
-            return parse_receipt_json(content)
+            return parse_analysis_json(content)
         except ReceiptParseError as error:
             raise LocalVisionError(
                 "The local vision result failed validation",

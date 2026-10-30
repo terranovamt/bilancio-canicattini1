@@ -17,7 +17,7 @@ MENU_HELP = (
     "❓ Come funziona\n\n"
     "📷 Nuovo scontrino: invia una foto o un PDF, controlla i dati e scegli "
     "cassa e tipologia. Se non riesco a leggerlo, ti chiedo i dati a mano.\n\n"
-    "L’ultima tipologia avvia subito la registrazione, senza altre conferme. "
+    "Dopo la tipologia puoi scrivere un dettaglio o saltarlo: poi registro subito, senza altre conferme. "
     "Solo in modalità PROVA non salvo nel portale.\n\n"
     "📊 Riepilogo: consulta i saldi delle casse.\n"
     "📋 Ultime operazioni: controlla le tue registrazioni.\n"
@@ -29,13 +29,13 @@ MENU_ADMIN_HELP = (
     "\n\nIn ⚙️ Amministrazione trovi:\n"
     "✍️ Inserisci a mano: registra un’entrata o un’uscita senza foto.\n"
     "💰 Nuova entrata: registra un’entrata senza foto.\n"
-    "Scegliendo l’ultima tipologia registri subito, senza altre conferme.\n"
+    "Dopo la tipologia scrivi un dettaglio o saltalo e registri subito, senza altre conferme.\n"
     "🧪 Lì puoi anche attivare o disattivare la modalità prova."
 )
 MENU_RECEIPT = (
     "📷 Nuovo scontrino\n\nInvia qui una foto o un PDF della ricevuta. "
     "Lo conserverò e ti farò controllare i dati prima di scegliere la cassa. "
-    "L’ultima tipologia avvia la registrazione senza altre conferme."
+    "Dopo la tipologia scrivi un dettaglio o saltalo: registro senza altre conferme."
 )
 MENU_ADMIN = "⚙️ Strumenti amministratore\n\nScegli un’operazione."
 MENU_UNKNOWN = "Questo pulsante non è disponibile. Torna al menu principale."
@@ -62,7 +62,7 @@ MODE_CHANGED = (
 )
 MODE_CHANGE_FAILED = "❌ Non riesco a cambiare modalità. Non ho modificato l’impostazione: riprova."
 MODE_TRIAL = "🧪 Modalità PROVA: non viene salvato nulla nel portale."
-MODE_REAL = "✅ Modalità REALE: scegliendo l’ultima tipologia salvo nel portale, senza altre conferme."
+MODE_REAL = "✅ Modalità REALE: dopo la tipologia e il dettaglio facoltativo salvo nel portale, senza altre conferme."
 COMMAND_START = "Apri il menu del bot"
 COMMAND_HELP = "Guida e comandi"
 COMMAND_LATEST = "Le tue ultime spese"
@@ -225,7 +225,7 @@ MANUAL_FORM_EMPTY = "da inserire"
 MANUAL_FORM_INVALID = "⚠️ Non ho capito il valore scritto. Riprova."
 MANUAL_FORM_NEXT = "👉 {prompt}"
 MANUAL_FORM_FOOTER = (
-    "Poi sceglierai cassa e tipologia: l’ultima scelta registra subito, senza altre conferme."
+    "Poi sceglierai cassa e tipologia: poi scrivi un dettaglio o saltalo e registro subito, senza altre conferme."
 )
 MANUAL_FORM_DONE = "✍️ Dati inseriti:\n\n{details}"
 TODAY_BUTTON = "📅 Oggi"
@@ -469,6 +469,14 @@ ACCOUNT_LINE = "🏦 {value}"
 UNIT_LINE = "👥 {value}"
 PORTAL_CATEGORY_LINE = "🗂️ {value}"
 NOTES_LINE = "🗒️ {value}"
+NOTES_PROMPT = (
+    "🗒️ Vuoi aggiungere un dettaglio?\n"
+    "Scrivilo qui e salvo subito, con il dettaglio come nota nel portale.\n"
+    "Se non serve, premi «Salva senza dettaglio».\n\n"
+    "{details}\n\n{mode}"
+)
+NOTES_SKIP_BUTTON = "💾 Salva senza dettaglio"
+NOTES_TOO_LONG = "Il dettaglio è troppo lungo: scrivilo in massimo {limit} caratteri."
 ROW_SEPARATOR = " · "
 INCOME_LABEL = "entrata"
 EXPENSE_LABEL = "uscita"

@@ -75,6 +75,26 @@ def parse_receipt_json(raw_json: str) -> ReceiptData:
         raise ReceiptParseError("Receipt analysis output failed validation") from error
 
 
+class ReceiptAnalysis(BaseModel):
+    """Only the fields requested from the local vision model, to keep its answer short."""
+
+    # Extra fields from a verbose model are ignored, not rejected.
+    model_config = ConfigDict(extra="ignore")
+
+    date: Date | None = None
+    merchant: str | None = None
+    total_amount: Decimal | None = Field(default=None, gt=0)
+    confidence: float = Field(ge=0, le=1)
+
+
+def parse_analysis_json(raw_json: str) -> ReceiptData:
+    try:
+        analysis = ReceiptAnalysis.model_validate_json(raw_json)
+        return ReceiptData.model_validate(analysis.model_dump())
+    except ValidationError as error:
+        raise ReceiptParseError("Receipt analysis output failed validation") from error
+
+
 def missing_required_fields(receipt: ReceiptData) -> tuple[str, ...]:
     return tuple(
         field_name

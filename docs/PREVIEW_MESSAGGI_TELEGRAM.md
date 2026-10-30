@@ -4,7 +4,7 @@ Catalogo aggiornato il 29 ottobre 2026 dai testi centralizzati in [bot/messages.
 
 I dati sono inventati; casse, tipologie e unità sono esempi, non elenchi reali. I percorsi diagnostici usano segnaposto e sono visibili solo all'amministratore. I pulsanti sono indicati tra parentesi quadre.
 
-Per provare questi messaggi attiva prima **Modalità PROVA** da Amministrazione e controlla l'indicatore. Nell'uso normale scontrini, `/manual` e `/entrata` salvano davvero all'ultima tipologia, senza conferma aggiuntiva. `/pulisci` cancella la cronologia locale dopo conferma. `/testspesa` è stato rimosso.
+Per provare questi messaggi attiva prima **Modalità PROVA** da Amministrazione e controlla l'indicatore. Nell'uso normale scontrini, `/manual` e `/entrata` salvano davvero dopo la tipologia e il dettaglio facoltativo, senza conferma aggiuntiva. `/pulisci` cancella la cronologia locale dopo conferma. `/testspesa` è stato rimosso.
 
 ## A. Avvio e aiuto
 
@@ -15,7 +15,7 @@ Per provare questi messaggi attiva prima **Modalità PROVA** da Amministrazione 
 
 📷 Mandami una foto o un PDF dello scontrino, oppure scegli cosa fare con i pulsanti qui sotto.
 
-✅ Modalità REALE: scegliendo l’ultima tipologia salvo nel portale, senza altre conferme.
+✅ Modalità REALE: dopo la tipologia e il dettaglio facoltativo salvo nel portale, senza altre conferme.
 ```
 
 ```text
@@ -67,7 +67,7 @@ In prova il primo pulsante diventa **✅ Torna ai salvataggi reali**. La scelta 
 
 📷 Nuovo scontrino: invia una foto o un PDF, controlla i dati e scegli cassa e tipologia. Se non riesco a leggerlo, ti chiedo i dati a mano.
 
-L’ultima tipologia avvia subito la registrazione, senza altre conferme. Solo in modalità PROVA non salvo nel portale.
+Dopo la tipologia puoi scrivere un dettaglio o saltarlo: poi registro subito, senza altre conferme. Solo in modalità PROVA non salvo nel portale.
 
 📊 Riepilogo: consulta i saldi delle casse.
 📋 Ultime operazioni: controlla le tue registrazioni.
@@ -82,7 +82,7 @@ Per l'amministratore si aggiunge:
 In ⚙️ Amministrazione trovi:
 ✍️ Inserisci a mano: registra un’entrata o un’uscita senza foto.
 💰 Nuova entrata: registra un’entrata senza foto.
-Scegliendo l’ultima tipologia registri subito, senza altre conferme.
+Dopo la tipologia scrivi un dettaglio o saltalo e registri subito, senza altre conferme.
 🧪 Lì puoi anche attivare o disattivare la modalità prova.
 ```
 
@@ -134,7 +134,7 @@ Ecco i dati dell’operazione. Puoi correggerli prima di scegliere la cassa.
 🏪 Negozio esempio
 💶 12,50 €
 
-✅ Modalità REALE: scegliendo l’ultima tipologia salvo nel portale, senza altre conferme.
+✅ Modalità REALE: dopo la tipologia e il dettaglio facoltativo salvo nel portale, senza altre conferme.
 ```
 
 Solo sotto il 70% si aggiunge questo avviso, senza percentuali:
@@ -188,7 +188,7 @@ Che categoria vuoi? Scrivi "-" per lasciarla vuota.
 ```text
 🏦 Quale cassa vuoi usare? (1 di 3)
 
-✅ Modalità REALE: scegliendo l’ultima tipologia salvo nel portale, senza altre conferme.
+✅ Modalità REALE: dopo la tipologia e il dettaglio facoltativo salvo nel portale, senza altre conferme.
 ```
 
 ```text
@@ -241,6 +241,36 @@ Dopo «Mostra altre»:
 🏷️ Altre tipologie
 ```
 
+### 9 bis · Dettaglio facoltativo
+
+Dopo la tipologia il bot chiede un dettaglio, che finisce nelle note del portale. Scriverlo avvia subito il salvataggio; il pulsante salva con le note vuote.
+
+```text
+🗒️ Vuoi aggiungere un dettaglio?
+Scrivilo qui e salvo subito, con il dettaglio come nota nel portale.
+Se non serve, premi «Salva senza dettaglio».
+
+📅 29/10/2026
+🏪 Negozio esempio
+💶 12,50 € (uscita)
+🏦 Cassa esempio
+🏷️ Tipologia esempio
+
+🟢 Modalità REALE: salvo davvero nel portale.
+```
+
+```text
+[💾 Salva senza dettaglio]
+[❌ Annulla]
+[🏠 Menu]
+```
+
+Un dettaglio oltre 500 caratteri viene rifiutato:
+
+```text
+Il dettaglio è troppo lungo: scrivilo in massimo 500 caratteri.
+```
+
 ### 10 · Salvataggio in corso
 
 ```text
@@ -262,9 +292,10 @@ Dopo «Mostra altre»:
 🏦 Cassa esempio
 🏷️ Tipologia esempio
 👥 Unità esempio
+🗒️ Dettaglio esempio
 ```
 
-I campi vuoti non compaiono. La riga 👥 manca anche quando il portale non offre unità per l'anno. Non vengono mostrate voci contabili, percorsi o informazioni sull'archivio.
+I campi vuoti non compaiono. La riga 👥 manca anche quando il portale non offre unità per l'anno; la riga 🗒️ manca se hai salvato senza dettaglio. Non vengono mostrate voci contabili, percorsi o informazioni sull'archivio.
 
 ### 12 · Prova riuscita o già presente
 
@@ -307,9 +338,9 @@ Scrivi qui sotto il dato richiesto: il modulo si aggiorna e i pulsanti restano i
 
 👉 📅 Scrivi la data come giorno-mese-anno, ad esempio 29-10-2026, 29/10/26 o 2-3-26.
 
-Poi sceglierai cassa e tipologia: l’ultima scelta registra subito, senza altre conferme.
+Poi sceglierai cassa e tipologia: dopo la tipologia scrivi un dettaglio o premi «Salva senza dettaglio» e il bot registra subito, senza altre conferme.
 
-✅ Modalità REALE: scegliendo l’ultima tipologia salvo nel portale, senza altre conferme.
+✅ Modalità REALE: dopo la tipologia e il dettaglio facoltativo salvo nel portale, senza altre conferme.
 ```
 
 ```text
@@ -340,7 +371,7 @@ Ecco i dati dell’operazione. Puoi correggerli prima di scegliere la cassa.
 📝 Prova Telegram
 💶 0,10 €
 
-✅ Modalità REALE: scegliendo l’ultima tipologia salvo nel portale, senza altre conferme.
+✅ Modalità REALE: dopo la tipologia e il dettaglio facoltativo salvo nel portale, senza altre conferme.
 ```
 
 Sticker, audio, video e file diversi da foto o PDF vengono eliminati e il bot risponde:
@@ -351,7 +382,7 @@ Sticker, audio, video e altri file non sono supportati e non li conservo. Usa i 
 
 ### 14 · Ultima scelta manuale
 
-Non compare una conferma finale. Scegliendo la tipologia si passa direttamente al messaggio di salvataggio o prova in corso e poi all'esito verificato.
+Non compare una conferma finale. Dopo la tipologia il bot chiede il dettaglio facoltativo (sezione 9 bis): scriverlo o premere «Salva senza dettaglio» porta direttamente al salvataggio o alla prova in corso e poi all'esito verificato.
 
 ### 15 · Inserimento manuale completato
 

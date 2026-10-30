@@ -73,6 +73,7 @@ _CALLBACK_STATES = {
         "awaiting_category",
     },
     "no_category": {"awaiting_category"},
+    "no_notes": {"awaiting_notes"},
     "more_types": {"awaiting_transaction_type"},
 }
 _STALE_CHOICE_TEXT = texts.STALE_BUTTON
@@ -84,6 +85,7 @@ _MANUAL_DEFAULT_AMOUNT = "0.10"
 _TOP_TYPES_COUNT = 6
 _ANALYSIS_PROGRESS_INTERVAL_SECONDS = 30
 _FORM_STATES = {"awaiting_receipt_data", "awaiting_edit"}
+_NOTES_MAX_LENGTH = 500
 _FORM_KEYS = {"form_chat_id", "form_message_id"}
 _DATE_PATTERN = re.compile(r"(\d{1,2})\s*[-/.\s]\s*(\d{1,2})\s*[-/.\s]\s*(\d{4}|\d{2})")
 _ISO_DATE_PATTERN = re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})")
@@ -479,6 +481,16 @@ class ReceiptWorkflow:
             if field_name not in _EDIT_FIELDS:
                 raise ValueError("Conversation state contains an unsupported edit field")
         elif state == "awaiting_notes":
+            notes_text = message.text.strip()
+            if len(notes_text) > _NOTES_MAX_LENGTH:
+                await message.reply_text(
+                    texts.NOTES_TOO_LONG.format(limit=_NOTES_MAX_LENGTH),
+                    reply_markup=self._navigation_keyboard(cancel=True),
+                )
+                return
+            progress = await message.reply_text(
+                self._submission_progress_text(self._uses_dry_run(expense.payload))
+            )
             await self._submit_expense(
                 update,
                 context,
@@ -486,7 +498,8 @@ class ReceiptWorkflow:
                 expense_id,
                 expense.payload,
                 state_data,
-                message.text.strip(),
+                notes_text or "-",
+                progress_message=progress,
             )
             return
         else:
@@ -647,6 +660,14 @@ class ReceiptWorkflow:
                 expense.payload,
                 query,
                 context,
+            )
+        elif value == "no_notes":
+            await self._show_progress(
+                query,
+                self._submission_progress_text(self._uses_dry_run(expense.payload)),
+            )
+            await self._submit_expense(
+                update, context, user_id, expense_id, expense.payload, state_data, "-"
             )
         elif value == "manual_save":
             if expense.payload.get("manual_entry") is not True:
@@ -1290,16 +1311,7 @@ class ReceiptWorkflow:
             category=None,
             portal_notes=None,
         )
-        await self._show_progress(query, self._submission_progress_text(self._uses_dry_run(payload)))
-        await self._submit_expense(
-            update,
-            context,
-            user_id,
-            expense_id,
-            payload,
-            state_data,
-            "-",
-        )
+        await self._ask_for_notes(user_id, payload, state_data, query)
 
     async def _complete_portal_selection(
         self,
@@ -1318,16 +1330,7 @@ class ReceiptWorkflow:
             category=None,
             portal_notes=None,
         )
-        await self._show_progress(query, self._submission_progress_text(self._uses_dry_run(payload)))
-        await self._submit_expense(
-            update,
-            context,
-            user_id,
-            expense_id,
-            payload,
-            state_data,
-            "-",
-        )
+        await self._ask_for_notes(user_id, payload, state_data, query)
 
     async def _submit_expense(
         self,
@@ -1338,6 +1341,8 @@ class ReceiptWorkflow:
         payload: dict[str, object],
         state_data: dict[str, object],
         notes_text: str,
+        *,
+        progress_message: Message | None = None,
     ) -> None:
         message = getattr(update, "effective_message", None) or update.message
         if message is None:
@@ -1349,6 +1354,12 @@ class ReceiptWorkflow:
             if query is not None:
                 try:
                     await query.edit_message_text(text, reply_markup=self._navigation_keyboard())
+                    return
+                except TelegramError:
+                    logger.warning("Could not replace Telegram progress message")
+            elif progress_message is not None and hasattr(progress_message, "edit_text"):
+                try:
+                    await progress_message.edit_text(text, reply_markup=self._navigation_keyboard())
                     return
                 except TelegramError:
                     logger.warning("Could not replace Telegram progress message")
@@ -1451,6 +1462,7 @@ class ReceiptWorkflow:
                 accounting_voice=portal_expense.accounting_voice,
                 portal_notes=portal_expense.notes,
             )
+            state_data["portal_notes"] = portal_expense.notes
             await asyncio.to_thread(
                 self._database.update_expense_payload,
                 expense_id,
@@ -1573,9 +1585,24 @@ class ReceiptWorkflow:
     async def _ask_for_notes(
         self,
         user_id: int,
+        payload: dict[str, object],
         state_data: dict[str, object],
+        query: CallbackQuery,
     ) -> None:
         await self._save_state(user_id, "awaiting_notes", state_data)
+        await query.edit_message_text(
+            texts.NOTES_PROMPT.format(
+                details=self._operation_details(payload, state_data),
+                mode=self._mode_text(payload),
+            ),
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton(texts.NOTES_SKIP_BUTTON, callback_data="receipt:no_notes")],
+                    [InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")],
+                    [InlineKeyboardButton(texts.HOME_BUTTON, callback_data="menu:home")],
+                ]
+            ),
+        )
 
     async def _notify_admin(
         self,
