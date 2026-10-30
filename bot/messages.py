@@ -26,10 +26,11 @@ MENU_HELP = (
     "premi «Annulla operazione»."
 )
 MENU_ADMIN_HELP = (
-    "\n\n✍️ Inserisci a mano: registra un’entrata o un’uscita senza foto.\n"
+    "\n\nIn ⚙️ Amministrazione trovi:\n"
+    "✍️ Inserisci a mano: registra un’entrata o un’uscita senza foto.\n"
     "💰 Nuova entrata: registra un’entrata senza foto.\n"
     "Scegliendo l’ultima tipologia registri subito, senza altre conferme.\n"
-    "🧪 In Amministrazione puoi attivare o disattivare la modalità prova."
+    "🧪 Lì puoi anche attivare o disattivare la modalità prova."
 )
 MENU_RECEIPT = (
     "📷 Nuovo scontrino\n\nInvia qui una foto o un PDF della ricevuta. "
@@ -179,39 +180,55 @@ RECEIPT_TRANSFER_FAILED = (
 )
 RECEIPT_DETAILS = "Ecco i dati dell’operazione. Puoi correggerli prima di scegliere la cassa."
 LOW_CONFIDENCE = "⚠️ Non sono sicuro di aver letto bene: controlla con attenzione."
-MISSING_DATE = "Non sono riuscito a leggere la data. Me la scrivi? (es. 29/10/2026)"
+MISSING_DATE = (
+    "Non sono riuscito a leggere la data. Me la scrivi come giorno-mese-anno? "
+    "(es. 29-10-2026 o 29/10/26)"
+)
 MISSING_MERCHANT = "Non sono riuscito a leggere il negozio. Come si chiama?"
 MISSING_AMOUNT = "Non sono riuscito a leggere il totale. Quanto hai speso? (es. 12,50)"
-EDIT_DATE = "Qual è la data giusta? (es. 29/10/2026)"
+EDIT_DATE = "Qual è la data giusta? Scrivila come giorno-mese-anno (es. 29-10-2026 o 29/10/26)"
 EDIT_MERCHANT = "Come si chiama il negozio?"
 EDIT_AMOUNT = "Qual è l'importo giusto? (es. 12,50)"
 EDIT_CATEGORY = 'Che categoria vuoi? Scrivi "-" per lasciarla vuota.'
-MANUAL_DATE = "📅 Qual è la data? (es. 29/10/2026)"
-MANUAL_MERCHANT = "✏️ Come descrivo la spesa?"
-MANUAL_AMOUNT = "💶 Qual è l'importo? (es. 12,50)"
+MANUAL_DATE = (
+    "📅 Scrivi la data come giorno-mese-anno, ad esempio 29-10-2026, 29/10/26 o 2-3-26."
+)
+MANUAL_MERCHANT = "✏️ Scrivi la descrizione dell’operazione."
+MANUAL_AMOUNT = "💶 Scrivi l’importo (es. 12,50)."
 MANUAL_DESCRIPTION = "Prova Telegram"
 MANUAL_CONFIRMATION = (
     "✍️ Operazione a mano, senza ricevuta\n\n{details}\n\n"
     "Puoi cambiare i dati prima di scegliere la cassa e la tipologia."
 )
-MANUAL_START = (
-    "✍️ Inseriamo un’entrata o un’uscita senza ricevuta: data, descrizione e importo, "
-    "poi cassa, direzione e tipologia. L’ultima scelta avvia subito la registrazione, "
-    "senza altre conferme. Puoi interrompere con il pulsante Annulla.\n\n{prompt}"
+MANUAL_FORM_TITLE = "✍️ Nuova operazione a mano (entrata o uscita)"
+INCOME_FORM_TITLE = "💰 Nuova entrata a mano"
+MANUAL_FORM_HINT = (
+    "Scrivi qui sotto il dato richiesto: il modulo si aggiorna e i pulsanti restano in fondo. "
+    "Per cambiare un campo premi il suo pulsante."
 )
-INCOME_START = (
-    "✍️ Inseriamo un’entrata senza ricevuta: data, descrizione e importo, "
-    "poi cassa e tipologia. L’ultima scelta avvia subito la registrazione, "
-    "senza altre conferme. Puoi interrompere con il pulsante Annulla.\n\n{prompt}"
+MANUAL_FORM_DATE = "📅 Data: {value}"
+MANUAL_FORM_DESCRIPTION = "✏️ Descrizione: {value}"
+MANUAL_FORM_AMOUNT = "💶 Importo: {value}"
+MANUAL_FORM_EMPTY = "da inserire"
+MANUAL_FORM_INVALID = "⚠️ Non ho capito il valore scritto. Riprova."
+MANUAL_FORM_NEXT = "👉 {prompt}"
+MANUAL_FORM_FOOTER = (
+    "Poi sceglierai cassa e tipologia: l’ultima scelta registra subito, senza altre conferme."
+)
+MANUAL_FORM_DONE = "✍️ Dati inseriti:\n\n{details}"
+TODAY_BUTTON = "📅 Oggi"
+UNSUPPORTED_MESSAGE = (
+    "Sticker, audio, video e altri file non sono supportati e non li conservo. "
+    "Usa i pulsanti, scrivi il dato richiesto oppure invia una foto o un PDF della ricevuta."
 )
 MANUAL_FAILED = (
     "❌ Non sono riuscito a salvare la spesa e non riproverò da solo.\n\n"
-    "{details}\n\n👉 Controlla nel portale se compare. Se non c'è, riparti dal menu "
-    "con «Inserisci a mano» o «Nuova entrata»."
+    "{details}\n\n👉 Controlla nel portale se compare. Se non c'è, riparti da "
+    "⚙️ Amministrazione con «Inserisci a mano» o «Nuova entrata»."
 )
 MANUAL_FORMAT = (
-    "Non ho capito 🙂 Scrivi data, descrizione e importo separati da «|», "
-    "per esempio: 26/10/2026 | Pranzo | 12,50"
+    "Non ho capito 🙂 Scrivi data (giorno-mese-anno), descrizione e importo separati da «|», "
+    "per esempio: 26-10-2026 | Pranzo | 12,50"
 )
 ACCOUNTS_PROGRESS = "⏳ Cerco le casse…"
 ACCOUNT_PROMPT = "🏦 Quale cassa vuoi usare? (1 di 3)"
@@ -512,6 +529,33 @@ def operation_details(
     if notes:
         lines.append(NOTES_LINE.format(value=notes))
     return "\n".join(lines)
+
+
+def manual_form(
+    payload: Mapping[str, object],
+    *,
+    income_only: bool,
+    prompt: str | None,
+    mode: str,
+    invalid: bool = False,
+) -> str:
+    description = safe_text(payload.get("merchant"))
+    amount = amount_text(payload)
+    sections = [
+        INCOME_FORM_TITLE if income_only else MANUAL_FORM_TITLE,
+        MANUAL_FORM_HINT,
+        "\n".join((
+            MANUAL_FORM_DATE.format(value=date_text(payload.get("date")) or MANUAL_FORM_EMPTY),
+            MANUAL_FORM_DESCRIPTION.format(value=description or MANUAL_FORM_EMPTY),
+            MANUAL_FORM_AMOUNT.format(value=amount or MANUAL_FORM_EMPTY),
+        )),
+    ]
+    if invalid:
+        sections.append(MANUAL_FORM_INVALID)
+    if prompt:
+        sections.append(MANUAL_FORM_NEXT.format(prompt=prompt))
+    sections.extend((MANUAL_FORM_FOOTER, mode))
+    return "\n\n".join(sections)
 
 
 def receipt_confirmation(payload: Mapping[str, object], confidence: float) -> str:

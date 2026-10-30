@@ -61,7 +61,8 @@ _MANUAL_EDIT_PROMPTS = {
 }
 _CALLBACK_STATES = {
     "confirm": {"awaiting_confirmation"},
-    "edit": {"awaiting_confirmation", "awaiting_account"},
+    "edit": {"awaiting_confirmation", "awaiting_account", "awaiting_receipt_data", "awaiting_edit"},
+    "today": {"awaiting_receipt_data", "awaiting_edit"},
     "manual_save": {"awaiting_manual_final_confirmation"},
     "direction": {"awaiting_direction"},
     "voice": {"awaiting_accounting_voice"},
@@ -82,6 +83,27 @@ _MANUAL_DEFAULT_DESCRIPTION = texts.MANUAL_DESCRIPTION
 _MANUAL_DEFAULT_AMOUNT = "0.10"
 _TOP_TYPES_COUNT = 6
 _ANALYSIS_PROGRESS_INTERVAL_SECONDS = 30
+_FORM_STATES = {"awaiting_receipt_data", "awaiting_edit"}
+_FORM_KEYS = {"form_chat_id", "form_message_id"}
+_DATE_PATTERN = re.compile(r"(\d{1,2})\s*[-/.\s]\s*(\d{1,2})\s*[-/.\s]\s*(\d{4}|\d{2})")
+_ISO_DATE_PATTERN = re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})")
+
+
+def parse_italian_date(value: str) -> date:
+    """Parse day-month-year dates, accepting short parts and two-digit years."""
+    text = value.strip()
+    iso = _ISO_DATE_PATTERN.fullmatch(text)
+    if iso is not None:
+        year, month, day = (int(part) for part in iso.groups())
+    else:
+        match = _DATE_PATTERN.fullmatch(text)
+        if match is None:
+            raise ValueError("Date format is invalid")
+        day, month = int(match.group(1)), int(match.group(2))
+        year = int(match.group(3))
+        if len(match.group(3)) == 2:
+            year += 2000
+    return date(year, month, day)
 _ANALYSIS_PHASE_TEXTS = {
     AnalysisPhase.PREPARING_IMAGE: texts.ANALYSIS_PREPARING_IMAGE,
     AnalysisPhase.LOADING_MODEL: texts.ANALYSIS_LOADING_MODEL,
@@ -189,18 +211,13 @@ class ReceiptWorkflow:
             telegram_user_id=user.id,
             payload=payload,
         )
-        await self._save_state(
-            user.id,
-            "awaiting_receipt_data" if collect_data else "awaiting_confirmation",
-            {"expense_id": expense_id},
-        )
         if collect_data:
-            intro = texts.MANUAL_START if direction is None else texts.INCOME_START
-            await message.reply_text(
-                intro.format(prompt=_MANUAL_EDIT_PROMPTS["date"]) + "\n\n" + self._mode_text(payload),
-                reply_markup=self._navigation_keyboard(cancel=True),
+            await self._show_manual_form(
+                message, user.id, "awaiting_receipt_data", {"expense_id": expense_id},
+                payload, "date",
             )
             return
+        await self._save_state(user.id, "awaiting_confirmation", {"expense_id": expense_id})
         await message.reply_text(
             self._manual_confirmation_text(payload),
             reply_markup=self._manual_confirmation_keyboard(),
@@ -450,6 +467,11 @@ class ReceiptWorkflow:
             )
             await self._offer_accounts(user.id, expense_id, updated, message, context)
             return
+        if self._is_manual_form(state, state_data, expense.payload):
+            await self._handle_manual_form_text(
+                message, context, user.id, state, state_data, expense_id, expense.payload
+            )
+            return
         if state == "awaiting_receipt_data":
             field_name = self._next_missing_field(expense.payload)
         elif state == "awaiting_edit":
@@ -574,6 +596,15 @@ class ReceiptWorkflow:
             if field_name not in _EDIT_FIELDS:
                 await query.edit_message_text(texts.STALE_BUTTON)
                 return
+            if self._is_manual_form(state, state_data, expense.payload) and (
+                field_name in _MANUAL_EDIT_PROMPTS
+            ):
+                await self._edit_manual_form(
+                    query, user_id, "awaiting_edit",
+                    {"expense_id": expense_id, "edit_field": field_name},
+                    expense.payload, field_name,
+                )
+                return
             await self._save_state(
                 user_id,
                 "awaiting_edit",
@@ -586,6 +617,23 @@ class ReceiptWorkflow:
                 else self._prompt_for(field_name),
                 reply_markup=self._navigation_keyboard(cancel=True),
             )
+        elif value == "today":
+            if not self._is_manual_form(state, state_data, expense.payload):
+                await query.edit_message_text(texts.STALE_BUTTON)
+                return
+            updated = {**expense.payload, "date": date.today().isoformat()}
+            await asyncio.to_thread(self._database.update_expense_payload, expense_id, updated)
+            missing = missing_required_fields(self._receipt_from_payload(updated))
+            if missing:
+                await self._edit_manual_form(
+                    query, user_id, "awaiting_receipt_data", {"expense_id": expense_id},
+                    updated, missing[0],
+                )
+                return
+            await query.edit_message_text(
+                texts.MANUAL_FORM_DONE.format(details=texts.operation_details(updated, {}))
+            )
+            await self._offer_accounts(user_id, expense_id, updated, query.message, context)
         elif value == "confirm":
             if self._bilancio is None:
                 await query.edit_message_text(
@@ -684,6 +732,149 @@ class ReceiptWorkflow:
 
     def _mode_text(self, payload: dict[str, object]) -> str:
         return texts.MODE_TRIAL if self._uses_dry_run(payload) else texts.MODE_REAL
+
+    @staticmethod
+    def _is_manual_form(
+        state: str, state_data: dict[str, object], payload: dict[str, object]
+    ) -> bool:
+        if payload.get("manual_entry") is not True or state not in _FORM_STATES:
+            return False
+        return state != "awaiting_edit" or state_data.get("edit_field") in _MANUAL_EDIT_PROMPTS
+
+    def _manual_form_text(
+        self, payload: dict[str, object], field_name: str | None, *, invalid: bool = False
+    ) -> str:
+        return texts.manual_form(
+            payload,
+            income_only=payload.get("direction") == TransactionDirection.INCOME.value,
+            prompt=_MANUAL_EDIT_PROMPTS.get(field_name) if field_name else None,
+            mode=self._mode_text(payload),
+            invalid=invalid,
+        )
+
+    @staticmethod
+    def _manual_form_keyboard(field_name: str | None) -> InlineKeyboardMarkup:
+        rows = []
+        if field_name == "date":
+            rows.append([InlineKeyboardButton(texts.TODAY_BUTTON, callback_data="receipt:today")])
+        rows.extend([
+            [
+                InlineKeyboardButton(texts.DATE_BUTTON, callback_data="receipt:edit:date"),
+                InlineKeyboardButton(texts.DESCRIPTION_BUTTON, callback_data="receipt:edit:merchant"),
+                InlineKeyboardButton(texts.AMOUNT_BUTTON, callback_data="receipt:edit:total_amount"),
+            ],
+            [InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")],
+            [InlineKeyboardButton(texts.HOME_BUTTON, callback_data="menu:home")],
+        ])
+        return InlineKeyboardMarkup(rows)
+
+    @staticmethod
+    def _form_data(
+        state_data: dict[str, object], chat_id: object, message_id: object
+    ) -> dict[str, object]:
+        data = {key: value for key, value in state_data.items() if key not in _FORM_KEYS}
+        if isinstance(chat_id, int) and isinstance(message_id, int):
+            data.update(form_chat_id=chat_id, form_message_id=message_id)
+        return data
+
+    async def _show_manual_form(
+        self,
+        message: Message,
+        user_id: int,
+        state: str,
+        state_data: dict[str, object],
+        payload: dict[str, object],
+        field_name: str | None,
+        *,
+        invalid: bool = False,
+    ) -> None:
+        sent = await message.reply_text(
+            self._manual_form_text(payload, field_name, invalid=invalid),
+            reply_markup=self._manual_form_keyboard(field_name),
+        )
+        await self._save_state(
+            user_id,
+            state,
+            self._form_data(
+                state_data, getattr(sent, "chat_id", None), getattr(sent, "message_id", None)
+            ),
+        )
+
+    async def _edit_manual_form(
+        self,
+        query: CallbackQuery,
+        user_id: int,
+        state: str,
+        state_data: dict[str, object],
+        payload: dict[str, object],
+        field_name: str,
+    ) -> None:
+        form = query.message
+        await self._save_state(
+            user_id,
+            state,
+            self._form_data(
+                state_data, getattr(form, "chat_id", None), getattr(form, "message_id", None)
+            ),
+        )
+        await query.edit_message_text(
+            self._manual_form_text(payload, field_name),
+            reply_markup=self._manual_form_keyboard(field_name),
+        )
+
+    async def _handle_manual_form_text(
+        self,
+        message: Message,
+        context: ContextTypes.DEFAULT_TYPE,
+        user_id: int,
+        state: str,
+        state_data: dict[str, object],
+        expense_id: str,
+        payload: dict[str, object],
+    ) -> None:
+        field_name = (
+            str(state_data["edit_field"])
+            if state == "awaiting_edit"
+            else self._next_missing_field(payload)
+        )
+        # Remove the typed answer and the old form so the buttons stay at the bottom.
+        obsolete = [
+            (getattr(message, "chat_id", None), getattr(message, "message_id", None)),
+            (state_data.get("form_chat_id"), state_data.get("form_message_id")),
+        ]
+        try:
+            updated = self._apply_user_value(payload, field_name, message.text or "")
+            self._receipt_from_payload(updated)
+        except (ValueError, TypeError):
+            await self._show_manual_form(
+                message, user_id, state, state_data, payload, field_name, invalid=True
+            )
+        else:
+            await asyncio.to_thread(self._database.update_expense_payload, expense_id, updated)
+            missing = missing_required_fields(self._receipt_from_payload(updated))
+            if missing:
+                await self._show_manual_form(
+                    message, user_id, "awaiting_receipt_data", {"expense_id": expense_id},
+                    updated, missing[0],
+                )
+            else:
+                await self._offer_accounts(user_id, expense_id, updated, message, context)
+        await self._delete_messages(context, obsolete)
+
+    @staticmethod
+    async def _delete_messages(
+        context: ContextTypes.DEFAULT_TYPE, references: list[tuple[object, object]]
+    ) -> None:
+        bot = getattr(context, "bot", None)
+        if bot is None:
+            return
+        for chat_id, message_id in references:
+            if not isinstance(chat_id, int) or not isinstance(message_id, int):
+                continue
+            try:
+                await bot.delete_message(chat_id=chat_id, message_id=message_id)
+            except TelegramError as error:
+                logger.info("Could not delete Telegram message: %s", type(error).__name__)
 
     @staticmethod
     async def _selection_reply(
@@ -1661,14 +1852,8 @@ class ReceiptWorkflow:
             raise ValueError("A value is required")
         updated = dict(payload)
         if field_name == "date":
-            for date_format in ("%d/%m/%Y", "%Y-%m-%d"):
-                try:
-                    parsed = datetime.strptime(value, date_format).date()
-                    updated[field_name] = parsed.isoformat()
-                    return updated
-                except ValueError:
-                    continue
-            raise ValueError("Date format is invalid")
+            updated[field_name] = parse_italian_date(value).isoformat()
+            return updated
         if field_name == "total_amount":
             normalized = value.replace(" ", "")
             if "," in normalized:

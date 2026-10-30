@@ -38,7 +38,6 @@ La modalità è indicata per tutti. Se l'amministratore ha attivato la prova, l'
 
 ```text
 [📷 Nuovo scontrino]
-[✍️ Inserisci a mano] [💰 Nuova entrata]
 [📊 Riepilogo] [📋 Ultime operazioni]
 [⏳ Operazioni in attesa]
 [❓ Aiuto] [✖️ Annulla operazione]
@@ -48,6 +47,7 @@ La modalità è indicata per tutti. Se l'amministratore ha attivato la prova, l'
 La schermata Amministrazione contiene:
 
 ```text
+[✍️ Inserisci a mano] [💰 Nuova entrata]
 [🧪 Attiva modalità prova]
 [🔌 Verifica collegamento]
 [🔄 Aggiorna casse e tipologie]
@@ -79,10 +79,11 @@ Aprire il menu non annulla un inserimento in corso. Per interromperlo premi «An
 Per l'amministratore si aggiunge:
 
 ```text
+In ⚙️ Amministrazione trovi:
 ✍️ Inserisci a mano: registra un’entrata o un’uscita senza foto.
 💰 Nuova entrata: registra un’entrata senza foto.
 Scegliendo l’ultima tipologia registri subito, senza altre conferme.
-🧪 In Amministrazione puoi attivare o disattivare la modalità prova.
+🧪 Lì puoi anche attivare o disattivare la modalità prova.
 ```
 
 Le schermate hanno **Menu principale**; gli strumenti amministratore hanno anche **Indietro**. Il ritorno al menu non cancella un inserimento. I moduli conservano correzione e annullamento, non conferme aggiuntive. Le schermate informative sono accessibili durante le attese dell'AI o del portale; salvataggi e altre azioni che cambiano dati restano sequenziali.
@@ -147,7 +148,7 @@ Solo sotto il 70% si aggiunge questo avviso, senza percentuali:
 Lettura fallita, una richiesta per messaggio:
 
 ```text
-Non sono riuscito a leggere la data. Me la scrivi? (es. 29/10/2026)
+Non sono riuscito a leggere la data. Me la scrivi come giorno-mese-anno? (es. 29-10-2026 o 29/10/26)
 ```
 
 ```text
@@ -161,8 +162,10 @@ Non sono riuscito a leggere il totale. Quanto hai speso? (es. 12,50)
 Modifica scelta dall'utente, una richiesta per messaggio:
 
 ```text
-Qual è la data giusta? (es. 29/10/2026)
+Qual è la data giusta? Scrivila come giorno-mese-anno (es. 29-10-2026 o 29/10/26)
 ```
+
+Le date sono sempre in forma italiana giorno-mese-anno. Separatori ammessi: `-`, `/`, `.` o spazio; giorno e mese anche con una cifra (`2-3-26`), anno con due o quattro cifre (`26` = `2026`).
 
 ```text
 Come si chiama il negozio?
@@ -289,27 +292,44 @@ I campi vuoti non compaiono. La riga 👥 manca anche quando il portale non offr
 
 ## C. Inserimento manuale
 
-### 13 · Inserimento manuale: `/entrata` e `/manual`
+### 13 · Inserimento manuale: Amministrazione → «Inserisci a mano» / «Nuova entrata»
 
-`/entrata` chiede tutti i dati, senza precompilare importi o descrizioni:
+I due pulsanti sono nella schermata ⚙️ Amministrazione (restano disponibili anche `/manual` ed `/entrata`). Si apre un modulo unico: ogni dato scritto viene tolto dalla chat e il modulo si ripresenta aggiornato in fondo, con i pulsanti sempre visibili.
 
 ```text
-✍️ Inseriamo un’entrata senza ricevuta: data, descrizione e importo, poi cassa e tipologia. L’ultima scelta avvia subito la registrazione, senza altre conferme. Puoi interrompere con il pulsante Annulla.
+💰 Nuova entrata a mano
 
-📅 Qual è la data? (es. 29/10/2026)
+Scrivi qui sotto il dato richiesto: il modulo si aggiorna e i pulsanti restano in fondo. Per cambiare un campo premi il suo pulsante.
+
+📅 Data: da inserire
+✏️ Descrizione: da inserire
+💶 Importo: da inserire
+
+👉 📅 Scrivi la data come giorno-mese-anno, ad esempio 29-10-2026, 29/10/26 o 2-3-26.
+
+Poi sceglierai cassa e tipologia: l’ultima scelta registra subito, senza altre conferme.
 
 ✅ Modalità REALE: scegliendo l’ultima tipologia salvo nel portale, senza altre conferme.
 ```
 
-`/manual` chiede tutti i dati e permette sia entrate sia uscite senza ricevuta:
+```text
+[📅 Oggi]
+[📅 Data] [✏️ Descrizione] [💶 Importo]
+[Annulla]
+[🏠 Menu principale]
+```
+
+«Inserisci a mano» usa il titolo `✍️ Nuova operazione a mano (entrata o uscita)`. **📅 Oggi** compare solo quando è richiesta la data. Dopo la data:
 
 ```text
-✍️ Inseriamo un’entrata o un’uscita senza ricevuta: data, descrizione e importo, poi cassa, direzione e tipologia. L’ultima scelta avvia subito la registrazione, senza altre conferme. Puoi interrompere con il pulsante Annulla.
+📅 Data: 02/03/2026
+✏️ Descrizione: da inserire
+💶 Importo: da inserire
 
-📅 Qual è la data? (es. 29/10/2026)
-
-✅ Modalità REALE: scegliendo l’ultima tipologia salvo nel portale, senza altre conferme.
+👉 ✏️ Scrivi la descrizione dell’operazione.
 ```
+
+Se il valore non è valido, il modulo mostra `⚠️ Non ho capito il valore scritto. Riprova.` e ripete la richiesta. Le altre richieste sono `💶 Scrivi l’importo (es. 12,50).`
 
 Dopo aver compilato i dati:
 
@@ -323,16 +343,10 @@ Ecco i dati dell’operazione. Puoi correggerli prima di scegliere la cassa.
 ✅ Modalità REALE: scegliendo l’ultima tipologia salvo nel portale, senza altre conferme.
 ```
 
-```text
-📅 Qual è la data? (es. 29/10/2026)
-```
+Sticker, audio, video e file diversi da foto o PDF vengono eliminati e il bot risponde:
 
 ```text
-✏️ Come descrivo la spesa?
-```
-
-```text
-💶 Qual è l'importo? (es. 12,50)
+Sticker, audio, video e altri file non sono supportati e non li conservo. Usa i pulsanti, scrivi il dato richiesto oppure invia una foto o un PDF della ricevuta.
 ```
 
 ### 14 · Ultima scelta manuale
@@ -634,7 +648,7 @@ Questo scontrino l'ho già ricevuto, non lo rielaboro.
 ```text
 ⚠️ Non sono riuscito a leggere lo scontrino con l’AI locale. Ho conservato il file temporaneo, senza inviarlo a servizi AI online. Inseriamo i dati a mano: data, descrizione e importo, poi cassa e tipologia. La ricevuta sarà archiviata quando confermi l’operazione; Annulla elimina la copia temporanea.
 
-Non sono riuscito a leggere la data. Me la scrivi? (es. 29/10/2026)
+Non sono riuscito a leggere la data. Me la scrivi come giorno-mese-anno? (es. 29-10-2026 o 29/10/26)
 ```
 
 Questo è un unico messaggio al mittente, anche se è l'amministratore. Non viene inviata una seconda notifica per lo stesso errore AI. Il file resta disponibile per la compilazione manuale anche se il modello non è configurato o l'analisi va in timeout. File e stato manuale sono conservati prima dell'analisi.
@@ -736,7 +750,7 @@ Solo all'amministratore:
 🏷️ Tipologia esempio
 👥 Unità esempio
 
-👉 Controlla nel portale se compare. Se non c'è, riparti dal menu con «Inserisci a mano» o «Nuova entrata».
+👉 Controlla nel portale se compare. Se non c'è, riparti da ⚙️ Amministrazione con «Inserisci a mano» o «Nuova entrata».
 ```
 
 In un messaggio separato, solo all'amministratore:

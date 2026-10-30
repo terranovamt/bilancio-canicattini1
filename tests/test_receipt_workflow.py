@@ -17,7 +17,7 @@ from bilancio.client import (
     TransactionDirection,
     default_unit_for_account,
 )
-from bot.receipt_workflow import ReceiptWorkflow
+from bot.receipt_workflow import ReceiptWorkflow, parse_italian_date
 from bot import messages as texts
 from config import Settings
 from db.database import Database
@@ -234,7 +234,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(state)
         assert state is not None
         self.assertEqual(state[0], "awaiting_receipt_data")
-        self.assertIn("29/10/2026", message.reply_text.await_args.args[0])
+        self.assertIn("29-10-2026", message.reply_text.await_args.args[0])
 
     async def test_persists_manual_recovery_before_analysis_and_bounds_total_wait(self) -> None:
         async def stalled_analysis(file_bytes: bytes, file_name: str) -> ReceiptData:
@@ -696,6 +696,80 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             portal.submitted[0][0].unit,
             PortalOption("Gruppo G1", "Gruppo G1"),
         )
+
+    async def test_flexible_italian_dates(self) -> None:
+        for raw, expected in (
+            ("29/10/2026", date(2026, 10, 29)), ("29-10-2026", date(2026, 10, 29)),
+            ("2-3-26", date(2026, 3, 2)), ("2/3/2026", date(2026, 3, 2)),
+            ("02.03.26", date(2026, 3, 2)), (" 2 - 3 - 26 ", date(2026, 3, 2)),
+            ("2026-03-02", date(2026, 3, 2)),
+        ):
+            with self.subTest(raw=raw):
+                self.assertEqual(parse_italian_date(raw), expected)
+        for raw in ("31-02-2026", "13-13-26", "2026", "2-3", "2-3-226", "oggi"):
+            with self.subTest(raw=raw), self.assertRaises(ValueError):
+                parse_italian_date(raw)
+
+    async def test_manual_form_updates_in_place_and_removes_typed_messages(self) -> None:
+        portal = FakeBilancioClient()
+        workflow = self._manual_portal_workflow(portal)
+        user = SimpleNamespace(id=12345)
+        sent_ids = iter(range(100, 200))
+
+        def new_message():
+            message = SimpleNamespace(chat_id=12345, message_id=next(sent_ids))
+            message.reply_text = AsyncMock(side_effect=lambda *a, **k: new_message())
+            return message
+
+        start = new_message()
+        context = SimpleNamespace(bot=SimpleNamespace(delete_message=AsyncMock()))
+        await workflow.start_manual_expense(
+            SimpleNamespace(message=start, effective_user=user), context,
+            collect_data=True, direction=TransactionDirection.INCOME,
+        )
+        form_text = start.reply_text.await_args.args[0]
+        self.assertIn(texts.INCOME_FORM_TITLE, form_text)
+        self.assertIn(texts.MANUAL_DATE, form_text)
+        state, data = self.database.get_conversation_state(12345)
+        self.assertEqual(data["form_message_id"], 101)
+
+        typed = new_message()
+        typed.text = "31-02-26"
+        await workflow.handle_text(SimpleNamespace(message=typed, effective_user=user), context)
+        self.assertIn(texts.MANUAL_FORM_INVALID, typed.reply_text.await_args.args[0])
+        deleted = [call.kwargs["message_id"] for call in context.bot.delete_message.await_args_list]
+        self.assertEqual(deleted, [typed.message_id, 101])
+
+        typed = new_message()
+        typed.text = "2-3-26"
+        await workflow.handle_text(SimpleNamespace(message=typed, effective_user=user), context)
+        form_text = typed.reply_text.await_args.args[0]
+        self.assertIn("📅 Data: 02/03/2026", form_text)
+        self.assertIn(texts.MANUAL_MERCHANT, form_text)
+        payload = self.database.get_expense(data["expense_id"]).payload
+        self.assertEqual(payload["date"], "2026-03-02")
+
+        form_id = self.database.get_conversation_state(12345)[1]["form_message_id"]
+        query = self.make_query("receipt:edit:date")
+        query.message.chat_id, query.message.message_id = 12345, form_id
+        await workflow.handle_callback(
+            SimpleNamespace(callback_query=query, effective_message=query.message, effective_user=user),
+            context,
+        )
+        state, data = self.database.get_conversation_state(12345)
+        self.assertEqual((state, data["edit_field"], data["form_message_id"]), ("awaiting_edit", "date", form_id))
+        self.assertIn(texts.MANUAL_DATE, query.edit_message_text.await_args.args[0])
+        await self._tap(workflow, user, "receipt:today", context)
+        payload = self.database.get_expense(data["expense_id"]).payload
+        self.assertEqual(payload["date"], date.today().isoformat())
+        self.assertEqual(self.database.get_conversation_state(12345)[0], "awaiting_receipt_data")
+
+        for value in ("Quota", "10"):
+            typed = new_message()
+            typed.text = value
+            await workflow.handle_text(SimpleNamespace(message=typed, effective_user=user), context)
+        self.assertEqual(self.database.get_conversation_state(12345)[0], "awaiting_account")
+        self.assertEqual(portal.submitted, [])
 
     async def test_manual_one_euro_income_and_expense_with_fake_live_client(self) -> None:
         for direction in TransactionDirection:

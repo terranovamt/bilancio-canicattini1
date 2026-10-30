@@ -14,6 +14,7 @@ from bot.application import (
     ADMIN_HELP_TEXT,
     USER_COMMANDS,
     USER_HELP_TEXT,
+    _admin_keyboard,
     _format_preload_summary,
     _format_recent_expenses,
     authorize_update,
@@ -40,6 +41,7 @@ from bot.application import (
     update_callback,
     update_command,
     update_status_job,
+    unsupported_message,
 )
 from bot import messages as texts
 from bot.updates import RunningVersion
@@ -205,9 +207,15 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("REALE", text)
         keyboard = message.reply_text.await_args.kwargs["reply_markup"]
         buttons = [button for row in keyboard.inline_keyboard for button in row]
-        self.assertIn("menu:manual", [button.callback_data for button in buttons])
-        self.assertIn("menu:income", [button.callback_data for button in buttons])
+        self.assertNotIn("menu:manual", [button.callback_data for button in buttons])
+        self.assertNotIn("menu:income", [button.callback_data for button in buttons])
         self.assertIn("menu:admin", [button.callback_data for button in buttons])
+        admin_buttons = [
+            button.callback_data
+            for row in _admin_keyboard().inline_keyboard
+            for button in row
+        ]
+        self.assertEqual(admin_buttons[:2], ["menu:manual", "menu:income"])
         self.assertFalse(any("/" in button.text for button in buttons))
         self.assertNotIn("/", text)
         self.assertTrue(
@@ -216,6 +224,41 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         admin_call = context.bot.set_my_commands.await_args
         self.assertEqual(admin_call.args[0], ADMIN_COMMANDS)
         self.assertEqual(admin_call.kwargs["scope"].chat_id, 12345)
+
+    async def test_unsupported_content_is_deleted_and_user_is_guided(self) -> None:
+        message = SimpleNamespace(chat_id=12345, delete=AsyncMock())
+        context = SimpleNamespace(bot=SimpleNamespace(send_message=AsyncMock()))
+        await unsupported_message(SimpleNamespace(message=message), context)
+        message.delete.assert_awaited_once()
+        sent = context.bot.send_message.await_args.kwargs
+        self.assertEqual(sent["text"], texts.UNSUPPORTED_MESSAGE)
+        self.assertEqual(sent["chat_id"], 12345)
+
+        message.delete = AsyncMock(side_effect=TimedOut())
+        with self.assertLogs("bot.application", level="INFO"):
+            await unsupported_message(SimpleNamespace(message=message), context)
+        self.assertEqual(context.bot.send_message.await_count, 2)
+
+    async def test_stickers_are_routed_to_unsupported_handler(self) -> None:
+        from telegram.ext import MessageHandler
+
+        application = create_application(make_settings(), Mock())
+        handlers = [
+            handler for handler in application.handlers[0]
+            if isinstance(handler, MessageHandler) and handler.callback is unsupported_message
+        ]
+        self.assertEqual(len(handlers), 1)
+        self.assertTrue(handlers[0].filters.check_update(Update.de_json({
+            "update_id": 1,
+            "message": {
+                "message_id": 1, "date": 0,
+                "chat": {"id": 1, "type": "private"},
+                "sticker": {
+                    "file_id": "x", "file_unique_id": "y", "width": 1, "height": 1,
+                    "is_animated": False, "is_video": False, "type": "regular",
+                },
+            },
+        }, None)))
 
     async def test_registers_slash_commands_without_requiring_known_admin_chat(self) -> None:
         bot = SimpleNamespace(

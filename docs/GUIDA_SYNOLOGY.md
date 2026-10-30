@@ -399,11 +399,11 @@ Un container acceso non basta: la risposta Telegram conferma anche che il bot ri
 
 ## 12. Su Telegram: inserisci un'entrata a mano (solo amministratore)
 
-**Nuova entrata** (oppure `/entrata`) permette all'amministratore di inserire un'entrata senza foto e senza AI. Nell'uso normale salva davvero, senza conferma finale; in modalità prova non salva. Per seguire questa guida controlla prima che il menu mostri **Modalità PROVA**.
+**Nuova entrata** si trova in **⚙️ Amministrazione** (oppure `/entrata`) e permette all'amministratore di inserire un'entrata senza foto e senza AI. Nell'uso normale salva davvero, senza conferma finale; in modalità prova non salva. Per seguire questa guida controlla prima che il menu mostri **Modalità PROVA**.
 
-1. Invia `/entrata`.
-2. Scrivi data, descrizione e importo quando il bot li chiede.
-3. Controlla il riepilogo e, se serve, cambia i valori con **📅 Data**, **💶 Importo** o **✏️ Descrizione**.
+1. Apri **⚙️ Amministrazione** e premi **💰 Nuova entrata**.
+2. Compila il modulo scrivendo data, descrizione e importo. Il tuo messaggio viene tolto e il modulo si ripresenta aggiornato in fondo, con i pulsanti. La data va scritta come giorno-mese-anno, ad esempio `29-10-2026`, `29/10/26` o `2-3-26`; puoi anche premere **📅 Oggi**.
+3. Se serve, cambia un valore con **📅 Data**, **✏️ Descrizione** o **💶 Importo** nel modulo.
 4. Scegli la cassa. La direzione è già Entrata.
 5. Scegli la tipologia: compaiono prima le più usate; premi **Mostra altre** se quella giusta non c'è. Questa scelta avvia subito la simulazione o il salvataggio secondo la modalità iniziale. Unità e categoria vengono impostate dal bot.
 6. Attendi l'esito: in prova deve comparire **Prova riuscita! Nel portale non è stato salvato nulla**; in reale **Spesa salvata e verificata nel portale**.
@@ -412,7 +412,7 @@ Se compare «❌ Non sono riuscito a salvare la spesa e non riproverò da solo»
 
 Puoi interrompere prima dell'ultima scelta contabile con **Annulla**.
 
-**Inserisci a mano** (`/manual`) permette sia entrate sia uscite senza ricevuta, chiedendo tutti i dati; `/testspesa` non è più disponibile. Una foto/PDF imposta invece Uscita automaticamente: se l'AI non la legge, il bot conserva il file temporaneo e ti chiede i dati a mano. Il file entra nell'archivio `scontrini` all'ultima scelta contabile; prima rimane in attesa. **Annulla** elimina la copia temporanea. Tutti i percorsi rispettano la modalità con cui sono iniziati.
+**Inserisci a mano** (in **⚙️ Amministrazione**, oppure `/manual`) permette sia entrate sia uscite senza ricevuta, con lo stesso modulo; `/testspesa` non è più disponibile. Sticker, audio, video e file diversi da foto o PDF vengono eliminati dalla chat. Una foto/PDF imposta invece Uscita automaticamente: se l'AI non la legge, il bot conserva il file temporaneo e ti chiede i dati a mano. Il file entra nell'archivio `scontrini` all'ultima scelta contabile; prima rimane in attesa. **Annulla** elimina la copia temporanea. Tutti i percorsi rispettano la modalità con cui sono iniziati.
 
 ### Tempi dei menu e aggiornamento delle opzioni
 

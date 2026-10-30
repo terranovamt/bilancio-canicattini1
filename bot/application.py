@@ -228,6 +228,15 @@ def create_application(
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, receipt_text)
     )
+    application.add_handler(
+        MessageHandler(
+            filters.UpdateType.MESSAGE
+            & ~filters.TEXT
+            & ~filters.PHOTO
+            & ~filters.Document.PDF,
+            unsupported_message,
+        )
+    )
     application.add_error_handler(telegram_error_handler)
     return application
 
@@ -285,11 +294,6 @@ def _navigation_keyboard(*, admin: bool = False) -> InlineKeyboardMarkup:
 
 def _home_keyboard(admin: bool) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(texts.MENU_RECEIPT_BUTTON, callback_data="menu:receipt")]]
-    if admin:
-        rows.append([
-            InlineKeyboardButton(texts.MENU_MANUAL_BUTTON, callback_data="menu:manual"),
-            InlineKeyboardButton(texts.MENU_INCOME_BUTTON, callback_data="menu:income"),
-        ])
     rows.extend([
         [InlineKeyboardButton(texts.MENU_SUMMARY_BUTTON, callback_data="menu:summary"),
          InlineKeyboardButton(texts.MENU_LATEST_BUTTON, callback_data="menu:latest")],
@@ -304,6 +308,10 @@ def _home_keyboard(admin: bool) -> InlineKeyboardMarkup:
 
 def _admin_keyboard(test_mode: bool = False) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(texts.MENU_MANUAL_BUTTON, callback_data="menu:manual"),
+            InlineKeyboardButton(texts.MENU_INCOME_BUTTON, callback_data="menu:income"),
+        ],
         [InlineKeyboardButton(
             texts.MENU_TEST_OFF_BUTTON if test_mode else texts.MENU_TEST_ON_BUTTON,
             callback_data="menu:test_off" if test_mode else "menu:test_on",
@@ -568,6 +576,24 @@ async def receipt_text(
 ) -> None:
     workflow: ReceiptWorkflow = context.application.bot_data["receipt_workflow"]
     await workflow.handle_text(update, context)
+
+
+async def unsupported_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    message = update.message
+    if message is None:
+        return
+    try:
+        await message.delete()
+    except TelegramError as error:
+        logger.info("Could not delete unsupported message: %s", type(error).__name__)
+    await context.bot.send_message(
+        chat_id=message.chat_id,
+        text=texts.UNSUPPORTED_MESSAGE,
+        reply_markup=_navigation_keyboard(),
+    )
 
 
 async def receipt_callback(

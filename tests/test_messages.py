@@ -93,7 +93,16 @@ class TelegramMessagesTests(unittest.TestCase):
         self.assertNotIn("🏪", details)
         self.assertIn("senza altre conferme", messages.MENU_ADMIN_HELP)
         self.assertIn("modalità prova", messages.MENU_ADMIN_HELP)
-        self.assertNotIn("anche in modalità prova", messages.MANUAL_START)
+        self.assertIn("Amministrazione", messages.MENU_ADMIN_HELP)
+        form = messages.manual_form(
+            {"date": "2026-10-29", "merchant": None, "total_amount": None},
+            income_only=False, prompt=messages.MANUAL_MERCHANT, mode=messages.MODE_REAL,
+        )
+        self.assertIn("📅 Data: 29/10/2026", form)
+        self.assertIn("✏️ Descrizione: da inserire", form)
+        self.assertIn("👉 " + messages.MANUAL_MERCHANT, form)
+        self.assertIn("giorno-mese-anno", messages.MANUAL_DATE)
+        self.assertNotIn("/", messages.UNSUPPORTED_MESSAGE)
 
     def test_user_messages_do_not_include_internal_paths_or_technical_terms(self) -> None:
         rendered = (

@@ -152,7 +152,10 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotRegex(reply.args[0], r"/[a-zA-Z]")
                 self.assertEqual(
                     self.callback_values(reply.kwargs["reply_markup"]),
-                    ["receipt:cancel", "menu:home"],
+                    [
+                        "receipt:today", "receipt:edit:date", "receipt:edit:merchant",
+                        "receipt:edit:total_amount", "receipt:cancel", "menu:home",
+                    ],
                 )
                 self.portal.create_expense.assert_not_awaited()
                 await self.workflow.cancel_current(12345)

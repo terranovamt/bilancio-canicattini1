@@ -98,19 +98,20 @@ Il bot legge token e ID dal file `.env`; non inviare quel file o le sue credenzi
 
 ### Inserimento manuale e scontrini non leggibili
 
-Per un'entrata senza ricevuta, l'amministratore può premere **💰 Nuova entrata** nel menu principale (oppure scrivere `/entrata`):
+Per un'entrata senza ricevuta, l'amministratore può aprire **⚙️ Amministrazione** e premere **💰 Nuova entrata** (oppure scrivere `/entrata`):
 
-1. Inserisci data, descrizione e importo quando richiesti.
-2. Controlla il riepilogo; puoi correggere i dati prima di continuare.
-3. Scegli cassa e tipologia: la direzione è già Entrata.
-4. L'ultima tipologia avvia subito il salvataggio, senza conferma aggiuntiva. Per una prova senza salvataggio attiva prima **Modalità PROVA** da Amministrazione.
+1. Compila il modulo: data, descrizione e importo. Ogni volta che scrivi un dato, il tuo messaggio viene tolto e il modulo si aggiorna in fondo alla chat, con i pulsanti sempre visibili.
+2. La data va scritta come **giorno-mese-anno**: valgono `29-10-2026`, `29/10/2026`, `29.10.26` o `2-3-26` (giorno e mese anche con una sola cifra, anno anche con due: `26` diventa `2026`). Puoi anche premere **📅 Oggi**.
+3. Per correggere un campo premi **📅 Data**, **✏️ Descrizione** o **💶 Importo** nel modulo.
+4. Scegli cassa e tipologia: la direzione è già Entrata. L'ultima tipologia avvia subito il salvataggio, senza conferma aggiuntiva. Per una prova senza salvataggio attiva prima **Modalità PROVA** da Amministrazione.
 
-Per inserire a mano un'entrata **o un'uscita senza ricevuta**, l'amministratore può premere **✍️ Inserisci a mano** (oppure scrivere `/manual`):
+Per inserire a mano un'entrata **o un'uscita senza ricevuta**, l'amministratore può aprire **⚙️ Amministrazione** e premere **✍️ Inserisci a mano** (oppure scrivere `/manual`):
 
-1. Inserisci data, descrizione e importo quando richiesti; non vengono proposti importi di prova.
-2. Controlla i dati e correggili con i pulsanti prima di scegliere la cassa.
-3. Scegli cassa, **Entrata** o **Uscita**, poi la tipologia: questa ultima scelta avvia il salvataggio senza un'altra conferma.
-4. Attendi l'esito verificato. Se la modalità prova era attiva all'inizio, non viene salvato nulla nel portale.
+1. Compila lo stesso modulo; non vengono proposti importi di prova.
+2. Scegli cassa, **Entrata** o **Uscita**, poi la tipologia: questa ultima scelta avvia il salvataggio senza un'altra conferma.
+3. Attendi l'esito verificato. Se la modalità prova era attiva all'inizio, non viene salvato nulla nel portale.
+
+Telegram non permette veri campi di input dentro la chat senza una pagina web esterna: per questo il modulo è un messaggio che si aggiorna. Sticker, audio, video e file diversi da foto o PDF vengono eliminati dalla chat e il bot ricorda cosa inviare.
 
 Il vecchio `/testspesa` è stato rimosso per non confondere una prova con un inserimento reale: usa **Inserisci a mano** e scegli la modalità desiderata in Amministrazione.
 
@@ -136,7 +137,7 @@ Per usare il bot non occorre ricordare i comandi:
 
 1. Su Telegram premi **Avvia**, oppure invia `/start` una volta. La vecchia tastiera con gli slash viene rimossa.
 2. Scegli un pulsante sotto il messaggio: **📷 Nuovo scontrino**, **📊 Riepilogo**, **📋 Ultime operazioni**, **⏳ Operazioni in attesa** o **❓ Aiuto**.
-3. Se sei amministratore, trovi anche **✍️ Inserisci a mano**, **💰 Nuova entrata** e **⚙️ Amministrazione**. La modalità prova/reale è indicata per tutti; gli inserimenti manuali seguono la stessa modalità degli scontrini.
+3. Se sei amministratore, trovi anche **⚙️ Amministrazione**, che contiene **✍️ Inserisci a mano**, **💰 Nuova entrata** e gli strumenti di gestione. La modalità prova/reale è indicata per tutti; gli inserimenti manuali seguono la stessa modalità degli scontrini.
 4. Usa **🏠 Menu principale** per tornare alla schermata iniziale. Negli strumenti amministratore trovi anche **⬅️ Indietro**. Il menu non cancella i dati di un inserimento già aperto.
 5. Per interrompere un inserimento premi **Annulla** nel suo messaggio, oppure **✖️ Annulla operazione** nel menu principale.
 
