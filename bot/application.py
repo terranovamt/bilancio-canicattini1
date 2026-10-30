@@ -18,7 +18,7 @@ from telegram import (
     ReplyKeyboardRemove,
     Update,
 )
-from telegram.error import TelegramError
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import (
     Application,
     ApplicationHandlerStop,
@@ -36,10 +36,14 @@ from bot.access import is_authorized_user
 from bot.receipt_workflow import ReceiptAnalyzer, ReceiptWorkflow
 from bot.retry_service import ExpenseRetryService
 from bot.updates import (
+    InstallOutcome,
     RunningVersion,
     UpdateStatusStore,
+    UpdateTracking,
     describe_version,
+    install_notice,
     pending_notices,
+    progress_text,
     resolve_timezone,
     update_available,
 )
@@ -163,6 +167,12 @@ def create_application(
             interval=60,
             first=20,
             name="nas-update-status",
+        )
+        application.job_queue.run_repeating(
+            update_progress_job,
+            interval=3,
+            first=3,
+            name="nas-update-progress",
         )
     if bilancio_client is not None:
         retry_service = ExpenseRetryService(
@@ -491,19 +501,130 @@ async def update_callback(
         await query.edit_message_text(texts.UPDATE_CANCELLED, reply_markup=_navigation_keyboard(admin=True))
         return
     store = _update_store(context, settings)
+    message = getattr(query, "message", None)
+    chat_id = getattr(message, "chat_id", None)
+    message_id = getattr(message, "message_id", None)
+    now = datetime.now(timezone.utc)
     try:
-        await asyncio.to_thread(store.request_install, datetime.now(timezone.utc))
+        # Track the message before the request exists, so the NAS always sees it.
+        if isinstance(chat_id, int) and isinstance(message_id, int):
+            await asyncio.to_thread(
+                store.write_tracking,
+                UpdateTracking(chat_id=chat_id, message_id=message_id, requested_at=now, shown=""),
+            )
+        await asyncio.to_thread(store.request_install, now)
     except OSError as error:
         logger.error("Could not record update request: %s", type(error).__name__)
+        await asyncio.to_thread(_clear_tracking_quietly, store)
         await query.edit_message_text(texts.UPDATE_REQUEST_FAILED, reply_markup=_navigation_keyboard(admin=True))
         return
     logger.info("Update installation requested by the administrator")
     await query.edit_message_text(texts.UPDATE_REQUESTED, reply_markup=_navigation_keyboard(admin=True))
 
 
+def _clear_tracking_quietly(store: UpdateStatusStore) -> None:
+    try:
+        store.clear_tracking()
+    except OSError as error:
+        logger.error("Could not clear update tracking: %s", type(error).__name__)
+
+
+async def _edit_tracked_message(
+    context: ContextTypes.DEFAULT_TYPE,
+    tracking: UpdateTracking,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> bool | None:
+    """Return True if edited, False if the message cannot be edited, None to retry."""
+    try:
+        await context.bot.edit_message_text(
+            chat_id=tracking.chat_id,
+            message_id=tracking.message_id,
+            text=text,
+            reply_markup=reply_markup,
+        )
+    except BadRequest as error:
+        if "not modified" in str(error).lower():
+            return True
+        logger.info("Update progress message can no longer be edited")
+        return False
+    except TelegramError:
+        logger.warning("Could not edit update progress message, retrying later")
+        return None
+    return True
+
+
+async def _finish_tracked_update(
+    context: ContextTypes.DEFAULT_TYPE,
+    store: UpdateStatusStore,
+    tracking: UpdateTracking,
+    install: InstallOutcome,
+) -> None:
+    text = install_notice(install)
+    keyboard = _navigation_keyboard(admin=True)
+    edited = await _edit_tracked_message(context, tracking, text, keyboard)
+    if edited is None:
+        return
+    if not edited:
+        try:
+            await context.bot.send_message(chat_id=tracking.chat_id, text=text, reply_markup=keyboard)
+        except TelegramError:
+            logger.error("Could not send update outcome")
+            return
+    try:
+        notified = await asyncio.to_thread(store.read_notified)
+        marker = {**notified, "install_finished_at": install.finished_at_raw}
+        if install.revision:
+            # The admin already knows this version: do not announce it again.
+            marker["available_revision"] = install.revision
+        await asyncio.to_thread(store.write_notified, marker)
+        await asyncio.to_thread(store.clear_tracking)
+    except OSError as error:
+        logger.error("Could not store update outcome marker: %s", type(error).__name__)
+
+
+async def update_progress_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Follow a requested installation by editing the admin's request message."""
+    settings: Settings = context.application.bot_data["settings"]
+    store = _update_store(context, settings)
+    tracking = await asyncio.to_thread(store.read_tracking)
+    if tracking is None:
+        return
+    install = await asyncio.to_thread(store.read_install)
+    if install is not None and install.finished_at >= tracking.requested_at:
+        await _finish_tracked_update(context, store, tracking, install)
+        return
+    progress = await asyncio.to_thread(store.read_progress)
+    if (
+        progress is None
+        or progress.updated_at < tracking.requested_at
+        or progress.updated_at_raw == tracking.shown
+    ):
+        return
+    if await _edit_tracked_message(context, tracking, progress_text(progress)) is None:
+        return
+    logger.info("Update progress shown to the administrator: %s", progress.stage)
+    try:
+        await asyncio.to_thread(
+            store.write_tracking,
+            UpdateTracking(
+                chat_id=tracking.chat_id,
+                message_id=tracking.message_id,
+                requested_at=tracking.requested_at,
+                shown=progress.updated_at_raw,
+            ),
+        )
+        await asyncio.to_thread(store.acknowledge_progress, progress)
+    except OSError as error:
+        logger.error("Could not store update progress marker: %s", type(error).__name__)
+
+
 async def update_status_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
     store = _update_store(context, settings)
+    if await asyncio.to_thread(store.read_tracking) is not None:
+        # update_progress_job reports the outcome in the request message.
+        return
     notices, marker = await asyncio.to_thread(
         pending_notices, store, _running_version(context)
     )

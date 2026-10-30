@@ -123,8 +123,20 @@ UPDATE_YES = "Sì, installa"
 UPDATE_NO = "No, lascia stare"
 UPDATE_REQUESTED = (
     "⏳ Richiesta registrata. Il NAS la esegue al prossimo controllo, "
-    "di solito entro 10 minuti, e ti scrivo l'esito."
+    "di solito entro 10 minuti: aggiorno questo messaggio a ogni passaggio."
 )
+UPDATE_PROGRESS = {
+    "download": "⏳ Inizio l'aggiornamento: scarico la nuova versione…",
+    "install": (
+        "🔧 Installo {summary}.\n"
+        "Preparo la nuova versione, può richiedere qualche minuto. "
+        "Intanto il bot continua a funzionare."
+    ),
+    "restart": (
+        "🔄 Riavvio il bot con {summary}.\n"
+        "Per un minuto circa potrei non rispondere: l'esito comparirà qui."
+    ),
+}
 UPDATE_ALREADY_REQUESTED = (
     "⏳ C'è già una richiesta in attesa: il NAS la esegue al prossimo controllo."
 )

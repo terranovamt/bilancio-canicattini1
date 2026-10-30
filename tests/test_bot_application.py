@@ -40,6 +40,7 @@ from bot.application import (
     test_bilancio_command,
     update_callback,
     update_command,
+    update_progress_job,
     update_status_job,
     unsupported_message,
 )
@@ -850,6 +851,112 @@ class UpdateCommandTests(unittest.IsolatedAsyncioTestCase):
         message = SimpleNamespace(reply_text=AsyncMock())
         await update_command(SimpleNamespace(message=message, effective_user=self.user), self.context())
         self.assertEqual(message.reply_text.await_args.args[0], texts.UPDATE_NOT_CONFIGURED)
+
+    def write_progress(self, stage: str, updated_at: str, summary: str = "bbbbbbb - Nuova") -> None:
+        (self.update_dir / "progress").write_text(
+            f"stage={stage}\nupdated_at={updated_at}\nsummary={summary}\n", encoding="utf-8"
+        )
+
+    async def test_requested_update_edits_the_same_message_until_the_outcome(self) -> None:
+        self.write_check("b" * 40)
+        context = self.context()
+        context.bot.edit_message_text = AsyncMock()
+        query = SimpleNamespace(
+            data="admin:update:yes", answer=AsyncMock(), edit_message_text=AsyncMock(),
+            message=SimpleNamespace(chat_id=12345, message_id=77),
+        )
+        await update_callback(SimpleNamespace(callback_query=query, effective_user=self.user), context)
+        self.assertTrue((self.update_dir / "tracking").is_file())
+        self.assertTrue((self.update_dir / "request").is_file())
+
+        # Progress written before the request belongs to an older update.
+        self.write_progress("restart", "2020-01-01T00:00:00Z")
+        await update_progress_job(context)
+        context.bot.edit_message_text.assert_not_awaited()
+
+        self.write_progress("download", "2099-01-01T00:00:00Z", summary="")
+        await update_progress_job(context)
+        await update_progress_job(context)
+        context.bot.edit_message_text.assert_awaited_once()
+        first = context.bot.edit_message_text.await_args.kwargs
+        self.assertEqual((first["chat_id"], first["message_id"]), (12345, 77))
+        self.assertEqual(first["text"], texts.UPDATE_PROGRESS["download"])
+        self.assertIn(
+            "ack=2099-01-01T00:00:00Z",
+            (self.update_dir / "progress_ack").read_text(encoding="utf-8"),
+        )
+
+        self.write_progress("restart", "2099-01-01T00:05:00Z")
+        await update_progress_job(context)
+        restart = context.bot.edit_message_text.await_args.kwargs["text"]
+        self.assertIn("Riavvio il bot con bbbbbbb - Nuova", restart)
+        self.assertIn(
+            "ack=2099-01-01T00:05:00Z",
+            (self.update_dir / "progress_ack").read_text(encoding="utf-8"),
+        )
+
+        # While an update is followed, the periodic notice stays silent.
+        await update_status_job(context)
+        context.bot.send_message.assert_not_awaited()
+
+        (self.update_dir / "install").write_text(
+            "result=ok\nfinished_at=2099-01-01T00:06:00Z\nrevision=" + "b" * 40
+            + "\nsummary=bbbbbbb - Nuova\nreason=\n",
+            encoding="utf-8",
+        )
+        fresh_context = self.context()
+        fresh_context.bot.edit_message_text = AsyncMock()
+        await update_progress_job(fresh_context)
+        final = fresh_context.bot.edit_message_text.await_args.kwargs
+        self.assertEqual(final["text"], texts.UPDATE_DONE.format(summary="bbbbbbb - Nuova"))
+        self.assertIsNotNone(final["reply_markup"])
+        self.assertFalse((self.update_dir / "tracking").exists())
+        await update_status_job(fresh_context)
+        await update_progress_job(fresh_context)
+        fresh_context.bot.send_message.assert_not_awaited()
+        fresh_context.bot.edit_message_text.assert_awaited_once()
+
+    async def test_outcome_is_sent_when_the_request_message_cannot_be_edited(self) -> None:
+        from bot.updates import UpdateStatusStore, UpdateTracking
+        from datetime import datetime, timezone
+        from telegram.error import BadRequest
+
+        UpdateStatusStore(self.update_dir).write_tracking(
+            UpdateTracking(
+                chat_id=12345, message_id=77,
+                requested_at=datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc), shown="",
+            )
+        )
+        (self.update_dir / "install").write_text(
+            "result=skipped\nfinished_at=2026-10-29T12:10:00Z\nrevision=\nsummary=\n"
+            "reason=up_to_date\n",
+            encoding="utf-8",
+        )
+        context = self.context()
+        context.bot.edit_message_text = AsyncMock(side_effect=BadRequest("Message to edit not found"))
+        await update_progress_job(context)
+        context.bot.send_message.assert_awaited_once()
+        self.assertIn("Nessun aggiornamento", context.bot.send_message.await_args.kwargs["text"])
+        self.assertFalse((self.update_dir / "tracking").exists())
+
+    async def test_temporary_telegram_error_retries_progress_without_ack(self) -> None:
+        from bot.updates import UpdateStatusStore, UpdateTracking
+        from datetime import datetime, timezone
+
+        UpdateStatusStore(self.update_dir).write_tracking(
+            UpdateTracking(
+                chat_id=12345, message_id=77,
+                requested_at=datetime(2026, 10, 29, 12, 0, tzinfo=timezone.utc), shown="",
+            )
+        )
+        self.write_progress("install", "2026-10-29T12:01:00Z")
+        context = self.context()
+        context.bot.edit_message_text = AsyncMock(side_effect=TimedOut("private detail"))
+        await update_progress_job(context)
+        self.assertFalse((self.update_dir / "progress_ack").exists())
+        context.bot.edit_message_text.side_effect = None
+        await update_progress_job(context)
+        self.assertTrue((self.update_dir / "progress_ack").is_file())
 
     async def test_status_job_notifies_admin_once(self) -> None:
         (self.update_dir / "install").write_text(

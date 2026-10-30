@@ -112,6 +112,11 @@ main() {
         requested=yes
         rm -f "$status_dir/request"
         printf 'Trovata una richiesta di installazione da Telegram.\n'
+        write_status progress \
+            "stage=download" \
+            "updated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "summary=" \
+            || printf 'Avviso: avanzamento non registrato.\n' >&2
     fi
 
     fetch_error=""

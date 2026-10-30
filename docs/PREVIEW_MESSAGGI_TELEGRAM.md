@@ -565,7 +565,27 @@ Il bot si riavvia per circa un minuto: controlla che nessuno stia registrando un
 ```
 
 ```text
-⏳ Richiesta registrata. Il NAS la esegue al prossimo controllo, di solito entro 10 minuti, e ti scrivo l'esito.
+⏳ Richiesta registrata. Il NAS la esegue al prossimo controllo, di solito entro 10 minuti: aggiorno questo messaggio a ogni passaggio.
+```
+
+Lo stesso messaggio viene poi modificato in sequenza:
+
+```text
+⏳ Inizio l'aggiornamento: scarico la nuova versione…
+```
+
+```text
+🔧 Installo 0ef7d60 - feat: … (30/10/2026 00:50).
+Preparo la nuova versione, può richiedere qualche minuto. Intanto il bot continua a funzionare.
+```
+
+```text
+🔄 Riavvio il bot con 0ef7d60 - feat: … (30/10/2026 00:50).
+Per un minuto circa potrei non rispondere: l'esito comparirà qui.
+```
+
+```text
+✅ Aggiornamento installato: 0ef7d60 - feat: … (30/10/2026 00:50)
 ```
 
 Se il comando non può procedere:

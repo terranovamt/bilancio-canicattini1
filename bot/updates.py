@@ -23,6 +23,10 @@ CHECK_FILE = "check"
 INSTALL_FILE = "install"
 REQUEST_FILE = "request"
 NOTIFIED_FILE = "notified"
+PROGRESS_FILE = "progress"
+PROGRESS_ACK_FILE = "progress_ack"
+TRACKING_FILE = "tracking"
+PROGRESS_STAGES = frozenset({"download", "install", "restart"})
 
 _REVISION_PATTERN = re.compile(r"[0-9a-f]{7,40}")
 _CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]")
@@ -104,6 +108,24 @@ class InstallOutcome:
     reason: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class UpdateProgress:
+    stage: str
+    updated_at: datetime
+    updated_at_raw: str
+    summary: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateTracking:
+    """Telegram message that follows an installation requested by the admin."""
+
+    chat_id: int
+    message_id: int
+    requested_at: datetime
+    shown: str
+
+
 class UpdateStatusStore:
     def __init__(self, directory: Path) -> None:
         self.directory = directory
@@ -171,6 +193,59 @@ class UpdateStatusStore:
 
     def write_notified(self, fields: Mapping[str, str]) -> None:
         self._write(NOTIFIED_FILE, fields)
+
+    def read_progress(self) -> UpdateProgress | None:
+        fields = self._read(PROGRESS_FILE)
+        if fields is None:
+            return None
+        stage = fields.get("stage", "")
+        raw_updated = fields.get("updated_at", "")
+        updated_at = _timestamp(raw_updated)
+        if stage not in PROGRESS_STAGES or updated_at is None:
+            return None
+        return UpdateProgress(
+            stage=stage,
+            updated_at=updated_at,
+            updated_at_raw=raw_updated,
+            summary=_clean_text(fields.get("summary")),
+        )
+
+    def acknowledge_progress(self, progress: UpdateProgress) -> None:
+        """Tell the NAS script that the admin has seen this stage."""
+        self._write(PROGRESS_ACK_FILE, {"ack": progress.updated_at_raw})
+
+    def read_tracking(self) -> UpdateTracking | None:
+        fields = self._read(TRACKING_FILE)
+        if fields is None:
+            return None
+        requested_at = _timestamp(fields.get("requested_at"))
+        try:
+            chat_id = int(fields.get("chat_id", ""))
+            message_id = int(fields.get("message_id", ""))
+        except ValueError:
+            return None
+        if requested_at is None:
+            return None
+        return UpdateTracking(
+            chat_id=chat_id,
+            message_id=message_id,
+            requested_at=requested_at,
+            shown=fields.get("shown", ""),
+        )
+
+    def write_tracking(self, tracking: UpdateTracking) -> None:
+        self._write(
+            TRACKING_FILE,
+            {
+                "chat_id": str(tracking.chat_id),
+                "message_id": str(tracking.message_id),
+                "requested_at": _utc_text(tracking.requested_at),
+                "shown": tracking.shown,
+            },
+        )
+
+    def clear_tracking(self) -> None:
+        (self.directory / TRACKING_FILE).unlink(missing_ok=True)
 
 
 def _utc_text(moment: datetime) -> str:
@@ -276,14 +351,19 @@ def install_notice(install: InstallOutcome) -> str:
     return texts.UPDATE_FAILED.format(summary=summary, reason=reason)
 
 
+def progress_text(progress: UpdateProgress) -> str:
+    summary = progress.summary or texts.VERSION_UNKNOWN_SHORT
+    return texts.UPDATE_PROGRESS[progress.stage].format(summary=summary)
+
+
 def pending_notices(
-    store: UpdateStatusStore, running: RunningVersion
+    store: UpdateStatusStore, running: RunningVersion, *, include_install: bool = True
 ) -> tuple[list[str], dict[str, str]]:
     """Return admin notices not yet sent and the marker to store after sending."""
     notified = store.read_notified()
     marker = dict(notified)
     notices: list[str] = []
-    install = store.read_install()
+    install = store.read_install() if include_install else None
     if install is not None and install.finished_at_raw != notified.get("install_finished_at"):
         notices.append(install_notice(install))
         marker["install_finished_at"] = install.finished_at_raw

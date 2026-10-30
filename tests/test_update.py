@@ -152,6 +152,48 @@ class UpdateScriptTests(unittest.TestCase):
         self.assertIn("Aggiornamento installato", result.stdout)
         self.assert_private_files_preserved()
 
+    def progress_fields(self) -> dict[str, str]:
+        path = self.target / "data" / "update" / "progress"
+        return dict(
+            line.partition("=")[::2] for line in path.read_text(encoding="utf-8").splitlines()
+        )
+
+    def test_records_restart_stage_without_waiting_when_no_message_is_followed(self) -> None:
+        result = self.run_update()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.progress_fields()["stage"], "restart")
+        self.assertNotIn("Il bot ha avvisato", result.stdout)
+        self.assertNotIn("non ha confermato", result.stdout)
+
+    def test_waits_for_the_bot_to_announce_the_restart(self) -> None:
+        status = self.target / "data" / "update"
+        status.mkdir()
+        (status / "tracking").write_text("chat_id=1\nmessage_id=2\n", encoding="utf-8")
+        # Fake sleep acting as the bot: acknowledge the current stage.
+        sleep = self.mock_bin / "sleep"
+        sleep.write_text(
+            "#!/bin/sh\n"
+            'stamp=$(sed -n "s/^updated_at=//p" "$MOCK_STATUS_DIR/progress")\n'
+            'printf "ack=%s\\n" "$stamp" > "$MOCK_STATUS_DIR/progress_ack"\n',
+            encoding="utf-8",
+            newline="\n",
+        )
+        sleep.chmod(0o755)
+        result = self.run_update(MOCK_STATUS_DIR=status.as_posix())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Il bot ha avvisato su Telegram del riavvio", result.stdout)
+        calls = self.calls.read_text(encoding="utf-8")
+        self.assertIn("compose up -d --no-deps --force-recreate bot", calls)
+
+    def test_restart_continues_when_the_bot_does_not_acknowledge(self) -> None:
+        status = self.target / "data" / "update"
+        status.mkdir()
+        (status / "tracking").write_text("chat_id=1\nmessage_id=2\n", encoding="utf-8")
+        result = self.run_update(UPDATE_ACK_WAIT_SECONDS="1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("non ha confermato il messaggio di riavvio", result.stdout)
+        self.assertEqual(self.install_status()["result"], "ok")
+
     def test_stopped_bot_updates_without_exec_and_checks_next_configuration(self) -> None:
         result = self.run_update(MOCK_BOT_STOPPED="1")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

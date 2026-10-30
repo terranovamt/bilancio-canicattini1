@@ -8,6 +8,7 @@ fail() {
 
 health_interval=3
 health_attempts=60
+ack_wait_seconds=${UPDATE_ACK_WAIT_SECONDS:-30}
 items="Dockerfile docker-compose.yml requirements.txt config.py logging_config.py .dockerignore README.md aggiorna.sh scarica.sh automatico.sh bot bilancio db storage vision docs"
 
 # Lock directories hold the owner PID so a lock left by a crash can be removed safely.
@@ -70,6 +71,32 @@ record_install() {
 abort() {
     record_install failed "$1" || printf 'Avviso: esito non registrato in data/update.\n' >&2
     fail "$2"
+}
+
+# The bot edits the admin's request message with each stage.
+write_progress() {
+    progress_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    [ ! -L "$status_dir" ] || return 0
+    tmp=$(mktemp "$status_dir/.progress.XXXXXX") || return 0
+    printf 'stage=%s\nupdated_at=%s\nsummary=%s\n' "$1" "$progress_at" "$revision_summary" > "$tmp"
+    chmod 644 "$tmp"
+    mv -f "$tmp" "$status_dir/progress" || printf 'Avviso: avanzamento non registrato.\n' >&2
+}
+
+# Give the running bot time to announce the restart before it is stopped.
+wait_progress_ack() {
+    [ -n "$running_bot" ] || return 0
+    [ -f "$status_dir/tracking" ] || return 0
+    waited=0
+    while [ "$waited" -lt "$ack_wait_seconds" ]; do
+        if [ "$(read_field ack "$status_dir/progress_ack")" = "$progress_at" ]; then
+            printf 'Il bot ha avvisato su Telegram del riavvio.\n'
+            return 0
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    printf 'Avviso: il bot non ha confermato il messaggio di riavvio, proseguo.\n'
 }
 
 restore_code() {
@@ -170,6 +197,7 @@ installed_after=$(read_field installed_revision "$status_dir/install")
 case "$installed_after" in
     *[!0-9a-f]*) installed_after="" ;;
 esac
+write_progress install
 
 for item in $items; do
     [ -e "$source_dir/$item" ] || abort package "Pacchetto incompleto: manca $item."
@@ -248,6 +276,8 @@ if ! docker compose build \
 fi
 
 health_status="avvio fallito"
+write_progress restart
+wait_progress_ack
 if docker compose up -d --no-deps --force-recreate bot; then
     printf 'Attendo il controllo di salute del container, fino a tre minuti.\n'
     if wait_healthy; then

@@ -185,6 +185,7 @@ class AutomaticUpdateTests(unittest.TestCase):
         self.assertEqual(install["result"], "skipped")
         self.assertEqual(install["reason"], "up_to_date")
         self.assertEqual(self.updates(), 1)
+        self.assertEqual(read_fields(self.status / "progress")["stage"], "download")
 
     def test_download_failure_is_recorded(self) -> None:
         self.git("-C", str(self.source), "remote", "set-url", "origin", str(self.root / "missing"))

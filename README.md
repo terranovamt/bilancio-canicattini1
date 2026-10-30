@@ -152,7 +152,13 @@ L'attività DSM **Bilancio - controllo aggiornamenti**, in modalità `controlla`
 1. Quando ricevi **È disponibile una nuova versione del bot**, premi **🔄 Installa aggiornamento**, oppure invia `/aggiorna`.
 2. Controlla che nessuno stia registrando una spesa e premi **Sì, installa** solo se vuoi procedere. Aprire l'avviso non installa nulla.
 3. La richiesta viene eseguita al successivo controllo NAS, normalmente entro 10 minuti. Funziona anche in modalità reale, senza cambiare la modalità degli inserimenti.
-4. Attendi il messaggio con l'esito e consulta **Versione e aggiornamenti** per verificare la versione attiva.
+4. Lo stesso messaggio della richiesta si aggiorna da solo:
+   - **Inizio l'aggiornamento** quando il NAS inizia a scaricare da Git;
+   - **Installo** mentre prepara la nuova versione, con il bot ancora attivo;
+   - **Riavvio il bot** subito prima del riavvio: il NAS aspetta fino a 30 secondi che il bot abbia mostrato questo messaggio;
+   - infine l'esito, ad esempio **Aggiornamento installato**. Il bot controlla l'avanzamento ogni 3 secondi.
+
+   Consulta poi **Versione e aggiornamenti** per verificare la versione attiva.
 
 Una versione già annunciata non viene notificata di nuovo a ogni controllo o dopo un riavvio: il codice dell'ultima versione notificata è conservato sul volume dati. Se Telegram non riceve il messaggio, il bot ritenta alla lettura successiva. Un controllo Git fallito non genera avvisi di novità usando il risultato vecchio rimasto in cache; l'errore resta visibile nella schermata della versione.
 
