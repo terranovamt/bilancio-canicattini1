@@ -1268,16 +1268,33 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("private", "\n".join(logs.output))
                 await workflow.cancel_current(12345)
 
-    async def test_manual_income_collects_fields_and_restricts_to_admin(self) -> None:
+    async def test_manual_income_collects_fields_for_any_authorized_user(self) -> None:
         portal = FakeBilancioClient()
         workflow = self._manual_portal_workflow(portal)
         message = SimpleNamespace(reply_text=AsyncMock())
         await workflow.start_manual_expense(
             SimpleNamespace(message=message, effective_user=SimpleNamespace(id=999)),
-            SimpleNamespace(), collect_data=True,
+            SimpleNamespace(), collect_data=True, direction=None,
         )
         self.assertEqual(message.reply_text.await_args.args[0], texts.ADMIN_ONLY)
         self.assertIsNone(self.database.get_conversation_state(999))
+        await workflow.start_manual_expense(
+            SimpleNamespace(message=message, effective_user=SimpleNamespace(id=999)),
+            SimpleNamespace(), collect_data=True,
+        )
+        self.assertEqual(self.database.get_conversation_state(999)[0], "awaiting_receipt_data")
+        other = SimpleNamespace(id=999)
+        for value in ("29/10/2026", "Quota socio", "5"):
+            await workflow.handle_text(
+                SimpleNamespace(message=SimpleNamespace(text=value, reply_text=AsyncMock()),
+                                effective_user=other),
+                SimpleNamespace(),
+            )
+        for data in ("receipt:choose:0", "receipt:choose:0", "receipt:no_notes"):
+            await self._tap(workflow, other, data)
+        self.assertEqual(len(portal.submitted), 1)
+        self.assertEqual(portal.submitted[0][0].direction, TransactionDirection.INCOME)
+        portal.submitted.clear()
         await workflow.start_manual_expense(
             SimpleNamespace(message=message, effective_user=SimpleNamespace(id=12345)),
             SimpleNamespace(), collect_data=True,

@@ -170,7 +170,10 @@ class ReceiptWorkflow:
         user = update.effective_user
         if message is None or user is None:
             return
-        if user.id != self._settings.admin_user_id:
+        if (
+            user.id != self._settings.admin_user_id
+            and direction != TransactionDirection.INCOME
+        ):
             await message.reply_text(texts.ADMIN_ONLY)
             return
         if self._bilancio is None:
@@ -1396,7 +1399,11 @@ class ReceiptWorkflow:
             expense = await asyncio.to_thread(self._database.get_expense, expense_id)
             if expense is None:
                 raise KeyError("Expense no longer exists")
-            if payload.get("manual_entry") is True and user_id != self._settings.admin_user_id:
+            if (
+                payload.get("manual_entry") is True
+                and user_id != self._settings.admin_user_id
+                and direction != TransactionDirection.INCOME
+            ):
                 logger.warning("Manual submission rejected: administrator required")
                 await send(texts.ADMIN_ONLY)
                 return

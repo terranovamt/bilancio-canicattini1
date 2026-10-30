@@ -399,9 +399,9 @@ Un container acceso non basta: la risposta Telegram conferma anche che il bot ri
 
 ## 12. Su Telegram: inserisci un'entrata a mano (solo amministratore)
 
-**Nuova entrata** si trova in **⚙️ Amministrazione** (oppure `/entrata`) e permette all'amministratore di inserire un'entrata senza foto e senza AI. Nell'uso normale salva davvero, senza conferma finale; in modalità prova non salva. Per seguire questa guida controlla prima che il menu mostri **Modalità PROVA**.
+**Nuova entrata** si trova nel menu principale (oppure `/entrata`) e permette a ogni utente autorizzato di inserire un'entrata senza foto e senza AI. Nell'uso normale salva davvero, senza conferma finale; in modalità prova non salva. Per seguire questa guida controlla prima che il menu mostri **Modalità PROVA**.
 
-1. Apri **⚙️ Amministrazione** e premi **💰 Nuova entrata**.
+1. Dal menu principale premi **💰 Nuova entrata**.
 2. Compila il modulo scrivendo data, descrizione e importo. Il tuo messaggio viene tolto e il modulo si ripresenta aggiornato in fondo, con i pulsanti. La data va scritta come giorno-mese-anno, ad esempio `29-10-2026`, `29/10/26` o `2-3-26`; puoi anche premere **📅 Oggi**.
 3. Se serve, cambia un valore con **📅 Data**, **✏️ Descrizione** o **💶 Importo** nel modulo.
 4. Scegli la cassa. La direzione è già Entrata.

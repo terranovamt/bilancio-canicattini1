@@ -20,6 +20,7 @@ Per provare questi messaggi attiva prima **Modalità PROVA** da Amministrazione 
 
 ```text
 [📷 Nuovo scontrino]
+[💰 Nuova entrata]
 [📊 Riepilogo] [📋 Ultime operazioni]
 [⏳ Operazioni in attesa]
 [❓ Aiuto] [✖️ Annulla operazione]
@@ -38,6 +39,7 @@ La modalità è indicata per tutti. Se l'amministratore ha attivato la prova, l'
 
 ```text
 [📷 Nuovo scontrino]
+[💰 Nuova entrata]
 [📊 Riepilogo] [📋 Ultime operazioni]
 [⏳ Operazioni in attesa]
 [❓ Aiuto] [✖️ Annulla operazione]
@@ -47,7 +49,7 @@ La modalità è indicata per tutti. Se l'amministratore ha attivato la prova, l'
 La schermata Amministrazione contiene:
 
 ```text
-[✍️ Inserisci a mano] [💰 Nuova entrata]
+[✍️ Inserisci a mano]
 [🧪 Attiva modalità prova]
 [🔌 Verifica collegamento]
 [🔄 Aggiorna casse e tipologie]
@@ -67,6 +69,8 @@ In prova il primo pulsante diventa **✅ Torna ai salvataggi reali**. La scelta 
 
 📷 Nuovo scontrino: invia una foto o un PDF, controlla i dati e scegli cassa e tipologia. Se non riesco a leggerlo, ti chiedo i dati a mano.
 
+💰 Nuova entrata: registra un’entrata senza foto.
+
 Dopo la tipologia puoi scrivere un dettaglio o saltarlo: poi registro subito, senza altre conferme. Solo in modalità PROVA non salvo nel portale.
 
 📊 Riepilogo: consulta i saldi delle casse.
@@ -81,7 +85,6 @@ Per l'amministratore si aggiunge:
 ```text
 In ⚙️ Amministrazione trovi:
 ✍️ Inserisci a mano: registra un’entrata o un’uscita senza foto.
-💰 Nuova entrata: registra un’entrata senza foto.
 Dopo la tipologia scrivi un dettaglio o saltalo e registri subito, senza altre conferme.
 🧪 Lì puoi anche attivare o disattivare la modalità prova.
 ```
@@ -323,9 +326,9 @@ I campi vuoti non compaiono. La riga 👥 manca anche quando il portale non offr
 
 ## C. Inserimento manuale
 
-### 13 · Inserimento manuale: Amministrazione → «Inserisci a mano» / «Nuova entrata»
+### 13 · Inserimento manuale: «Nuova entrata» / Amministrazione → «Inserisci a mano»
 
-I due pulsanti sono nella schermata ⚙️ Amministrazione (restano disponibili anche `/manual` ed `/entrata`). Si apre un modulo unico: ogni dato scritto viene tolto dalla chat e il modulo si ripresenta aggiornato in fondo, con i pulsanti sempre visibili.
+**💰 Nuova entrata** è nel menu principale ed è disponibile a tutti gli utenti autorizzati; **✍️ Inserisci a mano** (entrata o uscita) è nella schermata ⚙️ Amministrazione. Restano disponibili anche `/entrata` e, per l'amministratore, `/manual`. Si apre un modulo unico: ogni dato scritto viene tolto dalla chat e il modulo si ripresenta aggiornato in fondo, con i pulsanti sempre visibili.
 
 ```text
 💰 Nuova entrata a mano
@@ -801,7 +804,7 @@ Solo all'amministratore:
 🏷️ Tipologia esempio
 👥 Unità esempio
 
-👉 Controlla nel portale se compare. Se non c'è, riparti da ⚙️ Amministrazione con «Inserisci a mano» o «Nuova entrata».
+👉 Controlla nel portale se compare. Se non c'è, riparti con «Nuova entrata» dal menu principale o con «Inserisci a mano» da ⚙️ Amministrazione.
 ```
 
 In un messaggio separato, solo all'amministratore:

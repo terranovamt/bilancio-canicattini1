@@ -162,7 +162,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.gather(first_task, queued_task)
             second.assert_awaited_once()
 
-    async def test_income_command_collects_all_fields_and_is_admin_menu_only(self) -> None:
+    async def test_income_command_collects_all_fields_and_is_available_to_users(self) -> None:
         workflow = SimpleNamespace(start_manual_expense=AsyncMock())
         context = self.make_context(receipt_workflow=workflow)
         update = SimpleNamespace()
@@ -170,8 +170,9 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         workflow.start_manual_expense.assert_awaited_once_with(
             update, context, collect_data=True
         )
-        self.assertIn("entrata", {command.command for command in ADMIN_COMMANDS})
-        self.assertNotIn("entrata", {command.command for command in USER_COMMANDS})
+        self.assertIn("entrata", {command.command for command in USER_COMMANDS})
+        self.assertNotIn("manual", {command.command for command in USER_COMMANDS})
+        self.assertIn("manual", {command.command for command in ADMIN_COMMANDS})
 
     def make_context(self, **bot_data: object):
         if "database" not in bot_data:
@@ -209,14 +210,15 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         keyboard = message.reply_text.await_args.kwargs["reply_markup"]
         buttons = [button for row in keyboard.inline_keyboard for button in row]
         self.assertNotIn("menu:manual", [button.callback_data for button in buttons])
-        self.assertNotIn("menu:income", [button.callback_data for button in buttons])
+        self.assertIn("menu:income", [button.callback_data for button in buttons])
         self.assertIn("menu:admin", [button.callback_data for button in buttons])
         admin_buttons = [
             button.callback_data
             for row in _admin_keyboard().inline_keyboard
             for button in row
         ]
-        self.assertEqual(admin_buttons[:2], ["menu:manual", "menu:income"])
+        self.assertEqual(admin_buttons[0], "menu:manual")
+        self.assertNotIn("menu:income", admin_buttons)
         self.assertFalse(any("/" in button.text for button in buttons))
         self.assertNotIn("/", text)
         self.assertTrue(
@@ -281,6 +283,9 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         keyboard = message.reply_text.await_args.kwargs["reply_markup"]
         self.assertNotIn(
             "menu:manual", [button.callback_data for row in keyboard.inline_keyboard for button in row]
+        )
+        self.assertIn(
+            "menu:income", [button.callback_data for row in keyboard.inline_keyboard for button in row]
         )
         self.assertNotIn("menu:admin", [
             button.callback_data for row in keyboard.inline_keyboard for button in row

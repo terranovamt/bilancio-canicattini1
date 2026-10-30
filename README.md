@@ -98,7 +98,7 @@ Il bot legge token e ID dal file `.env`; non inviare quel file o le sue credenzi
 
 ### Inserimento manuale e scontrini non leggibili
 
-Per un'entrata senza ricevuta, l'amministratore può aprire **⚙️ Amministrazione** e premere **💰 Nuova entrata** (oppure scrivere `/entrata`):
+Per un'entrata senza ricevuta, qualunque utente autorizzato può premere **💰 Nuova entrata** nel menu principale (oppure scrivere `/entrata`):
 
 1. Compila il modulo: data, descrizione e importo. Ogni volta che scrivi un dato, il tuo messaggio viene tolto e il modulo si aggiorna in fondo alla chat, con i pulsanti sempre visibili.
 2. La data va scritta come **giorno-mese-anno**: valgono `29-10-2026`, `29/10/2026`, `29.10.26` o `2-3-26` (giorno e mese anche con una sola cifra, anno anche con due: `26` diventa `2026`). Puoi anche premere **📅 Oggi**.
@@ -137,7 +137,7 @@ Per usare il bot non occorre ricordare i comandi:
 
 1. Su Telegram premi **Avvia**, oppure invia `/start` una volta. La vecchia tastiera con gli slash viene rimossa.
 2. Scegli un pulsante sotto il messaggio: **📷 Nuovo scontrino**, **📊 Riepilogo**, **📋 Ultime operazioni**, **⏳ Operazioni in attesa** o **❓ Aiuto**.
-3. Se sei amministratore, trovi anche **⚙️ Amministrazione**, che contiene **✍️ Inserisci a mano**, **💰 Nuova entrata** e gli strumenti di gestione. La modalità prova/reale è indicata per tutti; gli inserimenti manuali seguono la stessa modalità degli scontrini.
+3. Se sei amministratore, trovi anche **⚙️ Amministrazione**, che contiene **✍️ Inserisci a mano** (entrate e uscite senza ricevuta) e gli strumenti di gestione. **💰 Nuova entrata** è invece nel menu principale, per tutti gli utenti autorizzati. La modalità prova/reale è indicata per tutti; gli inserimenti manuali seguono la stessa modalità degli scontrini.
 4. Usa **🏠 Menu principale** per tornare alla schermata iniziale. Negli strumenti amministratore trovi anche **⬅️ Indietro**. Il menu non cancella i dati di un inserimento già aperto.
 5. Per interrompere un inserimento premi **Annulla** nel suo messaggio, oppure **✖️ Annulla operazione** nel menu principale.
 

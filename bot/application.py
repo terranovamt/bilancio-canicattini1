@@ -77,10 +77,10 @@ USER_COMMANDS = (
     BotCommand("annulla", texts.COMMAND_CANCEL),
     BotCommand("coda", texts.COMMAND_QUEUE),
     BotCommand("riprova", texts.COMMAND_RETRY),
+    BotCommand("entrata", texts.COMMAND_INCOME),
 )
 ADMIN_COMMANDS = (
     *USER_COMMANDS,
-    BotCommand("entrata", texts.COMMAND_INCOME),
     BotCommand("manual", texts.COMMAND_MANUAL),
     BotCommand("testbilancio", texts.COMMAND_HEALTH),
     BotCommand("aggiornaopzioni", texts.COMMAND_REFRESH),
@@ -303,7 +303,10 @@ def _navigation_keyboard(*, admin: bool = False) -> InlineKeyboardMarkup:
 
 
 def _home_keyboard(admin: bool) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(texts.MENU_RECEIPT_BUTTON, callback_data="menu:receipt")]]
+    rows = [
+        [InlineKeyboardButton(texts.MENU_RECEIPT_BUTTON, callback_data="menu:receipt")],
+        [InlineKeyboardButton(texts.MENU_INCOME_BUTTON, callback_data="menu:income")],
+    ]
     rows.extend([
         [InlineKeyboardButton(texts.MENU_SUMMARY_BUTTON, callback_data="menu:summary"),
          InlineKeyboardButton(texts.MENU_LATEST_BUTTON, callback_data="menu:latest")],
@@ -318,10 +321,7 @@ def _home_keyboard(admin: bool) -> InlineKeyboardMarkup:
 
 def _admin_keyboard(test_mode: bool = False) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(texts.MENU_MANUAL_BUTTON, callback_data="menu:manual"),
-            InlineKeyboardButton(texts.MENU_INCOME_BUTTON, callback_data="menu:income"),
-        ],
+        [InlineKeyboardButton(texts.MENU_MANUAL_BUTTON, callback_data="menu:manual")],
         [InlineKeyboardButton(
             texts.MENU_TEST_OFF_BUTTON if test_mode else texts.MENU_TEST_ON_BUTTON,
             callback_data="menu:test_off" if test_mode else "menu:test_on",
@@ -363,7 +363,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     settings: Settings = context.application.bot_data["settings"]
     admin = _is_admin(update, settings)
     action = str(query.data).removeprefix("menu:")
-    if action in {"admin", "manual", "income", "health", "options", "version", "update", "clean", "test_on", "test_off"} and not admin:
+    if action in {"admin", "manual", "health", "options", "version", "update", "clean", "test_on", "test_off"} and not admin:
         await query.answer(texts.ADMIN_ONLY)
         return
     await query.answer()

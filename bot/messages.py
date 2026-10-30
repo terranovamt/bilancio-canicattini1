@@ -17,6 +17,7 @@ MENU_HELP = (
     "❓ Come funziona\n\n"
     "📷 Nuovo scontrino: invia una foto o un PDF, controlla i dati e scegli "
     "cassa e tipologia. Se non riesco a leggerlo, ti chiedo i dati a mano.\n\n"
+    "💰 Nuova entrata: registra un’entrata senza foto.\n\n"
     "Dopo la tipologia puoi scrivere un dettaglio o saltarlo: poi registro subito, senza altre conferme. "
     "Solo in modalità PROVA non salvo nel portale.\n\n"
     "📊 Riepilogo: consulta i saldi delle casse.\n"
@@ -28,7 +29,6 @@ MENU_HELP = (
 MENU_ADMIN_HELP = (
     "\n\nIn ⚙️ Amministrazione trovi:\n"
     "✍️ Inserisci a mano: registra un’entrata o un’uscita senza foto.\n"
-    "💰 Nuova entrata: registra un’entrata senza foto.\n"
     "Dopo la tipologia scrivi un dettaglio o saltalo e registri subito, senza altre conferme.\n"
     "🧪 Lì puoi anche attivare o disattivare la modalità prova."
 )

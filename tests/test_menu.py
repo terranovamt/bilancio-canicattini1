@@ -79,7 +79,7 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
                 self.portal.create_expense.assert_not_awaited()
 
     async def test_non_admin_cannot_forge_admin_buttons(self) -> None:
-        for action in ("admin", "manual", "income", "health", "options", "version", "update", "clean", "test_on", "test_off"):
+        for action in ("admin", "manual", "health", "options", "version", "update", "clean", "test_on", "test_off"):
             with self.subTest(action=action):
                 update = self.update(action, user_id=67890)
                 await application.menu_callback(update, self.context)
@@ -87,6 +87,15 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
                 update.callback_query.edit_message_text.assert_not_awaited()
                 update.effective_message.reply_text.assert_not_awaited()
         self.assertIsNone(self.database.get_conversation_state(67890))
+        self.portal.create_expense.assert_not_awaited()
+
+    async def test_non_admin_can_open_income_from_main_menu(self) -> None:
+        update = self.update("income", user_id=67890)
+        await application.menu_callback(update, self.context)
+        update.callback_query.answer.assert_awaited_once_with()
+        state, data = self.database.get_conversation_state(67890)
+        self.assertEqual(state, "awaiting_receipt_data")
+        self.assertEqual(self.database.get_expense(data["expense_id"]).payload["direction"], "entrata")
         self.portal.create_expense.assert_not_awaited()
 
     async def test_mode_is_real_by_default_and_persists_until_admin_changes_it(self) -> None:
