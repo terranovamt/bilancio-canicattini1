@@ -1704,7 +1704,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         return workflow, user, query
 
     async def _type_text(self, workflow: ReceiptWorkflow, user, text: str):
-        message = SimpleNamespace(text=text, reply_text=AsyncMock())
+        message = SimpleNamespace(text=text, reply_text=AsyncMock(), reply_photo=AsyncMock(), reply_document=AsyncMock())
         await workflow.handle_text(
             SimpleNamespace(message=message, effective_user=user), SimpleNamespace()
         )
@@ -1734,6 +1734,101 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.database.get_conversation_state(12345)[0], "awaiting_account")
         self.assertEqual(portal.requested_dates, [date(2026, 10, 26)])
         self.assertEqual(portal.submitted, [])
+
+    async def test_original_image_is_sent_with_initial_and_final_summary_only_once_per_stage(self) -> None:
+        portal = FakeBilancioClient()
+        workflow = self._receipt_workflow(portal)
+        message, update, context = self.make_photo_update(b"synthetic original image")
+        await workflow.receive_receipt(update, context)
+        message.reply_photo.assert_awaited_once()
+        upload = message.reply_photo.await_args.args[0]
+        self.assertEqual(upload.input_file_content, b"synthetic original image")
+        self.assertEqual(message.reply_photo.await_args.kwargs["caption"], texts.RECEIPT_PREVIEW_INITIAL)
+        state, data = self.database.get_conversation_state(12345)
+        expense_id = data["expense_id"]
+        payload = self.database.get_expense(expense_id).payload
+        self.assertTrue(payload["receipt_preview_initial_sent"])
+        await workflow._show_initial_confirmation(message, 12345, expense_id, payload)
+        message.reply_photo.assert_awaited_once()
+        for action in ("receipt:confirm", "receipt:choose:0", "receipt:choose:0"):
+            query = await self._tap(workflow, update.effective_user, action)
+        query.message.reply_photo.assert_awaited_once()
+        self.assertEqual(query.message.reply_photo.await_args.kwargs["caption"], texts.RECEIPT_PREVIEW_FINAL)
+        _, data = self.database.get_conversation_state(12345)
+        payload = self.database.get_expense(expense_id).payload
+        self.assertTrue(payload["receipt_preview_final_sent"])
+        await workflow._show_final_summary(12345, payload, data, query)
+        query.message.reply_photo.assert_awaited_once()
+        self.assertEqual(portal.submitted, [])
+
+    async def test_pdf_preview_sends_original_document_and_preserves_summary_buttons(self) -> None:
+        message, update, context = self.make_photo_update(b"synthetic pdf")
+        update.message.photo = []
+        update.message.document = SimpleNamespace(
+            file_id="synthetic-pdf", file_name="receipt.pdf", file_size=13, mime_type="application/pdf"
+        )
+        await self.workflow.receive_receipt(update, context)
+        message.reply_photo.assert_not_awaited()
+        message.reply_document.assert_awaited_once()
+        self.assertEqual(message.reply_document.await_args.args[0].input_file_content, b"synthetic pdf")
+        self.assertEqual(message.reply_document.await_args.args[0].filename, "ricevuta.pdf")
+        self.assertIn("receipt:confirm", self._buttons(message.reply_text.await_args.kwargs["reply_markup"]))
+
+    async def test_preview_telegram_failure_keeps_confirmation_and_allows_retry(self) -> None:
+        message, update, context = self.make_photo_update(b"preview retry")
+        message.reply_photo.side_effect = NetworkError("synthetic failure")
+        await self.workflow.receive_receipt(update, context)
+        self.assertTrue(any(
+            call.args[0] == texts.RECEIPT_PREVIEW_FAILED for call in message.reply_text.await_args_list
+        ))
+        _, state_data = self.database.get_conversation_state(12345)
+        expense_id = state_data["expense_id"]
+        payload = self.database.get_expense(expense_id).payload
+        self.assertNotIn("receipt_preview_initial_sent", payload)
+        self.assertIn(texts.RECEIPT_REVIEW, message.reply_text.await_args.args[0])
+        message.reply_photo.side_effect = None
+        await self.workflow._show_initial_confirmation(message, 12345, expense_id, payload)
+        self.assertTrue(self.database.get_expense(expense_id).payload["receipt_preview_initial_sent"])
+
+    async def test_rejected_photo_falls_back_to_original_document(self) -> None:
+        message, update, context = self.make_photo_update(b"rejected photo")
+        message.reply_photo.side_effect = BadRequest("synthetic rejection")
+        await self.workflow.receive_receipt(update, context)
+        message.reply_document.assert_awaited_once()
+        self.assertEqual(message.reply_document.await_args.args[0].input_file_content, b"rejected photo")
+        self.assertFalse(any(
+            call.args[0] == texts.RECEIPT_PREVIEW_FAILED for call in message.reply_text.await_args_list
+        ))
+
+    async def test_missing_preview_file_warns_without_losing_summary(self) -> None:
+        message, update, context = self.make_photo_update(b"preview missing")
+        await self.workflow.receive_receipt(update, context)
+        _, data = self.database.get_conversation_state(12345)
+        expense_id = data["expense_id"]
+        payload = self.database.get_expense(expense_id).payload
+        payload.pop("receipt_preview_initial_sent")
+        Path(payload["pending_path"]).unlink()
+        message.reply_photo.reset_mock()
+        await self.workflow._show_initial_confirmation(message, 12345, expense_id, payload)
+        message.reply_photo.assert_not_awaited()
+        self.assertIn(texts.RECEIPT_REVIEW, message.reply_text.await_args.args[0])
+        self.assertTrue(any(
+            call.args[0] == texts.RECEIPT_PREVIEW_FAILED for call in message.reply_text.await_args_list
+        ))
+
+    async def test_preview_is_not_sent_for_manual_entry_or_another_user(self) -> None:
+        message, update, context = self.make_photo_update(b"owner image")
+        await self.workflow.receive_receipt(update, context)
+        _, data = self.database.get_conversation_state(12345)
+        expense_id = data["expense_id"]
+        payload = self.database.get_expense(expense_id).payload
+        message.reply_photo.reset_mock()
+        await self.workflow._show_receipt_preview(message, 67890, expense_id, payload, stage="final")
+        await self.workflow._show_receipt_preview(
+            message, 12345, expense_id, {"manual_entry": True}, stage="final"
+        )
+        message.reply_photo.assert_not_awaited()
+        message.reply_document.assert_not_awaited()
 
     async def test_only_missing_ai_fields_are_requested_as_text(self) -> None:
         self.analyzer.receipt = ReceiptData(
@@ -2033,6 +2128,8 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             photo=[SimpleNamespace(file_id="telegram-file-id", file_size=len(file_bytes))],
             document=None,
             reply_text=AsyncMock(),
+            reply_photo=AsyncMock(),
+            reply_document=AsyncMock(),
         )
         update = SimpleNamespace(
             message=message,
@@ -2052,7 +2149,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
 
     @staticmethod
     def make_query(data: str):
-        message = SimpleNamespace(reply_text=AsyncMock())
+        message = SimpleNamespace(reply_text=AsyncMock(), reply_photo=AsyncMock(), reply_document=AsyncMock())
         return SimpleNamespace(
             data=data,
             message=message,

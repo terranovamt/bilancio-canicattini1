@@ -42,6 +42,17 @@ class PendingReceiptStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "empty"):
             self.store.save(b"", "receipt.jpg")
 
+    def test_reads_only_pending_receipts(self) -> None:
+        receipt = self.store.save(b"synthetic receipt", "receipt.jpg")
+        self.assertEqual(self.store.read(receipt.path), b"synthetic receipt")
+        outside = Path(self.temp_dir.name) / "other.jpg"
+        outside.write_bytes(b"not a receipt")
+        with self.assertRaisesRegex(ValueError, "outside"):
+            self.store.read(outside)
+        receipt.path.write_bytes(b"")
+        with self.assertRaisesRegex(ValueError, "empty"):
+            self.store.read(receipt.path)
+
 
 if __name__ == "__main__":
     unittest.main()

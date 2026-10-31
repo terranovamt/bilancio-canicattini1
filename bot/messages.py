@@ -110,6 +110,12 @@ MENU_LATEST_BUTTON = "📋 Ultime operazioni"
 MENU_QUEUE_BUTTON = "⏳ Operazioni in attesa"
 MENU_HELP_BUTTON = "❓ Aiuto"
 MENU_CANCEL_BUTTON = "✖️ Annulla operazione"
+RECEIPT_PREVIEW_INITIAL = "Ricevuta originale: confrontala con i dati del riepilogo prima di confermare."
+RECEIPT_PREVIEW_FINAL = "Ricevuta originale: controlla i dati del riepilogo finale prima di premere «Accetta»."
+RECEIPT_PREVIEW_FAILED = (
+    "⚠️ Non riesco a mostrarti la ricevuta qui. Controlla il file che hai inviato "
+    "prima di confermare i dati; non ho registrato nulla."
+)
 OPERATION_MENU_ACTIVE = "Hai un'operazione in corso: nel menu puoi annullarla."
 OPERATION_MENU_FINISHED = "Operazione conclusa: menu aggiornato."
 OPERATION_MENU_FAILED = "❌ Non riesco a verificare l'operazione in corso per aggiornare il menu."

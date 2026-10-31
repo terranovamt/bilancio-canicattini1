@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from typing import Protocol, runtime_checkable
 import uuid
 
-from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
+from telegram import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Message, Update
 from telegram.error import BadRequest, NetworkError, TelegramError
 from telegram.ext import ContextTypes
 
@@ -1158,6 +1158,7 @@ class ReceiptWorkflow:
         payload: dict[str, object],
     ) -> None:
         """Show all operation data once: confirm, or correct one field and come back."""
+        await self._show_receipt_preview(target, user_id, expense_id, payload, stage="initial")
         text, keyboard = self._initial_confirmation(user_id, payload)
         data: dict[str, object] = {"expense_id": expense_id}
         if not isinstance(target, Message) and not hasattr(target, "reply_text"):
@@ -1172,6 +1173,53 @@ class ReceiptWorkflow:
                 data, getattr(sent, "chat_id", None), getattr(sent, "message_id", None)
             ),
         )
+
+    async def _show_receipt_preview(
+        self, target: CallbackQuery | Message, user_id: int, expense_id: str,
+        payload: dict[str, object], *, stage: str,
+    ) -> None:
+        pending_path = payload.get("pending_path")
+        marker = f"receipt_preview_{stage}_sent"
+        if not isinstance(pending_path, str) or not pending_path or payload.get(marker) is True:
+            return
+        message = target if isinstance(target, Message) or hasattr(target, "reply_text") else target.message
+        if message is None:
+            logger.warning("Receipt preview has no message target")
+            return
+        expense = await asyncio.to_thread(self._database.get_expense, expense_id)
+        if user_id not in self._settings.allowed_user_ids or expense is None or expense.telegram_user_id != user_id:
+            logger.warning("Receipt preview access rejected")
+            return
+        try:
+            content = await asyncio.to_thread(self._pending_store.read, pending_path)
+            extension = Path(pending_path).suffix.lower()
+            caption = texts.RECEIPT_PREVIEW_FINAL if stage == "final" else texts.RECEIPT_PREVIEW_INITIAL
+            if extension == ".pdf":
+                await message.reply_document(
+                    InputFile(content, filename="ricevuta.pdf"),
+                    caption=caption, connect_timeout=30, read_timeout=60,
+                )
+            else:
+                try:
+                    await message.reply_photo(
+                        InputFile(content, filename=f"ricevuta{extension}"),
+                        caption=caption, connect_timeout=30, read_timeout=60,
+                    )
+                except BadRequest as error:
+                    logger.warning("Receipt preview photo rejected: %s", type(error).__name__)
+                    await message.reply_document(
+                        InputFile(content, filename=f"ricevuta{extension}"),
+                        caption=caption, connect_timeout=30, read_timeout=60,
+                    )
+        except (OSError, ValueError, TelegramError) as error:
+            logger.warning("Receipt preview delivery failed: %s", type(error).__name__)
+            try:
+                await message.reply_text(texts.RECEIPT_PREVIEW_FAILED)
+            except TelegramError as notification_error:
+                logger.warning("Receipt preview failure notice failed: %s", type(notification_error).__name__)
+            return
+        payload[marker] = True
+        await asyncio.to_thread(self._database.update_expense_payload, expense_id, payload)
 
     @staticmethod
     async def _selection_reply(
@@ -1978,6 +2026,7 @@ class ReceiptWorkflow:
         notes = data.get("portal_notes")
         data["portal_notes"] = notes if isinstance(notes, str) and notes.strip() else None
         expense_id = str(data["expense_id"])
+        await self._show_receipt_preview(target, user_id, expense_id, payload, stage="final")
         text = prefix + self._final_summary_text(user_id, payload, data)
         keyboard = self._final_summary_keyboard()
         await self._save_state(user_id, "awaiting_final_confirmation", data)

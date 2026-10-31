@@ -60,3 +60,17 @@ class PendingReceiptStore:
             return False
         candidate.unlink()
         return True
+
+    def read(self, path: str | Path) -> bytes:
+        candidate = Path(path).resolve()
+        try:
+            candidate.relative_to(self._directory.resolve())
+        except ValueError as error:
+            raise ValueError("Pending receipt path is outside the pending directory") from error
+        if candidate.suffix.lower() not in _ALLOWED_EXTENSIONS:
+            raise ValueError("Unsupported receipt file type")
+        with candidate.open("rb") as receipt_file:
+            content = receipt_file.read(MAX_PENDING_RECEIPT_BYTES + 1)
+        if not content or len(content) > MAX_PENDING_RECEIPT_BYTES:
+            raise ValueError("Receipt file is empty or exceeds the supported size limit")
+        return content

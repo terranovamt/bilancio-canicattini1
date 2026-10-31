@@ -105,6 +105,19 @@ Il ritorno **Menu principale** è nella tastiera amministratore, non nei messagg
 
 ## B. Inserimento da scontrino
 
+Ai riepiloghi iniziale e finale il bot invia anche l'originale, come messaggio separato nella stessa chat. La foto accompagna i dati; per i PDF si apre il documento allegato. I pulsanti rimangono nel riepilogo testuale. Non viene reinviato ad ogni correzione dello stesso riepilogo e gli inserimenti senza file non hanno allegati.
+
+```text
+[Foto originale oppure PDF allegato]
+Ricevuta originale: confrontala con i dati del riepilogo prima di confermare.
+```
+
+Al riepilogo finale la didascalia diventa `Ricevuta originale: controlla i dati del riepilogo finale prima di premere «Accetta».` Se l'allegato non arriva:
+
+```text
+⚠️ Non riesco a mostrarti la ricevuta qui. Controlla il file che hai inviato prima di confermare i dati; non ho registrato nulla.
+```
+
 ### 4 · Ricezione
 
 ```text
