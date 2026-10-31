@@ -14,7 +14,6 @@ from PIL import Image, UnidentifiedImageError
 
 from vision.preprocess import preprocess_receipt
 from vision.receipt_schema import (
-    ReceiptAnalysis,
     ReceiptData,
     ReceiptParseError,
     parse_analysis_json,
@@ -36,6 +35,16 @@ Never guess values.
 """.strip()
 
 _DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+_RESPONSE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "date": {"type": "STRING", "nullable": True, "description": "YYYY-MM-DD"},
+        "merchant": {"type": "STRING", "nullable": True},
+        "total_amount": {"type": "NUMBER", "nullable": True},
+        "confidence": {"type": "NUMBER"},
+    },
+    "required": ["date", "merchant", "total_amount", "confidence"],
+}
 
 
 class AnalysisPhase(str, Enum):
@@ -52,6 +61,9 @@ class AnalysisProgress:
 
 
 class VisionFailureCode(str, Enum):
+    INVALID_REQUEST = "invalid_request"
+    AUTHENTICATION = "authentication"
+    QUOTA = "quota"
     TIMEOUT = "timeout"
     CONNECTION = "connection"
     MODEL_NOT_FOUND = "model_not_found"
@@ -98,7 +110,11 @@ def _error_code(response: httpx.Response) -> VisionFailureCode:
     if response.status_code == 404:
         return VisionFailureCode.MODEL_NOT_FOUND
     if response.status_code == 400:
-        return VisionFailureCode.UNSUPPORTED_MODEL
+        return VisionFailureCode.INVALID_REQUEST
+    if response.status_code in {401, 403}:
+        return VisionFailureCode.AUTHENTICATION
+    if response.status_code == 429:
+        return VisionFailureCode.QUOTA
     try:
         body = response.json()
     except json.JSONDecodeError:
@@ -264,7 +280,7 @@ class GeminiReceiptAnalyzer:
             "generationConfig": {
                 "temperature": 0,
                 "responseMimeType": "application/json",
-                "responseSchema": ReceiptAnalysis.model_json_schema(),
+                "responseSchema": _RESPONSE_SCHEMA,
             },
         }
         try:
@@ -274,7 +290,7 @@ class GeminiReceiptAnalyzer:
             ) as client:
                 response = await client.post(
                     self._url,
-                    params={"key": self._api_key},
+                    headers={"x-goog-api-key": self._api_key},
                     json=payload,
                 )
         except httpx.TimeoutException as error:

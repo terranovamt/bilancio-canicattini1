@@ -406,6 +406,9 @@ ANALYSIS_FAILED = (
 )
 ADMIN_ANALYSIS_FAILED = "L'analisi OCR+Gemini di una ricevuta non è riuscita."
 AI_FAILURE_REASONS = {
+    "invalid_request": "Gemini ha rifiutato la richiesta (HTTP 400): può dipendere dal formato o dai parametri. Non dimostra che il modello sia incompatibile.",
+    "authentication": "Gemini ha rifiutato l'accesso: verifica privatamente chiave API e autorizzazioni del progetto.",
+    "quota": "Gemini ha segnalato un limite di richieste o quota. Verifica i limiti del progetto e riprova più tardi.",
     "timeout": "Gemini non ha risposto entro il tempo configurato.",
     "connection": "Il bot non riesce a comunicare con Gemini. Verifica la connessione Internet del NAS.",
     "model_not_found": "Gemini non trova il modello richiesto. Controlla GEMINI_MODEL.",

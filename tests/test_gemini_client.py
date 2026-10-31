@@ -13,6 +13,28 @@ from vision.gemini_client import (
 
 
 class GeminiReceiptAnalyzerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_request_uses_gemini_schema_and_keeps_key_out_of_url(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertNotIn("key", request.url.params)
+            self.assertEqual(request.headers["x-goog-api-key"], "synthetic-key")
+            schema = json.loads(request.content)["generationConfig"]["responseSchema"]
+            self.assertEqual(schema["type"], "OBJECT")
+            self.assertEqual(schema["properties"]["total_amount"]["type"], "NUMBER")
+            self.assertTrue(schema["properties"]["date"]["nullable"])
+            self.assertNotIn("anyOf", json.dumps(schema))
+            return httpx.Response(200, json={
+                "candidates": [{"content": {"parts": [{"text":
+                    '{"date":null,"merchant":null,"total_amount":null,"confidence":0}'
+                }]}, "finishReason": "STOP"}],
+            })
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with patch("vision.gemini_client.httpx.AsyncClient", return_value=client):
+            text = await GeminiReceiptAnalyzer(
+                api_key="synthetic-key", model="test-model"
+            )._call_gemini([b"synthetic"], "")
+        self.assertIn("confidence", text)
+
     async def test_parses_json_response(self) -> None:
         payload = {
             "candidates": [
@@ -83,7 +105,9 @@ class GeminiReceiptAnalyzerTests(unittest.IsolatedAsyncioTestCase):
     async def test_maps_http_error_codes(self) -> None:
         for status, expected in (
             (404, VisionFailureCode.MODEL_NOT_FOUND),
-            (400, VisionFailureCode.UNSUPPORTED_MODEL),
+            (400, VisionFailureCode.INVALID_REQUEST),
+            (403, VisionFailureCode.AUTHENTICATION),
+            (429, VisionFailureCode.QUOTA),
             (500, VisionFailureCode.SERVICE_ERROR),
         ):
             with self.subTest(status=status):

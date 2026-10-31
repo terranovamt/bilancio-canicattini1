@@ -25,6 +25,8 @@ Creare un bot Telegram privato per un piccolo gruppo. Il bot riceve foto o PDF d
 
 ## Decisioni concordate
 
+- Il 31 ottobre 2026 segnalato HTTP 400 Gemini: corretta la diagnosi che classificava indiscriminatamente ogni 400 come unsupported_model. Ora invalid_request, accesso 401/403 e quota 429 distinti. Per responseSchema usato schema Gemini esplicito con nullable e totale numerico, senza inviare il JSON Schema Pydantic con anyOf/varianti Decimal. Chiave nel solo header, non URL. Nessun modello privato cambiato; causa esatta della risposta sul NAS non ancora verificata e nessuna chiamata reale eseguita per questa modifica.
+
 - Il 31 ottobre 2026 richiesta evitare link automatici Telegram nei nomi Co.ca: sola presentazione testuale dei conti come Co. ca in riepiloghi, resoconti giornalieri, esiti, storico e aggiornamento opzioni. Nomi originali nelle opzioni, nel portale, archivio e database invariati.
 
 - Il 31 ottobre 2026 richiesta visibilità modalità: nessuna etichetta «Modalità REALE» nei menu o inserimenti; etichetta «Modalità PROVA» soltanto all'amministratore quando attiva. Invariati i salvataggi, la modalità persistente e gli esiti espliciti di simulazione per tutti. Il riepilogo admin include le somme di saldo iniziale, entrate, uscite e saldo finale di tutte le casse/conti, sia live sia da snapshot datato; agli altri utenti resta il dettaglio per cassa senza sezione totale. Nessuna modifica alla fonte dei dati.
