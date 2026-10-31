@@ -13,7 +13,7 @@ MAX_PDF_PAGES = 10
 MAX_IMAGE_DIMENSION = 2400
 MAX_IMAGE_PIXELS = 50_000_000
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
-_MIN_RECEIPT_AREA_RATIO = 0.2
+_MIN_RECEIPT_AREA_RATIO = 0.05
 
 
 class ImagePreprocessingError(ValueError):
@@ -125,7 +125,7 @@ def _crop_and_rectify_receipt(image: np.ndarray) -> np.ndarray:
             break
         perimeter = cv2.arcLength(contour, True)
         polygon = cv2.approxPolyDP(contour, 0.02 * perimeter, True)
-        if len(polygon) == 4:
+        if len(polygon) == 4 and cv2.isContourConvex(polygon):
             return _perspective_transform(image, polygon.reshape(4, 2))
     return image
 
@@ -163,14 +163,12 @@ def _perspective_transform(image: np.ndarray, points: np.ndarray) -> np.ndarray:
 
 
 def _order_points(points: np.ndarray) -> np.ndarray:
-    ordered = np.zeros((4, 2), dtype="float32")
-    sums = points.sum(axis=1)
-    differences = np.diff(points, axis=1).reshape(-1)
-    ordered[0] = points[np.argmin(sums)]
-    ordered[2] = points[np.argmax(sums)]
-    ordered[1] = points[np.argmin(differences)]
-    ordered[3] = points[np.argmax(differences)]
-    return ordered
+    # Angular ordering avoids assigning the same corner twice at 45 degrees.
+    center = points.mean(axis=0)
+    angles = np.arctan2(points[:, 1] - center[1], points[:, 0] - center[0])
+    ordered = points[np.argsort(angles)]
+    start = int(np.argmin(ordered.sum(axis=1)))
+    return np.roll(ordered, -start, axis=0).astype("float32")
 
 
 def _enhance_contrast(image: np.ndarray) -> np.ndarray:

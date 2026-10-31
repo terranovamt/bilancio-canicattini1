@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import shutil
 import unicodedata
@@ -8,6 +9,12 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+
+import cv2
+
+from vision.preprocess import ImagePreprocessingError, preprocess_receipt
+
+logger = logging.getLogger(__name__)
 
 _ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".pdf"}
 _CHUNK_SIZE = 1024 * 1024
@@ -17,6 +24,8 @@ _CHUNK_SIZE = 1024 * 1024
 class ArchivedReceipt:
     path: Path
     sha256: str
+    corrected_paths: tuple[Path, ...] = ()
+    correction_failed: bool = False
 
 
 def build_receipt_filename(
@@ -57,6 +66,7 @@ class FileArchive:
         merchant: str,
         account: str,
         amount: Decimal,
+        save_corrected: bool = False,
     ) -> ArchivedReceipt:
         source = Path(source_path)
         if not source.is_file():
@@ -93,9 +103,39 @@ class FileArchive:
                 if created:
                     destination.unlink(missing_ok=True)
                 raise
-            return ArchivedReceipt(path=destination, sha256=sha256)
+            corrected_paths: tuple[Path, ...] = ()
+            correction_failed = False
+            if save_corrected:
+                try:
+                    corrected_paths = self._save_corrected(destination)
+                except (ImagePreprocessingError, OSError, cv2.error) as error:
+                    logger.warning("Could not archive corrected receipt: %s", type(error).__name__)
+                    correction_failed = True
+            return ArchivedReceipt(
+                path=destination, sha256=sha256,
+                corrected_paths=corrected_paths, correction_failed=correction_failed,
+            )
 
         raise FileExistsError("Could not find an unused receipt filename")
+
+    @staticmethod
+    def _save_corrected(original: Path) -> tuple[Path, ...]:
+        images = preprocess_receipt(original.read_bytes(), original.name)
+        directory = original.parent / "corrette"
+        directory.mkdir(parents=True, exist_ok=True)
+        created: list[Path] = []
+        try:
+            for index, image in enumerate(images, start=1):
+                # Include the original extension to distinguish a PDF from a same-name photo.
+                destination = directory / f"{original.name}_pagina_{index:02d}.png"
+                with destination.open("xb") as target:
+                    created.append(destination)
+                    target.write(image)
+        except OSError:
+            for path in created:
+                path.unlink(missing_ok=True)
+            raise
+        return tuple(created)
 
 
 def calculate_file_hash(path: str | Path) -> str:

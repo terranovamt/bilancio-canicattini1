@@ -113,6 +113,11 @@ def make_settings() -> Settings:
 
 class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
+        preprocessing = patch(
+            "storage.archive.preprocess_receipt", return_value=[b"synthetic corrected image"]
+        )
+        preprocessing.start()
+        self.addCleanup(preprocessing.stop)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.root = Path(self.temp_dir.name)
         self.database = Database(self.root / "bot.sqlite3")

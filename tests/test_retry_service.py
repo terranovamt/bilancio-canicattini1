@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock
+from PIL import Image
 
 from bilancio.client import (
     BilancioClientError,
@@ -50,13 +51,32 @@ def make_settings() -> Settings:
 
 
 class ExpenseRetryServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_corrected_copy_failure_notifies_admin_but_preserves_original(self) -> None:
+        self.source.write_bytes(b"invalid synthetic image")
+        self.create_queued_expense()
+        portal = FakeRetryPortal()
+        bot = FakeBot()
+        service = ExpenseRetryService(
+            settings=make_settings(), database=self.database, bilancio_client=portal,
+            archive=FileArchive(self.root / "archive"),
+            pending_store=PendingReceiptStore(self.root / "pending"),
+        )
+        with self.assertLogs("storage.archive", level="WARNING"):
+            await service.process_due(bot)
+        self.assertIn("copia corretta", bot.messages[0][1])
+        self.assertEqual(bot.messages[0][0], make_settings().admin_user_id)
+        stored = self.database.get_expense("expense-1")
+        self.assertEqual(Path(stored.archive_path).read_bytes(), b"invalid synthetic image")
+        self.assertEqual(len(portal.received_expenses), 1)
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.root = Path(self.temp_dir.name)
         self.database = Database(self.root / "bot.sqlite3")
         self.database.initialize()
         self.source = self.root / "pending.jpg"
-        self.source.write_bytes(b"receipt")
+        with Image.new("RGB", (100, 200), "white") as image:
+            image.save(self.source, format="JPEG")
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -81,6 +101,8 @@ class ExpenseRetryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored.status, "dry_run")
         self.assertIsNotNone(stored.archive_path)
         self.assertTrue(Path(stored.archive_path).is_file())
+        copies = list((Path(stored.archive_path).parent / "corrette").glob("*.png"))
+        self.assertEqual(len(copies), 1)
         self.assertEqual(portal.received_expenses[0][0].direction, TransactionDirection.EXPENSE)
         self.assertTrue(portal.received_expenses[0][1])
         self.assertEqual(bot.messages[0][0], 12345)

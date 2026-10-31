@@ -10,10 +10,63 @@ from vision.preprocess import (
     ImagePreprocessingError,
     preprocess_image,
     preprocess_receipt,
+    _order_points,
 )
 
 
 class ImagePreprocessingTests(unittest.TestCase):
+    def test_crops_small_rotated_receipt_with_background(self) -> None:
+        image = np.full((1000, 1200, 3), 45, dtype=np.uint8)
+        corners = cv2.boxPoints(((600, 500), (190, 570), 28)).astype(np.int32)
+        cv2.fillConvexPoly(image, corners, (245, 245, 245))
+        processed = preprocess_image(self.encode_image(image))
+        decoded = cv2.imdecode(np.frombuffer(processed, dtype=np.uint8), cv2.IMREAD_COLOR)
+        self.assertLess(decoded.shape[0] * decoded.shape[1], 150_000)
+        self.assertGreater(decoded.mean(), 210)
+        self.assertAlmostEqual(
+            min(decoded.shape[:2]) / max(decoded.shape[:2]), 190 / 570, delta=0.06
+        )
+
+    def test_orders_diamond_corners_without_duplicate_points(self) -> None:
+        points = np.array([[100, 0], [200, 100], [100, 200], [0, 100]], dtype=np.float32)
+        for order in ([0, 1, 2, 3], [3, 1, 0, 2]):
+            ordered = _order_points(points[order])
+            self.assertEqual(len(np.unique(ordered, axis=0)), 4)
+            edges = np.roll(ordered, -1, axis=0) - ordered
+            self.assertTrue(np.all(np.linalg.norm(edges, axis=1) > 100))
+
+    def test_keeps_whole_image_when_no_receipt_boundary_is_visible(self) -> None:
+        image = np.full((400, 600, 3), 180, dtype=np.uint8)
+        decoded = cv2.imdecode(
+            np.frombuffer(preprocess_image(self.encode_image(image)), dtype=np.uint8),
+            cv2.IMREAD_COLOR,
+        )
+        self.assertEqual(decoded.shape, image.shape)
+
+    def test_rectification_keeps_print_near_all_four_corners(self) -> None:
+        receipt = np.full((500, 220, 3), 245, dtype=np.uint8)
+        for position in ((12, 12), (188, 12), (12, 468), (188, 468)):
+            x, y = position
+            cv2.rectangle(receipt, (x, y), (x + 18, y + 18), (0, 0, 0), -1)
+        source = np.array([[0, 0], [219, 0], [219, 499], [0, 499]], dtype=np.float32)
+        target = np.array([[370, 110], [600, 180], [485, 705], [245, 620]], dtype=np.float32)
+        warped = cv2.warpPerspective(
+            receipt, cv2.getPerspectiveTransform(source, target),
+            (900, 850), borderValue=(35, 35, 35),
+        )
+        decoded = cv2.imdecode(
+            np.frombuffer(preprocess_image(self.encode_image(warped)), dtype=np.uint8),
+            cv2.IMREAD_GRAYSCALE,
+        )
+        height, width = decoded.shape
+        for quadrant in (
+            decoded[:height // 2, :width // 2], decoded[:height // 2, width // 2:],
+            decoded[height // 2:, :width // 2], decoded[height // 2:, width // 2:],
+        ):
+            self.assertGreater(np.count_nonzero(quadrant < 60), 100)
+        self.assertLess(width, 300)
+        self.assertLess(height, 650)
+
     @staticmethod
     def encode_image(image: np.ndarray, extension: str = ".png") -> bytes:
         success, encoded = cv2.imencode(extension, image)

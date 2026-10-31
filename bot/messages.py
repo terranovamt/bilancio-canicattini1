@@ -194,6 +194,10 @@ STATUS_REVIEW = "⚠️ da controllare"
 STATUS_WORKING = "⏳ in corso"
 
 RECEIPT_PROGRESS = "📷 Ricevuto! Lo leggo subito…"
+CORRECTED_COPY_FAILED = (
+    "⚠️ Ho conservato la ricevuta originale, ma non sono riuscito a salvare "
+    "la copia corretta. L'operazione prosegue con l'originale."
+)
 ANALYSIS_WAITING = (
     "⏳ Sto ancora analizzando la ricevuta ({seconds} secondi). "
     "Non ho ancora ricevuto dati: la preparazione può richiedere tempo. "

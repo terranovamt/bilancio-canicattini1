@@ -14,6 +14,10 @@ La modalità scelta dall'amministratore vale per tutti i nuovi inserimenti, fino
 
 L'analisi delle ricevute usa OCR locale e Gemini. Se l'analisi non riesce, il bot mantiene il file temporaneo e chiede i campi manualmente.
 
+Prima di OCR e Gemini, il bot corregge l'orientamento della foto, cerca il bordo dello scontrino, ritaglia lo sfondo e corregge la prospettiva, poi migliora il contrasto. Riconosce anche documenti più piccoli nell'inquadratura (almeno circa il 5% della foto) e gestisce gli angoli diagonali senza deformazioni dovute a punti duplicati. Se non trova un bordo adatto conserva l'inquadratura intera. È una correzione automatica, non una garanzia: altri oggetti rettangolari possono essere confusi con il documento, e testo sfocato, coperto o fuori dalla foto non viene recuperato. Fotografa un solo scontrino, intero e ben illuminato, su uno sfondo uniforme. Nell'archivio resta il file originale; solo la copia per l'analisi viene corretta.
+
+Per ora vengono conservate **entrambe le versioni**, quando la ricevuta viene archiviata al salvataggio: l'originale resta il documento principale in `scontrini/AAAA/MM/`, mentre le copie corrette PNG sono nella sottocartella `corrette`, con il nome dell'originale seguito da `_pagina_01.png`. Per i PDF c'è un PNG per pagina. La correzione viene rigenerata localmente con la stessa preparazione usata dall'analisi, anche nei ritentativi, senza altre richieste a Gemini. Non è ancora presente una scelta per conservare soltanto una versione. Se la preparazione o la scrittura delle copie fallisce, l'originale resta conservato e l'amministratore riceve un avviso; l'operazione prosegue. Le copie occupano spazio aggiuntivo. Annullare prima dell'archiviazione non crea copie permanenti.
+
 ## Componenti
 
 - `bot/`: comandi Telegram, accesso autorizzato, inserimenti e ritentativi. I testi e le etichette sono centralizzati in [`bot/messages.py`](bot/messages.py); gli esempi sono nel [catalogo dei messaggi](docs/PREVIEW_MESSAGGI_TELEGRAM.md).

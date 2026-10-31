@@ -132,7 +132,10 @@ class ExpenseRetryService:
                     merchant=portal_expense.description,
                     account=portal_expense.account.label,
                     amount=portal_expense.amount,
+                    save_corrected=True,
                 )
+                if archived.correction_failed:
+                    await self._notify_admin(bot, texts.CORRECTED_COPY_FAILED)
                 await asyncio.to_thread(
                     self._database.update_expense_status,
                     entry.expense_id,

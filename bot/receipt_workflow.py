@@ -1435,7 +1435,10 @@ class ReceiptWorkflow:
                     merchant=receipt.merchant,
                     account=account.label,
                     amount=receipt.total_amount,
+                    save_corrected=True,
                 )
+                if archived.correction_failed:
+                    await self._notify_admin(context, texts.CORRECTED_COPY_FAILED)
                 await asyncio.to_thread(
                     self._database.update_expense_status,
                     expense_id,
