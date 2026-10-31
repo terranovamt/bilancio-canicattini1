@@ -6,7 +6,7 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Protocol, runtime_checkable
 import uuid
 
@@ -258,6 +258,8 @@ class ReceiptWorkflow:
         self,
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
+        *,
+        on_pending: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         message = update.message
         user = update.effective_user
@@ -345,6 +347,8 @@ class ReceiptWorkflow:
         await self._save_state(
             user.id, "awaiting_receipt_data", {"expense_id": pending.receipt_id}
         )
+        if on_pending is not None:
+            await on_pending()
         try:
             if self._analyzer is None:
                 raise LocalVisionError(

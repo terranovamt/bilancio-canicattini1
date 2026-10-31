@@ -11,6 +11,7 @@ from telegram.ext import ApplicationHandlerStop
 
 from bot.application import (
     ADMIN_COMMANDS,
+    api_status_command,
     ADMIN_HELP_TEXT,
     USER_COMMANDS,
     USER_HELP_TEXT,
@@ -131,7 +132,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(entered.wait(), timeout=1)
             queued_task = asyncio.create_task(processor.process_update(object(), second()))
             try:
-                for command in ("/start", "/help", "/start@example_bot"):
+                for command in ("/start", "/help", "/start@example_bot", "/apistatus"):
                     update = Update.de_json(
                         {
                             "update_id": 1,
@@ -156,6 +157,8 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
                         await authorize_update(update, context)
                         if command == "/help":
                             await help_command(update, context)
+                        elif command == "/apistatus":
+                            await api_status_command(update, context)
                         else:
                             await start_command(update, context)
 
@@ -277,6 +280,13 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         from telegram.ext import MessageHandler
 
         application = create_application(make_settings(), Mock())
+        from telegram.ext import CommandHandler
+        api_handlers = [
+            handler for handler in application.handlers[0]
+            if isinstance(handler, CommandHandler) and "apistatus" in handler.commands
+        ]
+        self.assertEqual(len(api_handlers), 1)
+        self.assertIs(api_handlers[0].callback, api_status_command)
         handlers = [
             handler for handler in application.handlers[0]
             if isinstance(handler, MessageHandler) and handler.callback is unsupported_message
@@ -698,7 +708,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
             message=message,
             effective_user=SimpleNamespace(id=12345),
         )
-        context = self.make_context(receipt_workflow=workflow)
+        context = self.make_context(receipt_workflow=workflow, settings=make_settings())
 
         await cancel_command(update, context)
 

@@ -17,6 +17,18 @@ class QuotaReservation:
     known_retry: bool = True
 
 
+@dataclass(frozen=True)
+class ModelQuotaStatus:
+    model: str
+    minute_requests: int
+    daily_requests: int
+    rpm_limit: int
+    rpd_limit: int
+    local_retry_at: float | None
+    remote_until_at: float | None
+    remote_retry_known: bool
+
+
 def day_window(now: float) -> tuple[float, float]:
     zone = ZoneInfo("America/Los_Angeles")
     day = datetime.fromtimestamp(now, zone).date()
@@ -42,6 +54,42 @@ class GeminiQuotaStore:
                     model TEXT PRIMARY KEY, until_at REAL NOT NULL, known_retry INTEGER NOT NULL
                 );
             """)
+
+    def status(
+        self, models: tuple[str, ...], rpm_limits: tuple[int, ...],
+        rpd_limits: tuple[int, ...], now: float,
+    ) -> tuple[ModelQuotaStatus, ...]:
+        start, end = day_window(now)
+        results: list[ModelQuotaStatus] = []
+        with closing(sqlite3.connect(self._path, timeout=10)) as connection, connection:
+            connection.execute("BEGIN")
+            for model, rpm, rpd in zip(models, rpm_limits, rpd_limits, strict=True):
+                daily, minute = connection.execute(
+                    """SELECT COUNT(CASE WHEN requested_at >= ? THEN 1 END),
+                              COUNT(CASE WHEN requested_at > ? THEN 1 END)
+                       FROM gemini_requests WHERE model = ? AND requested_at <= ?""",
+                    (start, now - 60, model, now),
+                ).fetchone()
+                waits: list[float] = []
+                if daily >= rpd:
+                    waits.append(end)
+                if minute >= rpm:
+                    expires = connection.execute(
+                        """SELECT requested_at FROM gemini_requests
+                           WHERE model = ? AND requested_at > ? AND requested_at <= ?
+                           ORDER BY requested_at LIMIT 1 OFFSET ?""",
+                        (model, now - 60, now, minute - rpm),
+                    ).fetchone()[0]
+                    waits.append(expires + 60)
+                cooldown = connection.execute(
+                    "SELECT until_at, known_retry FROM gemini_cooldowns WHERE model = ? AND until_at > ?",
+                    (model, now),
+                ).fetchone()
+                results.append(ModelQuotaStatus(
+                    model, minute, daily, rpm, rpd, max(waits) if waits else None,
+                    cooldown[0] if cooldown else None, bool(cooldown[1]) if cooldown else False,
+                ))
+        return tuple(results)
 
     def reserve(self, model: str, rpm: int, rpd: int, warn_percent: int, now: float) -> QuotaReservation:
         start, end = day_window(now)

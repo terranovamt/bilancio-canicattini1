@@ -239,6 +239,39 @@ class GeminiQuotaTests(unittest.TestCase):
         self.assertIn("limite configurato del bot", local)
         self.assertIn("13:01:00", local)
 
+    def test_status_reads_counts_without_reserving_or_resetting_and_survives_restart(self) -> None:
+        self.store.reserve("a", 5, 10, 80, self.now - 61)
+        self.store.reserve("a", 5, 10, 80, self.now - 30)
+        self.store.reserve("a", 5, 10, 80, self.now)
+        reopened = GeminiQuotaStore(self.path)
+        for _ in range(2):
+            status, unused = reopened.status(("a", "b"), (5, 1), (10, 1), self.now)
+            self.assertEqual((status.minute_requests, status.daily_requests), (2, 3))
+            self.assertEqual((unused.minute_requests, unused.daily_requests), (0, 0))
+            self.assertIsNone(status.local_retry_at)
+        expired = reopened.status(("a",), (5,), (10,), self.now + 60)[0]
+        self.assertEqual(expired.minute_requests, 0)
+        self.assertEqual(expired.daily_requests, 3)
+        reset = reopened.status(("a",), (5,), (10,), day_window(self.now)[1])[0]
+        self.assertEqual(reset.daily_requests, 0)
+
+    def test_status_reports_local_wait_after_lowered_limit_and_remote_cooldowns(self) -> None:
+        for delta in (-40, -20, 0):
+            self.store.reserve("a", 10, 100, 80, self.now + delta)
+        self.store.record_cooldown("a", self.now, self.now + 90)
+        self.store.record_cooldown("b", self.now, None)
+        a, b = self.store.status(("a", "b"), (1, 1), (100, 1), self.now)
+        self.assertEqual(a.local_retry_at, self.now + 60)
+        self.assertEqual(a.remote_until_at, self.now + 90)
+        self.assertTrue(a.remote_retry_known)
+        self.assertFalse(b.remote_retry_known)
+        self.assertEqual(b.remote_until_at, day_window(self.now)[1])
+        after = self.store.status(("a",), (1,), (100,), self.now + 90)[0]
+        self.assertIsNone(after.remote_until_at)
+        self.assertIsNone(after.local_retry_at)
+        daily = self.store.status(("a",), (100,), (1,), self.now)[0]
+        self.assertEqual(daily.local_retry_at, day_window(self.now)[1])
+
 
 class GeminiChainConfigTests(unittest.TestCase):
     def setUp(self) -> None:

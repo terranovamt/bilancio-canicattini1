@@ -6,7 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime, timezone
+from dataclasses import replace
 
 from telegram import Bot, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 
@@ -14,8 +15,10 @@ from bot import application, messages
 from bot.receipt_workflow import ReceiptWorkflow
 from config import Settings
 from db.database import Database
+from db.gemini_quota import GeminiQuotaStore, day_window
 from storage.archive import FileArchive
 from storage.pending import PendingReceiptStore
+from vision.receipt_schema import ReceiptData
 
 
 class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
@@ -100,7 +103,7 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
                 self.portal.create_expense.assert_not_awaited()
 
     async def test_non_admin_cannot_forge_admin_buttons(self) -> None:
-        for action in ("admin", "manual", "health", "options", "version", "update", "clean", "test_on", "test_off"):
+        for action in ("admin", "manual", "health", "options", "version", "update", "clean", "test_on", "test_off", "apistatus"):
             with self.subTest(action=action):
                 update = self.update(action, user_id=67890)
                 await application.menu_callback(update, self.context)
@@ -108,6 +111,102 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
                 update.callback_query.edit_message_text.assert_not_awaited()
                 update.effective_message.reply_text.assert_not_awaited()
         self.assertIsNone(self.database.get_conversation_state(67890))
+        self.portal.create_expense.assert_not_awaited()
+
+    async def test_api_status_command_and_button_are_admin_only_and_ignore_unknown_users(self) -> None:
+        self.assertIn("apistatus", {command.command for command in application.ADMIN_COMMANDS})
+        self.assertNotIn("apistatus", {command.command for command in application.USER_COMMANDS})
+        labels = [b.text for row in application._admin_keyboard().keyboard for b in row]
+        self.assertIn(messages.MENU_API_STATUS_BUTTON, labels)
+        labels = [b.text for row in application._menu_keyboard(False).keyboard for b in row]
+        self.assertNotIn(messages.MENU_API_STATUS_BUTTON, labels)
+        for user_id in (67890, 99999):
+            update = self.text_update("/apistatus", user_id)
+            with patch("bot.application._api_status") as status:
+                await application.api_status_command(update, self.context)
+            status.assert_not_called()
+            if user_id == 67890:
+                update.message.reply_text.assert_awaited_once_with(messages.ADMIN_ONLY)
+            else:
+                update.message.reply_text.assert_not_awaited()
+        forged = self.text_update(messages.MENU_API_STATUS_BUTTON, 67890)
+        await application.menu_text(forged, self.context)
+        forged.message.reply_text.assert_awaited_once_with(messages.ADMIN_ONLY)
+
+    async def test_api_status_not_configured_legacy_and_storage_error_are_explicit(self) -> None:
+        for settings, expected in (
+            (self.settings, messages.API_STATUS_NOT_CONFIGURED),
+            (replace(self.settings, gemini_api_key="synthetic-key", gemini_model="legacy"),
+             messages.API_STATUS_LEGACY.format(model="legacy")),
+        ):
+            self.context.application.bot_data["settings"] = settings
+            update = self.text_update("/apistatus")
+            await application.api_status_command(update, self.context)
+            self.assertEqual(update.message.reply_text.await_args.args[0], expected)
+        update = self.text_update("/apistatus")
+        with patch("bot.application._api_status", side_effect=sqlite3.OperationalError("synthetic")):
+            await application.api_status_command(update, self.context)
+        self.assertEqual(update.message.reply_text.await_args.args[0], messages.API_STATUS_FAILED)
+
+    async def test_api_status_shows_usage_percentages_waits_without_changing_receipt_or_quota(self) -> None:
+        await application.menu_callback(self.update("manual"), self.context)
+        before = self.database.get_conversation_state(12345)
+        settings = replace(
+            self.settings, gemini_api_key="synthetic-key", gemini_models=("lite", "flash", "pro"),
+            gemini_rpm_limits=(2, 10, 1), gemini_rpd_limits=(10, 100, 50),
+        )
+        self.context.application.bot_data["settings"] = settings
+        now = datetime(2026, 10, 31, 12, tzinfo=timezone.utc)
+        stamp = now.timestamp()
+        store = GeminiQuotaStore(self.root / "gemini.sqlite3")
+        store.reserve("lite", 2, 10, 80, stamp)
+        store.reserve("lite", 2, 10, 80, stamp)
+        store.record_cooldown("flash", stamp, stamp + 90)
+        store.record_cooldown("pro", stamp, None)
+        for method in ("command", "text", "callback"):
+            update = self.update("apistatus") if method == "callback" else self.text_update(messages.MENU_API_STATUS_BUTTON)
+            with patch("bot.application.datetime", wraps=datetime) as clock:
+                clock.now.return_value = now
+                if method == "command":
+                    await application.api_status_command(update, self.context)
+                elif method == "text":
+                    await application.menu_text(update, self.context)
+                else:
+                    await application.menu_callback(update, self.context)
+            rendered = "\n".join(call.args[0] for call in update.effective_message.reply_text.await_args_list)
+            self.assertIn("Minuto: 2/2 (100.0%)", rendered)
+            self.assertIn("Giorno: 2/10 (20.0%)", rendered)
+            self.assertIn("13:01:00", rendered)
+            self.assertIn("13:01:30", rendered)
+            self.assertIn("reset sconosciuto", rendered)
+            self.assertIn("non consumo ufficiale Google", rendered)
+            self.assertNotIn("synthetic-key", rendered)
+            self.assertEqual(self.database.get_conversation_state(12345), before)
+        counts = store.status(("lite",), (2,), (10,), stamp)[0]
+        self.assertEqual(counts.daily_requests, 2)
+        self.portal.create_expense.assert_not_awaited()
+
+    def test_api_status_splits_large_reports_with_all_models(self) -> None:
+        models = tuple(f"model-{i:02d}-" + "a" * 80 for i in range(24))
+        settings = replace(
+            self.settings, gemini_api_key="synthetic-key", gemini_models=models,
+            gemini_rpm_limits=(10,) * 24, gemini_rpd_limits=(100,) * 24,
+        )
+        chunks = application._api_status(settings)
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(len(chunk) <= 3800 for chunk in chunks))
+        self.assertTrue(all(model in "\n".join(chunks) for model in models))
+
+    async def test_install_button_is_only_inside_version_screen_not_admin_keyboard(self) -> None:
+        for mode in (True, False):
+            labels = [button.text for row in application._admin_keyboard(mode).keyboard for button in row]
+            self.assertIn(messages.MENU_VERSION_BUTTON, labels)
+            self.assertNotIn(messages.MENU_UPDATE_BUTTON, labels)
+        update = self.update("version")
+        with patch("bot.application._version_status", return_value="Versione di prova"):
+            await application.menu_callback(update, self.context)
+        rendered = self.rendered(update)
+        self.assertIn("menu:update", self.callback_values(rendered.kwargs["reply_markup"]))
         self.portal.create_expense.assert_not_awaited()
 
     async def test_non_admin_can_open_income_from_main_menu(self) -> None:
@@ -213,7 +312,8 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.database.get_conversation_state(12345))
         reply = update.effective_message.reply_text.await_args
         self.assertEqual(reply.args[0], messages.CANCELLED)
-        self.assertNotIn("menu:home", self.callback_values(reply.kwargs.get("reply_markup")))
+        self.assertIsInstance(reply.kwargs["reply_markup"], ReplyKeyboardMarkup)
+        self.assertNotIn(messages.MENU_CANCEL_BUTTON, [b.text for row in reply.kwargs["reply_markup"].keyboard for b in row])
 
     async def test_admin_tools_and_summary_accept_callback_messages(self) -> None:
         self.portal.health_check = AsyncMock()
@@ -334,6 +434,83 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
         stored = self.database.get_expense(data["expense_id"])
         self.assertTrue(stored is None or stored.payload["merchant"] is None)
 
+    async def test_cancel_button_tracks_pending_state_home_and_restart(self) -> None:
+        def labels(update):
+            return [button.text for row in update.message.reply_text.await_args.kwargs["reply_markup"].keyboard for button in row]
+
+        for user_id in (12345, 67890):
+            idle = self.text_update(messages.HOME_BUTTON, user_id)
+            await application.menu_text(idle, self.context)
+            self.assertNotIn(messages.MENU_CANCEL_BUTTON, labels(idle))
+            await application.menu_text(self.text_update(messages.MENU_INCOME_BUTTON, user_id), self.context)
+            active = self.text_update("pending", user_id)
+            await application.sync_operation_menu(active, self.context)
+            self.assertIn(messages.MENU_CANCEL_BUTTON, labels(active))
+            same = self.text_update("still pending", user_id)
+            await application.sync_operation_menu(same, self.context)
+            same.message.reply_text.assert_not_awaited()
+            self.context.application.bot_data.pop("operation_menu_visibility", None)
+            home = self.text_update(messages.HOME_BUTTON, user_id)
+            await application.menu_text(home, self.context)
+            self.assertIn(messages.MENU_CANCEL_BUTTON, labels(home))
+            cancel = self.text_update(messages.MENU_CANCEL_BUTTON, user_id)
+            await application.menu_text(cancel, self.context)
+            self.assertNotIn(messages.MENU_CANCEL_BUTTON, labels(cancel))
+            await application.sync_operation_menu(cancel, self.context)
+            cancel.message.reply_text.assert_awaited_once()
+
+    async def test_menu_removes_cancel_after_state_completion_and_ignores_unknown_users(self) -> None:
+        await application.menu_text(self.text_update(messages.MENU_INCOME_BUTTON), self.context)
+        active = self.text_update("active")
+        await application.sync_operation_menu(active, self.context)
+        self.database.delete_conversation_state(12345)
+        done = self.text_update("done")
+        await application.sync_operation_menu(done, self.context)
+        markup = done.message.reply_text.await_args.kwargs["reply_markup"]
+        self.assertNotIn(messages.MENU_CANCEL_BUTTON, [b.text for row in markup.keyboard for b in row])
+        self.assertIn(messages.MENU_ADMIN_BUTTON, [b.text for row in markup.keyboard for b in row])
+        unknown = self.text_update("pending", 99999)
+        await application.sync_operation_menu(unknown, self.context)
+        unknown.message.reply_text.assert_not_awaited()
+
+    async def test_operation_menu_errors_are_explicit_and_failed_delivery_retries(self) -> None:
+        update = self.text_update("active")
+        with patch.object(self.database, "get_conversation_state", side_effect=sqlite3.OperationalError("synthetic")):
+            await application.sync_operation_menu(update, self.context)
+        update.message.reply_text.assert_awaited_once_with(messages.OPERATION_MENU_FAILED)
+        await application.menu_text(self.text_update(messages.MENU_INCOME_BUTTON), self.context)
+        from telegram.error import NetworkError
+        failed = self.text_update("failed")
+        failed.message.reply_text.side_effect = NetworkError("synthetic")
+        await application.sync_operation_menu(failed, self.context)
+        retry = self.text_update("retry")
+        await application.sync_operation_menu(retry, self.context)
+        retry.message.reply_text.assert_awaited_once()
+
+    async def test_receipt_menu_shows_cancel_before_analysis_starts(self) -> None:
+        self.workflow._analyzer = SimpleNamespace(analyze=AsyncMock(return_value=ReceiptData(confidence=0)))
+        self.context.bot = SimpleNamespace(get_file=AsyncMock(return_value=SimpleNamespace(
+            download_as_bytearray=AsyncMock(return_value=bytearray(b"synthetic-image"))
+        )))
+        update = self.text_update("")
+        update.message.photo = [SimpleNamespace(file_id="synthetic", file_size=15)]
+        update.message.document = None
+
+        async def analyze(file_bytes, file_name):
+            self.assertTrue(self.context.application.bot_data["operation_menu_visibility"][12345])
+            rendered = [
+                call.kwargs.get("reply_markup") for call in update.message.reply_text.await_args_list
+            ]
+            self.assertTrue(any(
+                isinstance(markup, ReplyKeyboardMarkup)
+                and messages.MENU_CANCEL_BUTTON in [b.text for row in markup.keyboard for b in row]
+                for markup in rendered
+            ))
+            return ReceiptData(confidence=0)
+
+        self.workflow._analyzer.analyze.side_effect = analyze
+        await application.receive_receipt(update, self.context)
+
     async def test_unknown_action_has_explicit_message_and_home_button(self) -> None:
         update = self.update("unknown")
         await application.menu_callback(update, self.context)
@@ -369,14 +546,14 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(entered.wait(), timeout=1)
         queued = asyncio.create_task(processor.process_update(callback_update("manual"), mutation()))
         try:
-            for action in ("home", "help", "receipt", "admin", "version"):
+            for action in ("home", "help", "receipt", "admin", "version", "apistatus"):
                 response = AsyncMock()
                 await asyncio.wait_for(
                     processor.process_update(callback_update(action), response()), timeout=0.5
                 )
                 response.assert_awaited_once()
                 mutation.assert_not_awaited()
-            for label in (messages.MENU_HELP_BUTTON, messages.MENU_RECEIPT_BUTTON):
+            for label in (messages.MENU_HELP_BUTTON, messages.MENU_RECEIPT_BUTTON, messages.MENU_API_STATUS_BUTTON):
                 response = AsyncMock()
                 text_update = Update.de_json({
                     "update_id": 3,

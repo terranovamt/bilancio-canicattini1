@@ -22,7 +22,6 @@ Menu fisso in basso, al posto della tastiera del telefono:
 [📷 Nuovo scontrino] [💰 Nuova entrata]
 [📊 Riepilogo] [📋 Ultime operazioni]
 [⏳ Operazioni in attesa] [❓ Aiuto]
-[✖️ Annulla operazione]
 ```
 
 Il menu resta visibile durante tutta la conversazione; il campo del messaggio mostra `Scegli dal menu o invia una foto`. Un pulsante premuto compare in chat come messaggio dell'utente e la risposta arriva in un nuovo messaggio. I comandi scritti restano disponibili come alternativa. Dopo un aggiornamento serve un `/start` per ricevere il menu nuovo.
@@ -40,10 +39,12 @@ La modalità è indicata per tutti. Se l'amministratore ha attivato la prova, l'
 [📷 Nuovo scontrino] [💰 Nuova entrata]
 [📊 Riepilogo] [📋 Ultime operazioni]
 [⏳ Operazioni in attesa] [❓ Aiuto]
-[✖️ Annulla operazione] [⚙️ Amministrazione]
+[⚙️ Amministrazione]
 ```
 
 **⚙️ Amministrazione** sostituisce la tastiera persistente in basso con gli strumenti amministratore:
+
+**✖️ Annulla operazione** appare nel menu principale solo durante un inserimento attivo (nella stessa riga di Amministrazione per l'admin). Sparisce alla conclusione o all'annullamento. Il menu rilegge lo stato anche con `/start` e dopo un riavvio; le operazioni già in coda non fanno comparire questo pulsante. I pulsanti «Annulla» nel riepilogo attivo e `/annulla` restano disponibili.
 
 La schermata Amministrazione contiene:
 
@@ -53,12 +54,23 @@ La schermata Amministrazione contiene:
 [🔌 Verifica collegamento]
 [🔄 Aggiorna casse e tipologie]
 [🔖 Versione e aggiornamenti]
-[🔄 Installa aggiornamento]
+[📊 Stato API]
 [🧹 Pulisci cronologia]
 [🏠 Menu principale]
 ```
 
 Versione attiva e disponibile vengono mostrate nella schermata **Versione e aggiornamenti**, con **Installa aggiornamento** e **Indietro**. Il pulsante di installazione apre la conferma, non installa subito. La pulizia mantiene la propria conferma.
+
+**Stato API** (oppure `/apistatus`, solo amministratore) legge i contatori locali senza chiamare Google. Esempio inventato per un modello:
+
+```text
+gemini-2.5-flash-lite
+Minuto: 3/30 (10.0%)
+Giorno: 120/1500 (8.0%)
+Disponibile secondo il contatore locale; disponibilità Google non verificata.
+```
+
+La testata mostra data e ora della lettura, soglia di avviso e prossimo giorno del contatore Pacifico nell'ora locale del bot. I blocchi indicano l'attesa locale o quella suggerita da Google; se Google non comunica il reset, la sospensione prudenziale del bot è distinta da un reset remoto confermato. Il consumo riguarda solo il bot, non AI Studio o altri programmi. Tutti i modelli della catena compaiono nell'ordine configurato; nessuna chiave o ricevuta è mostrata.
 
 In prova il primo pulsante diventa **✅ Torna ai salvataggi reali**. La scelta resta nel database anche dopo il riavvio e vale per tutti i nuovi inserimenti; quelli già iniziati mantengono la loro modalità.
 

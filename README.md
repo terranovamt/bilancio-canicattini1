@@ -162,6 +162,12 @@ Le prenotazioni atomiche delle richieste e le attese sono persistite in `DATA_PA
 
 **Sono contatori del solo bot**, non il saldo ufficiale di Google: non vedono AI Studio, altri programmi, quote condivise tra modelli o token al minuto. I limiti impostati non garantiscono il piano gratuito. Su 429 il bot rispetta `Retry-After`/`RetryInfo` se disponibili e mostra quando Google suggerisce di riprovare, senza promettere il ripristino di tutte le quote. Se Google non comunica l'attesa, lo dice e sospende quel modello fino al prossimo giorno del contatore, come precauzione: **non è un reset remoto confermato**. Un modello bloccato viene saltato; se tutti sono bloccati puoi completare la ricevuta manualmente senza altre chiamate AI.
 
+L'amministratore può consultare **Amministrazione → 📊 Stato API** oppure `/apistatus`: per ogni modello configurato mostra richieste e limiti del minuto e del giorno, percentuali, eventuale attesa locale e sospensione dopo una quota Google. Mostra anche la soglia di avviso e il prossimo giorno del contatore nell'ora del bot. La lettura usa solo SQLite, non chiama Google, non consuma richieste e non modifica la ricevuta in corso. «Disponibile» significa solo che il contatore locale non blocca il modello, non una verifica di Google. Se Gemini non è configurato o è in modalità singolo modello, lo indica senza inventare un consumo zero; un errore di lettura viene segnalato esplicitamente. Chiave e dati delle ricevute non compaiono.
+
+Nel menu Amministrazione resta **Versione e aggiornamenti**; **Installa aggiornamento** è dentro quella schermata, senza un secondo pulsante duplicato nel menu. Restano il comando `/aggiorna`, la conferma prima dell'installazione e il pulsante nelle notifiche di nuova versione.
+
+**Annulla operazione** compare nel menu principale solo se c'è un inserimento in corso, non per gli elementi già nella coda dei ritentativi. La tastiera si aggiorna all'avvio dell'inserimento (per gli scontrini dopo aver conservato il file, prima dell'analisi), alla conclusione e all'annullamento. Aprire il menu o usare `/start` rilegge lo stato persistente, anche dopo un riavvio. Un breve messaggio segnala il cambio di tastiera, senza ripeterlo ad ogni campo. Restano i pulsanti «Annulla» dentro l'inserimento e il comando `/annulla`; durante una lavorazione lunga le azioni che modificano lo stato restano sequenziali.
+
 ### Menu e opzioni contabili
 
 Per usare il bot non occorre ricordare i comandi:

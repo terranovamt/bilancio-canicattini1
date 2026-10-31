@@ -64,6 +64,7 @@ from bilancio.playwright_client import ManualPortalLoginRequired
 from config import Settings
 from db.database import Database, StoredExpense
 from db.ledger_snapshot import compact_ledgers
+from db.gemini_quota import GeminiQuotaStore, day_window
 from storage.archive import FileArchive
 from storage.pending import PendingReceiptStore
 
@@ -89,6 +90,7 @@ ADMIN_COMMANDS = (
     BotCommand("aggiornaopzioni", texts.COMMAND_REFRESH),
     BotCommand("aggiorna", texts.COMMAND_UPDATE),
     BotCommand("pulisci", texts.COMMAND_CLEAN),
+    BotCommand("apistatus", texts.COMMAND_API_STATUS),
 )
 
 
@@ -109,7 +111,7 @@ class ResponsiveUpdateProcessor(BaseUpdateProcessor):
         query = update.callback_query if isinstance(update, Update) else None
         if query is not None and query.data in {
             "menu:home", "menu:help", "menu:receipt", "menu:admin", "menu:version",
-            "receipt:noop",
+            "receipt:noop", "menu:apistatus",
         }:
             await coroutine
             return
@@ -127,7 +129,7 @@ class ResponsiveUpdateProcessor(BaseUpdateProcessor):
             if (
                 entity.type == MessageEntity.BOT_COMMAND
                 and entity.offset == 0
-                and command in {"/start", "/help"}
+                and command in {"/start", "/help", "/apistatus"}
             ):
                 await coroutine
                 return
@@ -221,6 +223,7 @@ def create_application(
             data={"refresh": True},
         )
     application.add_handler(TypeHandler(Update, authorize_update), group=-1)
+    application.add_handler(TypeHandler(Update, sync_operation_menu), group=1)
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^menu:"))
@@ -241,6 +244,7 @@ def create_application(
         CallbackQueryHandler(update_callback, pattern=r"^admin:update:")
     )
     application.add_handler(CommandHandler("pulisci", clean_command))
+    application.add_handler(CommandHandler("apistatus", api_status_command))
     application.add_handler(
         CallbackQueryHandler(clean_callback, pattern=r"^admin:clean:")
     )
@@ -296,7 +300,7 @@ async def start_command(
         )
     await update.message.reply_text(
         _home_text(await _test_mode(context, settings), admin=_is_admin(update, settings)),
-        reply_markup=_menu_keyboard(_is_admin(update, settings)),
+        reply_markup=await _current_menu_keyboard(update, context),
     )
 
 
@@ -321,21 +325,67 @@ def _navigation_keyboard(*, admin: bool = False) -> InlineKeyboardMarkup | None:
     return InlineKeyboardMarkup(rows) if rows else None
 
 
-def _menu_keyboard(admin: bool) -> ReplyKeyboardMarkup:
+def _menu_keyboard(admin: bool, *, pending: bool = False) -> ReplyKeyboardMarkup:
     rows = [
         [texts.MENU_RECEIPT_BUTTON, texts.MENU_INCOME_BUTTON],
         [texts.MENU_SUMMARY_BUTTON, texts.MENU_LATEST_BUTTON],
         [texts.MENU_QUEUE_BUTTON, texts.MENU_HELP_BUTTON],
-        [texts.MENU_CANCEL_BUTTON],
     ]
+    last_row: list[str] = []
+    if pending:
+        last_row.append(texts.MENU_CANCEL_BUTTON)
     if admin:
-        rows[-1].append(texts.MENU_ADMIN_BUTTON)
+        last_row.append(texts.MENU_ADMIN_BUTTON)
+    if last_row:
+        rows.append(last_row)
     return ReplyKeyboardMarkup(
         rows,
         resize_keyboard=True,
         is_persistent=True,
         input_field_placeholder=texts.MENU_PLACEHOLDER,
     )
+
+
+async def _current_menu_keyboard(
+    update: Update, context: ContextTypes.DEFAULT_TYPE,
+) -> ReplyKeyboardMarkup:
+    settings: Settings = context.application.bot_data["settings"]
+    database: Database = context.application.bot_data["database"]
+    user = update.effective_user
+    pending = user is not None and await asyncio.to_thread(
+        database.get_conversation_state, user.id
+    ) is not None
+    if user is not None:
+        visibility = context.application.bot_data.setdefault("operation_menu_visibility", {})
+        visibility[user.id] = pending
+    return _menu_keyboard(_is_admin(update, settings), pending=pending)
+
+
+async def sync_operation_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.application.bot_data["settings"]
+    user = update.effective_user
+    message = getattr(update, "effective_message", None) or update.message
+    if user is None or message is None or not is_authorized_user(user.id, settings.allowed_user_ids):
+        return
+    database: Database = context.application.bot_data["database"]
+    try:
+        pending = await asyncio.to_thread(database.get_conversation_state, user.id) is not None
+    except sqlite3.Error as error:
+        logger.error("Could not read operation menu state: %s", type(error).__name__)
+        await message.reply_text(texts.OPERATION_MENU_FAILED)
+        return
+    visibility = context.application.bot_data.setdefault("operation_menu_visibility", {})
+    if visibility.get(user.id, False) == pending:
+        return
+    try:
+        await message.reply_text(
+            texts.OPERATION_MENU_ACTIVE if pending else texts.OPERATION_MENU_FINISHED,
+            reply_markup=_menu_keyboard(_is_admin(update, settings), pending=pending),
+        )
+    except TelegramError as error:
+        logger.warning("Could not refresh operation menu: %s", type(error).__name__)
+        return
+    visibility[user.id] = pending
 
 
 MENU_LABELS = {
@@ -356,10 +406,11 @@ MENU_LABELS = {
     texts.MENU_VERSION_BUTTON: "version",
     texts.MENU_UPDATE_BUTTON: "update",
     texts.MENU_CLEAN_BUTTON: "clean",
+    texts.MENU_API_STATUS_BUTTON: "apistatus",
 }
-_READ_ONLY_ACTIONS = {"home", "help", "receipt", "admin", "version"}
+_READ_ONLY_ACTIONS = {"home", "help", "receipt", "admin", "version", "apistatus"}
 _ADMIN_ACTIONS = {
-    "admin", "manual", "health", "options", "version", "update", "clean", "test_on", "test_off",
+    "admin", "manual", "health", "options", "version", "update", "clean", "test_on", "test_off", "apistatus",
 }
 
 
@@ -368,7 +419,8 @@ def _admin_keyboard(test_mode: bool = False) -> ReplyKeyboardMarkup:
         [texts.MENU_MANUAL_BUTTON],
         [texts.MENU_TEST_OFF_BUTTON if test_mode else texts.MENU_TEST_ON_BUTTON],
         [texts.MENU_HEALTH_BUTTON, texts.MENU_OPTIONS_BUTTON],
-        [texts.MENU_VERSION_BUTTON, texts.MENU_UPDATE_BUTTON],
+        [texts.MENU_VERSION_BUTTON],
+        [texts.MENU_API_STATUS_BUTTON],
         [texts.MENU_CLEAN_BUTTON],
         [texts.HOME_BUTTON],
     ], resize_keyboard=True, is_persistent=True,
@@ -442,7 +494,7 @@ async def _run_menu_action(
         if message is not None:
             await message.reply_text(
                 _home_text(await _test_mode(context, settings), admin=admin),
-                reply_markup=_menu_keyboard(admin),
+                reply_markup=await _current_menu_keyboard(update, context),
             )
     elif action == "help":
         await _show_command_screen(
@@ -493,6 +545,7 @@ async def _run_menu_action(
             "cancel": cancel_command, "health": test_bilancio_command,
             "options": refresh_options_command, "update": update_command,
             "clean": clean_command,
+            "apistatus": api_status_command,
         }
         handler = handlers.get(action)
         if handler is None:
@@ -504,6 +557,66 @@ async def _run_menu_action(
 def _is_admin(update: Update, settings: Settings) -> bool:
     user = update.effective_user
     return user is not None and user.id == settings.admin_user_id
+
+
+def _api_status(settings: Settings) -> list[str]:
+    if not settings.gemini_api_key:
+        return [texts.API_STATUS_NOT_CONFIGURED]
+    if not settings.gemini_models:
+        return [texts.API_STATUS_LEGACY.format(model=settings.gemini_model)]
+    now = datetime.now(timezone.utc).timestamp()
+    zone = ZoneInfo(settings.timezone)
+
+    def clock(timestamp: float) -> str:
+        return datetime.fromtimestamp(timestamp, zone).strftime("%d/%m/%Y %H:%M:%S %Z")
+
+    store = GeminiQuotaStore(Path(settings.data_path) / "gemini.sqlite3")
+    statuses = store.status(
+        settings.gemini_models, settings.gemini_rpm_limits, settings.gemini_rpd_limits, now
+    )
+    chunks = [texts.API_STATUS_HEADER.format(
+        checked=clock(now), reset=clock(day_window(now)[1]),
+        warning=settings.gemini_quota_warn_percent,
+    )]
+    for status in statuses:
+        block = texts.API_STATUS_MODEL.format(
+            model=status.model, minute=status.minute_requests, rpm=status.rpm_limit,
+            daily=status.daily_requests, rpd=status.rpd_limit,
+            minute_percent=status.minute_requests * 100 / status.rpm_limit,
+            daily_percent=status.daily_requests * 100 / status.rpd_limit,
+        )
+        if status.local_retry_at is not None:
+            block += "\n" + texts.API_STATUS_LOCAL_BLOCK.format(retry=clock(status.local_retry_at))
+        if status.remote_until_at is not None:
+            template = texts.API_STATUS_REMOTE_BLOCK if status.remote_retry_known else texts.API_STATUS_REMOTE_UNKNOWN
+            block += "\n" + template.format(retry=clock(status.remote_until_at))
+        if status.local_retry_at is None and status.remote_until_at is None:
+            block += "\n" + texts.API_STATUS_AVAILABLE
+        if len(chunks[-1]) + len(block) + 2 > 3800:
+            chunks.append(block)
+        else:
+            chunks[-1] += "\n\n" + block
+    return chunks
+
+
+async def api_status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.application.bot_data["settings"]
+    user = update.effective_user
+    if user is None or not is_authorized_user(user.id, settings.allowed_user_ids):
+        return
+    message = getattr(update, "effective_message", None) or update.message
+    if message is None:
+        return
+    if not _is_admin(update, settings):
+        await message.reply_text(texts.ADMIN_ONLY)
+        return
+    try:
+        chunks = await asyncio.to_thread(_api_status, settings)
+    except sqlite3.Error as error:
+        logger.error("Could not read Gemini quota status: %s", type(error).__name__)
+        chunks = [texts.API_STATUS_FAILED]
+    for chunk in chunks:
+        await message.reply_text(chunk, reply_markup=_navigation_keyboard(admin=True))
 
 
 def _update_store(context: ContextTypes.DEFAULT_TYPE, settings: Settings) -> UpdateStatusStore:
@@ -752,9 +865,9 @@ async def cancel_command(
     workflow: ReceiptWorkflow = context.application.bot_data["receipt_workflow"]
     was_cancelled = await workflow.cancel_current(update.effective_user.id)
     if was_cancelled:
-        await message.reply_text(texts.CANCELLED, reply_markup=_navigation_keyboard())
+        await message.reply_text(texts.CANCELLED, reply_markup=await _current_menu_keyboard(update, context))
     else:
-        await message.reply_text(texts.NOTHING_TO_CANCEL, reply_markup=_navigation_keyboard())
+        await message.reply_text(texts.NOTHING_TO_CANCEL, reply_markup=await _current_menu_keyboard(update, context))
 
 
 async def receive_receipt(
@@ -762,7 +875,9 @@ async def receive_receipt(
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
     workflow: ReceiptWorkflow = context.application.bot_data["receipt_workflow"]
-    await workflow.receive_receipt(update, context)
+    await workflow.receive_receipt(
+        update, context, on_pending=lambda: sync_operation_menu(update, context)
+    )
 
 
 async def receipt_text(

@@ -91,6 +91,7 @@ MENU_ADMIN_HELP = (
     "✍️ Inserisci a mano: registra un’entrata o un’uscita senza foto.\n"
     "Alla fine controlli il riepilogo e registri solo con «Accetta».\n"
     "🧪 Lì puoi anche attivare o disattivare la modalità prova."
+    "\n📊 Stato API: richieste Gemini contate dal bot, limiti e attese."
 )
 MENU_RECEIPT = (
     "📷 Nuovo scontrino\n\nInvia qui una foto o un PDF della ricevuta. "
@@ -109,10 +110,40 @@ MENU_LATEST_BUTTON = "📋 Ultime operazioni"
 MENU_QUEUE_BUTTON = "⏳ Operazioni in attesa"
 MENU_HELP_BUTTON = "❓ Aiuto"
 MENU_CANCEL_BUTTON = "✖️ Annulla operazione"
+OPERATION_MENU_ACTIVE = "Hai un'operazione in corso: nel menu puoi annullarla."
+OPERATION_MENU_FINISHED = "Operazione conclusa: menu aggiornato."
+OPERATION_MENU_FAILED = "❌ Non riesco a verificare l'operazione in corso per aggiornare il menu."
 MENU_ADMIN_BUTTON = "⚙️ Amministrazione"
 MENU_HEALTH_BUTTON = "🔌 Verifica collegamento"
 MENU_OPTIONS_BUTTON = "🔄 Aggiorna casse e tipologie"
 MENU_VERSION_BUTTON = "🔖 Versione e aggiornamenti"
+MENU_API_STATUS_BUTTON = "📊 Stato API"
+COMMAND_API_STATUS = "Utilizzo Gemini, limiti e attese del bot"
+API_STATUS_HEADER = (
+    "📊 Stato API · Gemini\nLettura del {checked}\n"
+    "Solo richieste contate dal bot, inclusi tentativi falliti; non consumo ufficiale Google. "
+    "Non include AI Studio, altri programmi, token o quote condivise.\n"
+    "Minuto mobile: ultimi 60 secondi. Prossimo giorno del contatore: {reset} "
+    "(mezzanotte Pacifico).\nSoglia avviso: {warning}%."
+)
+API_STATUS_NOT_CONFIGURED = "Gemini non configurato: nessun utilizzo API disponibile."
+API_STATUS_LEGACY = (
+    "Gemini in modalità singolo modello: {model}.\n"
+    "Contatori e limiti consultabili solo con la catena GEMINI_MODELS attiva; "
+    "utilizzo non disponibile, non significa zero richieste."
+)
+API_STATUS_FAILED = "❌ Non riesco a leggere i contatori Gemini. Riprova; non ho effettuato richieste API."
+API_STATUS_MODEL = (
+    "{model}\nMinuto: {minute}/{rpm} ({minute_percent:.1f}%)\n"
+    "Giorno: {daily}/{rpd} ({daily_percent:.1f}%)"
+)
+API_STATUS_AVAILABLE = "Disponibile secondo il contatore locale; disponibilità Google non verificata."
+API_STATUS_LOCAL_BLOCK = "Limite locale raggiunto: nuovo tentativo dal {retry}."
+API_STATUS_REMOTE_BLOCK = "Quota Google: riprovare non prima del {retry}; ripristino non garantito."
+API_STATUS_REMOTE_UNKNOWN = (
+    "Quota Google: reset sconosciuto. Sospensione prudenziale del bot fino al {retry}, "
+    "non reset Google confermato."
+)
 MENU_CLEAN_BUTTON = "🧹 Pulisci cronologia"
 MENU_UPDATE_BUTTON = "🔄 Installa aggiornamento"
 MENU_TEST_ON_BUTTON = "🧪 Attiva modalità prova"
