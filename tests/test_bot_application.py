@@ -71,6 +71,35 @@ def make_settings() -> Settings:
 
 
 class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_ledger_totals_are_admin_only_for_live_and_cached_summaries(self) -> None:
+        from bilancio.client import AccountLedger
+
+        sample = AccountLedger(
+            account=PortalOption("A", "Cassa esempio"),
+            opening_balance=Decimal("10"), total_income=Decimal("2"),
+            total_expense=Decimal("3"), balance=Decimal("9"),
+            entries=(), total_rows=0, complete=True, entries_available=False,
+        )
+        settings = make_settings()
+        for user_id in (settings.admin_user_id, 67890):
+            client = SimpleNamespace(read_ledgers=AsyncMock(return_value=[sample]))
+            context = self.make_context(settings=settings, bilancio_client=client)
+            context.bot = SimpleNamespace(edit_message_text=AsyncMock(), send_message=AsyncMock())
+            context.job = SimpleNamespace(data={
+                "chat_id": user_id, "message_id": 55,
+                "start_year": scout_year_start(date.today()),
+            })
+            for cached in (False, True):
+                if cached:
+                    client.read_ledgers.side_effect = BilancioClientError("synthetic")
+                await ledger_summary_job(context)
+                rendered = context.bot.edit_message_text.await_args.args[0]
+                rendered += "".join(call.kwargs["text"] for call in context.bot.send_message.await_args_list)
+                self.assertEqual("Totale di tutte le casse" in rendered, user_id == settings.admin_user_id)
+                if cached:
+                    self.assertIn("Ultimi dati letti", rendered)
+                context.bot.send_message.reset_mock()
+
     async def test_manual_command_collects_fields_and_offers_both_directions(self) -> None:
         workflow = SimpleNamespace(start_manual_expense=AsyncMock())
         context = self.make_context(receipt_workflow=workflow)
@@ -206,7 +235,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         text = message.reply_text.await_args.args[0]
         self.assertIn("Mandami", text)
         self.assertIn("scontrino", text)
-        self.assertIn("REALE", text)
+        self.assertNotIn("REALE", text)
         message.reply_text.assert_awaited_once()
         keyboard = message.reply_text.await_args.kwargs["reply_markup"]
         self.assertIsInstance(keyboard, ReplyKeyboardMarkup)
@@ -288,7 +317,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(texts.MENU_INCOME_BUTTON, labels)
         self.assertNotIn(texts.MENU_ADMIN_BUTTON, labels)
         text = message.reply_text.await_args.args[0]
-        self.assertIn("REALE", text)
+        self.assertNotIn("REALE", text)
         for admin_detail in ("/testspesa", "/pulisci", "/aggiornaopzioni", "SIMULATA"):
             self.assertNotIn(admin_detail, text)
 
@@ -329,7 +358,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         sent = context.bot.send_message.await_args.kwargs
         self.assertEqual(sent["chat_id"], 12345)
         self.assertIn("Fatto! Trovate 1 casse", sent["text"])
-        self.assertIn("Cassa Co.ca: 4 entrate, da rileggere uscite", sent["text"])
+        self.assertIn("Cassa Co. ca: 4 entrate, da rileggere uscite", sent["text"])
 
     def test_preload_summary_reports_unreadable_accounts(self) -> None:
         self.assertIn("Non riesco a leggere le casse", _format_preload_summary(None))
@@ -658,7 +687,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("✅", text)
             self.assertIn("in attesa di essere salvata", text)
             self.assertNotIn("Spesa b", text)
-            self.assertIn("Cassa Co.ca", text)
+            self.assertIn("Cassa Co. ca", text)
             self.assertNotIn("{", text)
 
     async def test_cancel_command_clears_saved_state(self) -> None:

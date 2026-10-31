@@ -295,7 +295,7 @@ async def start_command(
             scope=BotCommandScopeChat(chat_id=settings.admin_user_id),
         )
     await update.message.reply_text(
-        _home_text(await _test_mode(context, settings)),
+        _home_text(await _test_mode(context, settings), admin=_is_admin(update, settings)),
         reply_markup=_menu_keyboard(_is_admin(update, settings)),
     )
 
@@ -305,9 +305,8 @@ async def _test_mode(context: ContextTypes.DEFAULT_TYPE, settings: Settings) -> 
     return await asyncio.to_thread(database.get_test_mode, default=settings.dry_run)
 
 
-def _home_text(test_mode: bool) -> str:
-    mode = texts.MODE_TRIAL if test_mode else texts.MODE_REAL
-    return f"{texts.HOME_TEXT}\n\n{mode}"
+def _home_text(test_mode: bool, *, admin: bool = False) -> str:
+    return texts.HOME_TEXT + (f"\n\n{texts.MODE_TRIAL}" if test_mode and admin else "")
 
 
 def _navigation_rows(*, admin: bool = False) -> list[list[InlineKeyboardButton]]:
@@ -442,7 +441,7 @@ async def _run_menu_action(
         message = getattr(update, "effective_message", None) or update.message
         if message is not None:
             await message.reply_text(
-                _home_text(await _test_mode(context, settings)),
+                _home_text(await _test_mode(context, settings), admin=admin),
                 reply_markup=_menu_keyboard(admin),
             )
     elif action == "help":
@@ -455,7 +454,7 @@ async def _run_menu_action(
         test_mode = await _test_mode(context, settings)
         await _show_command_screen(
             update,
-            texts.MENU_ADMIN + "\n\n" + (texts.MODE_TRIAL if test_mode else texts.MODE_REAL),
+            texts.MENU_ADMIN + (f"\n\n{texts.MODE_TRIAL}" if test_mode else ""),
             _admin_keyboard(test_mode),
         )
     elif action in {"test_on", "test_off"}:
@@ -472,7 +471,7 @@ async def _run_menu_action(
         logger.info("Test mode changed: enabled=%s", enabled)
         await _show_command_screen(
             update,
-            texts.MODE_CHANGED.format(mode=texts.MODE_TRIAL if enabled else texts.MODE_REAL),
+            texts.MODE_CHANGED.format(mode=texts.MODE_TRIAL) if enabled else texts.TEST_DISABLED,
             _admin_keyboard(enabled),
         )
     elif action == "version":
@@ -1078,9 +1077,15 @@ async def ledger_summary_job(context: ContextTypes.DEFAULT_TYPE) -> None:
                 messages[0] += "\n\n" + texts.SUMMARY_CACHED.format(
                     day=read_at, clock=read_at, zone=zone_name,
                 )
-                messages.extend(format_ledger_summary(snapshot.ledgers, start_year))
+                messages.extend(format_ledger_summary(
+                    snapshot.ledgers, start_year,
+                    include_totals=bool(settings and chat_id == settings.admin_user_id),
+                ))
         else:
-            messages = format_ledger_summary(ledgers, start_year, details=data.get("details", False))
+            messages = format_ledger_summary(
+                ledgers, start_year, details=data.get("details", False),
+                include_totals=bool(settings and chat_id == settings.admin_user_id),
+            )
             try:
                 await asyncio.to_thread(
                     database.save_ledger_snapshot, start_year, local_now(zone_name), compact,
@@ -1222,7 +1227,7 @@ def _format_preload_summary(
     lines = [texts.REFRESH_DONE.format(count=len(accounts))]
     for label, directions in accounts.items():
         lines.append(
-            texts.REFRESH_ROW.format(account=label, income=describe(directions.get(TransactionDirection.INCOME)), expense=describe(directions.get(TransactionDirection.EXPENSE)))
+            texts.REFRESH_ROW.format(account=texts.account_text(label), income=describe(directions.get(TransactionDirection.INCOME)), expense=describe(directions.get(TransactionDirection.EXPENSE)))
         )
     if any(count is None for _, _, count in summary):
         lines.append(texts.REFRESH_PARTIAL)

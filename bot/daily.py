@@ -57,7 +57,7 @@ def format_daily_report(day: date, movements: Sequence[VerifiedMovement]) -> lis
         accounts.setdefault(movement.account_value, []).append(movement)
     for key in sorted(accounts):
         group = accounts[key]
-        blocks.append(texts.DAILY_ACCOUNT.format(account=group[0].account_label) + "\n" + _totals(group))
+        blocks.append(texts.DAILY_ACCOUNT.format(account=texts.account_text(group[0].account_label)) + "\n" + _totals(group))
     result: list[str] = []
     current = ""
     for block in blocks:

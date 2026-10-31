@@ -64,7 +64,7 @@ def _monthly_trend(ledger: AccountLedger, movements: list[LedgerEntry]) -> list[
 
 def _format_account(ledger: AccountLedger, *, details: bool) -> str:
     lines = [
-        texts.ACCOUNT_HEADER.format(account=ledger.account.label),
+        texts.ACCOUNT_HEADER.format(account=texts.account_text(ledger.account.label)),
         texts.ACCOUNT_BALANCE.format(balance=format_euro(ledger.balance)),
         texts.ACCOUNT_TOTALS.format(
             income=format_euro(ledger.total_income), expense=format_euro(ledger.total_expense)
@@ -114,11 +114,19 @@ def format_ledger_summary(
     start_year: int,
     *,
     details: bool = False,
+    include_totals: bool = False,
 ) -> list[str]:
     """Return compact balances, or the requested monthly and operation details."""
     header = texts.SUMMARY_HEADER.format(year=scout_year_name(start_year))
     if not ledgers:
         return [texts.NO_ACCOUNTS.format(header=header)]
+    if include_totals:
+        header += "\n\n" + texts.SUMMARY_TOTALS.format(
+            opening=format_euro(sum((item.opening_balance for item in ledgers), Decimal("0"))),
+            income=format_euro(sum((item.total_income for item in ledgers), Decimal("0"))),
+            expense=format_euro(sum((item.total_expense for item in ledgers), Decimal("0"))),
+            balance=format_euro(sum((item.balance for item in ledgers), Decimal("0"))),
+        )
     messages: list[str] = []
     current = header
     for ledger in ledgers:

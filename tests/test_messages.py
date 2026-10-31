@@ -7,6 +7,13 @@ from bot.receipt_workflow import ReceiptWorkflow
 
 
 class TelegramMessagesTests(unittest.TestCase):
+    def test_account_abbreviation_does_not_look_like_a_domain(self) -> None:
+        selections = {"account": {"label": "Cassa Co.ca"}}
+        self.assertEqual(messages.account_text("Conto Co.ca"), "Conto Co. ca")
+        self.assertIn("Cassa Co. ca", messages.operation_details({}, selections))
+        self.assertEqual(selections["account"]["label"], "Cassa Co.ca")
+        self.assertEqual(messages.account_text("Cassa LC"), "Cassa LC")
+
     def setUp(self) -> None:
         self.payload = {
             "date": "2026-10-29",

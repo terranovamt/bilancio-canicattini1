@@ -745,8 +745,12 @@ class ReceiptWorkflow:
             self._database.get_test_mode, default=self._settings.dry_run
         )
 
-    def _mode_text(self, payload: dict[str, object]) -> str:
-        return texts.MODE_TRIAL if self._uses_dry_run(payload) else texts.MODE_REAL
+    def _mode_text(self, payload: dict[str, object], user_id: int | None = None) -> str:
+        return (
+            texts.MODE_TRIAL
+            if user_id == self._settings.admin_user_id and self._uses_dry_run(payload)
+            else ""
+        )
 
     @staticmethod
     def _is_manual_form(
@@ -762,6 +766,7 @@ class ReceiptWorkflow:
         field_name: str | None,
         *,
         invalid: bool = False,
+        user_id: int | None = None,
     ) -> str:
         text = _MANUAL_EDIT_PROMPTS.get(field_name, "") if field_name else ""
         if invalid:
@@ -773,7 +778,8 @@ class ReceiptWorkflow:
             elif field_name == "total_amount":
                 value = texts.amount_text(payload)
             text += texts.FIELD_SUGGESTION.format(value=texts.safe_text(value))
-        return text + "\n\n" + self._mode_text(payload)
+        mode = self._mode_text(payload, user_id)
+        return text + (f"\n\n{mode}" if mode else "")
 
     @staticmethod
     def _manual_form_keyboard(
@@ -820,7 +826,7 @@ class ReceiptWorkflow:
         await self._save_state(user_id, state, {**state_data, "input_field": field_name})
         try:
             sent = await message.reply_text(
-                self._manual_form_text(payload, field_name, invalid=invalid),
+                self._manual_form_text(payload, field_name, invalid=invalid, user_id=user_id),
                 reply_markup=self._manual_form_keyboard(field_name, payload),
             )
         except TelegramError as error:
@@ -857,7 +863,7 @@ class ReceiptWorkflow:
         try:
             await query.edit_message_text(
                 self._manual_form_text(
-                    payload, field_name, invalid=invalid,
+                    payload, field_name, invalid=invalid, user_id=user_id,
                 ),
                 reply_markup=self._manual_form_keyboard(field_name, payload),
             )
@@ -927,7 +933,8 @@ class ReceiptWorkflow:
     ) -> None:
         receipt = self._receipt_from_payload(payload)
         summary = texts.receipt_confirmation(payload, receipt.confidence)
-        summary += "\n\n" + self._mode_text(payload)
+        mode = self._mode_text(payload, user_id)
+        summary += f"\n\n{mode}" if mode else ""
         await message.reply_text(summary)
         if self._bilancio is None:
             await self._save_state(user_id, "awaiting_confirmation", {"expense_id": expense_id})
@@ -1043,7 +1050,10 @@ class ReceiptWorkflow:
         edit_rows.append([InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")])
         await self._selection_reply(
             query,
-            texts.ACCOUNT_PROMPT + "\n\n" + self._mode_text(payload),
+            texts.ACCOUNT_PROMPT + (
+                f"\n\n{self._mode_text(payload, user_id)}"
+                if self._mode_text(payload, user_id) else ""
+            ),
             reply_markup=self._option_keyboard(options, extra_rows=edit_rows),
         )
 
@@ -1365,7 +1375,7 @@ class ReceiptWorkflow:
         await self._update_summary(
             update, context, user_id, payload, state_data,
             f"{texts.INSERTING}\n\n{self._operation_details(payload, state_data)}\n\n"
-            f"{self._mode_text(payload)}",
+            f"{self._mode_text(payload, user_id)}",
         )
 
         if self._bilancio is None:
@@ -1607,7 +1617,7 @@ class ReceiptWorkflow:
         await self._save_state(user_id, "awaiting_notes", state_data)
         text = texts.NOTES_PROMPT.format(
             details=self._operation_details(payload, state_data),
-            mode=self._mode_text(payload),
+            mode=self._mode_text(payload, user_id),
         )
         keyboard = InlineKeyboardMarkup(
             [

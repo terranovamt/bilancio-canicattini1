@@ -96,6 +96,12 @@ MODE_CHANGED = (
 )
 MODE_CHANGE_FAILED = "❌ Non riesco a cambiare modalità. Non ho modificato l’impostazione: riprova."
 MODE_TRIAL = "🧪 Modalità PROVA: non viene salvato nulla nel portale."
+TEST_DISABLED = "Modalità prova disattivata."
+SUMMARY_TOTALS = (
+    "Totale di tutte le casse e conti\n"
+    "Saldo iniziale: {opening}\nEntrate: {income}\n"
+    "Uscite: {expense}\nSaldo finale: {balance}"
+)
 MODE_REAL = "✅ Modalità REALE: dopo la tipologia e la nota facoltativa salvo nel portale, senza altre conferme."
 COMMAND_START = "Apri il menu del bot"
 COMMAND_HELP = "Guida e comandi"
@@ -533,6 +539,11 @@ def safe_text(value: object, limit: int = 200) -> str:
     return " ".join(str(value).split())[:limit] if value is not None else ""
 
 
+def account_text(value: object, limit: int = 200) -> str:
+    # A space prevents Telegram from detecting the abbreviation as a domain.
+    return safe_text(value, limit).replace("Co.ca", "Co. ca").replace("co.ca", "co. ca")
+
+
 def date_text(value: object, *, short: bool = False) -> str:
     if not value:
         return ""
@@ -590,6 +601,8 @@ def operation_details(
             continue
         option = selections.get(key)
         value = safe_text(option.get("label")) if isinstance(option, dict) else ""
+        if key == "account" and isinstance(option, dict):
+            value = account_text(option.get("label"))
         if value:
             lines.append(template.format(value=value))
     notes = safe_text(selections.get("portal_notes"), limit=500)
@@ -651,7 +664,7 @@ def expense_row(
     ]
     account = payload.get("account")
     if not queued and isinstance(account, dict):
-        fields.append(safe_text(account.get("label"), 80))
+        fields.append(account_text(account.get("label"), 80))
     if queued:
         fields.append(QUEUE_WAITING if status == "queued" else STATUS_REVIEW)
         return ROW_SEPARATOR.join(field for field in fields if field)

@@ -128,14 +128,19 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
                 reopened.initialize()
                 self.assertEqual(reopened.get_test_mode(default=False), expected)
                 rendered = self.rendered(update)
-                self.assertIn(messages.MODE_TRIAL if expected else messages.MODE_REAL, rendered.args[0])
+                self.assertEqual(messages.MODE_TRIAL in rendered.args[0], expected)
+                self.assertNotIn(messages.MODE_REAL, rendered.args[0])
                 labels = [b.text for row in rendered.kwargs["reply_markup"].keyboard for b in row]
                 self.assertIn(messages.MENU_TEST_OFF_BUTTON if expected else messages.MENU_TEST_ON_BUTTON, labels)
                 home = self.update("home", user_id=67890)
                 await application.menu_callback(home, self.context)
-                self.assertIn(
-                    messages.MODE_TRIAL if expected else messages.MODE_REAL,
-                    home.effective_message.reply_text.await_args.args[0],
+                self.assertNotIn(messages.MODE_TRIAL, home.effective_message.reply_text.await_args.args[0])
+                self.assertNotIn(messages.MODE_REAL, home.effective_message.reply_text.await_args.args[0])
+                admin_home = self.update("home")
+                await application.menu_callback(admin_home, self.context)
+                self.assertEqual(
+                    messages.MODE_TRIAL in admin_home.effective_message.reply_text.await_args.args[0],
+                    expected,
                 )
         self.portal.create_expense.assert_not_awaited()
 
@@ -255,7 +260,7 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
     async def test_repeated_admin_button_does_not_repeat_identical_edit(self) -> None:
         update = self.update("admin")
         query = update.callback_query
-        query.message.text = messages.MENU_ADMIN + "\n\n" + messages.MODE_REAL
+        query.message.text = messages.MENU_ADMIN
         query.message.reply_markup = application._admin_keyboard(False)
         await application.menu_callback(update, self.context)
         query.answer.assert_awaited_once_with()

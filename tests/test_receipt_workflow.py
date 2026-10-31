@@ -112,6 +112,15 @@ def make_settings() -> Settings:
 
 
 class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
+    def test_mode_label_is_only_trial_and_only_for_admin(self) -> None:
+        for trial in (True, False):
+            for user_id in (12345, 67890):
+                text = self.workflow._manual_form_text(
+                    {"dry_run": trial}, "merchant", user_id=user_id,
+                )
+                self.assertNotIn(texts.MODE_REAL, text)
+                self.assertEqual(texts.MODE_TRIAL in text, trial and user_id == 12345)
+
     def setUp(self) -> None:
         preprocessing = patch(
             "storage.archive.preprocess_receipt", return_value=[b"synthetic corrected image"]
@@ -903,7 +912,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state[0], "awaiting_receipt_data")
         expense_id = state[1]["expense_id"]
         self.assertEqual(portal.submitted, [])
-        self.assertIn(texts.MODE_REAL, message.reply_text.await_args.args[0])
+        self.assertNotIn(texts.MODE_REAL, message.reply_text.await_args.args[0])
         user = update.effective_user
         for _ in range(2):
             await self._tap(workflow, user, "receipt:accept")
@@ -1495,7 +1504,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         state = self.database.get_conversation_state(12345)
         self.assertEqual(state[0], "awaiting_receipt_data")
         self.assertIsNone(self.database.get_expense(state[1]["expense_id"]).payload["total_amount"])
-        self.assertIn(texts.MODE_REAL, message.reply_text.await_args.args[0])
+        self.assertNotIn(texts.MODE_REAL, message.reply_text.await_args.args[0])
         for value in ("Quota", "29/10/2026", "10"):
             await workflow.handle_text(
                 SimpleNamespace(message=SimpleNamespace(text=value, reply_text=AsyncMock()),

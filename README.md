@@ -201,6 +201,12 @@ Per la prima prova usa una descrizione chiaramente riconoscibile e controlla con
 
 ### Riepilogo delle casse
 
+Nei messaggi Telegram l'abbreviazione `Co.ca` viene mostrata come `Co. ca`, per evitare che sia interpretata come un link. Il nome effettivo sul portale e nel database non cambia.
+
+L'amministratore vede anche le somme di tutte le casse e conti: saldo iniziale, entrate, uscite e saldo finale. Le somme usano lo stesso riepilogo del portale, anche quando viene mostrata una copia conservata con avviso e timestamp; non sono ricavate dalle sole operazioni del bot.
+
+La modalità reale è il comportamento predefinito e non viene più indicata con una scritta nei menu o durante l'inserimento. Solo l'amministratore vede «Modalità PROVA» quando attiva. L'esito di una simulazione continua a dire chiaramente che non è stato salvato nulla, anche agli altri utenti.
+
 `/riepilogo` legge dal portale AGESCI, in sola lettura, i saldi di tutte le casse dell'anno scout corrente. Lo possono usare tutti gli utenti autorizzati e non modifica nulla.
 
 1. Su Telegram invia `/riepilogo`.

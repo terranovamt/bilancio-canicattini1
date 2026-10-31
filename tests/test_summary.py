@@ -32,6 +32,28 @@ def ledger(label: str, entries: list[LedgerEntry], balance: str, *, complete: bo
 
 
 class SummaryFormatTests(unittest.TestCase):
+    def test_totals_sum_all_accounts_without_float_rounding(self) -> None:
+        samples = [
+            AccountLedger(
+                account=PortalOption(label, label), opening_balance=Decimal(opening),
+                total_income=Decimal(income), total_expense=Decimal(expense),
+                balance=Decimal(balance), entries=(), total_rows=0, complete=True,
+                entries_available=False,
+            )
+            for label, opening, income, expense, balance in (
+                ("A", "10.10", "2.20", "3.30", "9.00"),
+                ("B", "0.00", "0.00", "0.01", "-0.01"),
+            )
+        ]
+        text = "\n".join(format_ledger_summary(samples, 2026, include_totals=True))
+        self.assertIn(
+            "Totale di tutte le casse e conti\nSaldo iniziale: 10,10 €\n"
+            "Entrate: 2,20 €\nUscite: 3,31 €\nSaldo finale: 8,99 €", text,
+        )
+        self.assertNotIn(
+            "Totale di tutte le casse", "\n".join(format_ledger_summary(samples, 2026)),
+        )
+
     def test_overview_does_not_claim_no_movements_when_entries_were_not_read(self) -> None:
         sample = AccountLedger(
             account=PortalOption("Cassa test", "Cassa test"),
