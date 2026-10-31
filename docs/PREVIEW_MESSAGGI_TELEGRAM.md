@@ -39,24 +39,20 @@ La modalità è indicata per tutti. Se l'amministratore ha attivato la prova, l'
 [📷 Nuovo scontrino] [💰 Nuova entrata]
 [📊 Riepilogo] [📋 Ultime operazioni]
 [⏳ Operazioni in attesa] [❓ Aiuto]
-[⚙️ Amministrazione]
+[⚙️ Amministrazione] [📊 Stato API]
 ```
 
 **⚙️ Amministrazione** sostituisce la tastiera persistente in basso con gli strumenti amministratore:
 
-**✖️ Annulla operazione** appare nel menu principale solo durante un inserimento attivo (nella stessa riga di Amministrazione per l'admin). Sparisce alla conclusione o all'annullamento. Il menu rilegge lo stato anche con `/start` e dopo un riavvio; le operazioni già in coda non fanno comparire questo pulsante. I pulsanti «Annulla» nel riepilogo attivo e `/annulla` restano disponibili.
+Tutti i pulsanti sono a coppie. **✖️ Annulla operazione** appare solo durante un inserimento attivo, da solo nell'ultima riga a tutta larghezza, sia nel menu principale sia in Amministrazione. Sparisce alla conclusione o all'annullamento. Il menu rilegge lo stato anche con `/start` e dopo un riavvio; le operazioni già in coda non fanno comparire questo pulsante. I pulsanti «Annulla» nel riepilogo attivo e `/annulla` restano disponibili.
 
 La schermata Amministrazione contiene:
 
 ```text
-[✍️ Inserisci a mano]
-[🧪 Attiva modalità prova]
-[🔌 Verifica collegamento]
-[🔄 Aggiorna casse e tipologie]
-[🔖 Versione e aggiornamenti]
-[📊 Stato API]
-[🧹 Pulisci cronologia]
-[🏠 Menu principale]
+[✍️ Inserisci a mano] [📊 Stato API]
+[🔖 Versione e aggiornamenti] [🧪 Attiva modalità prova]
+[🔌 Verifica collegamento] [🔄 Aggiorna casse e tipologie]
+[🧹 Pulisci cronologia] [🏠 Menu principale]
 ```
 
 Versione attiva e disponibile vengono mostrate nella schermata **Versione e aggiornamenti**, con **Installa aggiornamento** e **Indietro**. Il pulsante di installazione apre la conferma, non installa subito. La pulizia mantiene la propria conferma.
@@ -72,7 +68,7 @@ Disponibile secondo il contatore locale; disponibilità Google non verificata.
 
 La testata mostra data e ora della lettura, soglia di avviso e prossimo giorno del contatore Pacifico nell'ora locale del bot. I blocchi indicano l'attesa locale o quella suggerita da Google; se Google non comunica il reset, la sospensione prudenziale del bot è distinta da un reset remoto confermato. Il consumo riguarda solo il bot, non AI Studio o altri programmi. Tutti i modelli della catena compaiono nell'ordine configurato; nessuna chiave o ricevuta è mostrata.
 
-In prova il primo pulsante diventa **✅ Torna ai salvataggi reali**. La scelta resta nel database anche dopo il riavvio e vale per tutti i nuovi inserimenti; quelli già iniziati mantengono la loro modalità.
+In prova **Attiva modalità prova** diventa **✅ Torna ai salvataggi reali**. La scelta resta nel database anche dopo il riavvio e vale per tutti i nuovi inserimenti; quelli già iniziati mantengono la loro modalità.
 
 ### 3 · Aiuto
 

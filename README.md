@@ -168,6 +168,8 @@ L'amministratore può consultare **Amministrazione → 📊 Stato API** oppure `
 
 Nel menu Amministrazione resta **Versione e aggiornamenti**; **Installa aggiornamento** è dentro quella schermata, senza un secondo pulsante duplicato nel menu. Restano il comando `/aggiorna`, la conferma prima dell'installazione e il pulsante nelle notifiche di nuova versione.
 
+I menu fissi hanno **due pulsanti per riga**. Per l'admin, nel menu principale **Amministrazione** è affiancato da **Stato API**. Dentro Amministrazione le coppie sono: Inserisci a mano / Stato API, Versione e aggiornamenti / Modalità prova, Verifica collegamento / Aggiorna casse e tipologie, Pulisci cronologia / Menu principale. L'unica eccezione è **Annulla operazione**, visibile quando serve **da solo nell'ultima riga**, a tutta larghezza, anche in Amministrazione. I messaggi generati premendo i pulsanti restano in chat. La disposizione è consultabile nelle [anteprime](docs/PREVIEW_MESSAGGI_TELEGRAM.md).
+
 **Annulla operazione** compare nel menu principale solo se c'è un inserimento in corso, non per gli elementi già nella coda dei ritentativi. La tastiera si aggiorna all'avvio dell'inserimento (per gli scontrini dopo aver conservato il file, prima dell'analisi), alla conclusione e all'annullamento. Aprire il menu o usare `/start` rilegge lo stato persistente, anche dopo un riavvio. Un breve messaggio segnala il cambio di tastiera, senza ripeterlo ad ogni campo. Restano i pulsanti «Annulla» dentro l'inserimento e il comando `/annulla`; durante una lavorazione lunga le azioni che modificano lo stato restano sequenziali.
 
 ### Menu e opzioni contabili

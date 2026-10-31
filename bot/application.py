@@ -331,13 +331,10 @@ def _menu_keyboard(admin: bool, *, pending: bool = False) -> ReplyKeyboardMarkup
         [texts.MENU_SUMMARY_BUTTON, texts.MENU_LATEST_BUTTON],
         [texts.MENU_QUEUE_BUTTON, texts.MENU_HELP_BUTTON],
     ]
-    last_row: list[str] = []
-    if pending:
-        last_row.append(texts.MENU_CANCEL_BUTTON)
     if admin:
-        last_row.append(texts.MENU_ADMIN_BUTTON)
-    if last_row:
-        rows.append(last_row)
+        rows.append([texts.MENU_ADMIN_BUTTON, texts.MENU_API_STATUS_BUTTON])
+    if pending:
+        rows.append([texts.MENU_CANCEL_BUTTON])
     return ReplyKeyboardMarkup(
         rows,
         resize_keyboard=True,
@@ -348,6 +345,7 @@ def _menu_keyboard(admin: bool, *, pending: bool = False) -> ReplyKeyboardMarkup
 
 async def _current_menu_keyboard(
     update: Update, context: ContextTypes.DEFAULT_TYPE,
+    *, admin_menu: bool = False, test_mode: bool | None = None,
 ) -> ReplyKeyboardMarkup:
     settings: Settings = context.application.bot_data["settings"]
     database: Database = context.application.bot_data["database"]
@@ -358,6 +356,11 @@ async def _current_menu_keyboard(
     if user is not None:
         visibility = context.application.bot_data.setdefault("operation_menu_visibility", {})
         visibility[user.id] = pending
+        screens = context.application.bot_data.setdefault("operation_menu_screens", {})
+        screens[user.id] = admin_menu
+    if admin_menu:
+        mode = await _test_mode(context, settings) if test_mode is None else test_mode
+        return _admin_keyboard(mode, pending=pending)
     return _menu_keyboard(_is_admin(update, settings), pending=pending)
 
 
@@ -378,10 +381,19 @@ async def sync_operation_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     if visibility.get(user.id, False) == pending:
         return
     try:
+        screens = context.application.bot_data.get("operation_menu_screens", {})
+        if _is_admin(update, settings) and screens.get(user.id, False):
+            keyboard = _admin_keyboard(await _test_mode(context, settings), pending=pending)
+        else:
+            keyboard = _menu_keyboard(_is_admin(update, settings), pending=pending)
         await message.reply_text(
             texts.OPERATION_MENU_ACTIVE if pending else texts.OPERATION_MENU_FINISHED,
-            reply_markup=_menu_keyboard(_is_admin(update, settings), pending=pending),
+            reply_markup=keyboard,
         )
+    except sqlite3.Error as error:
+        logger.error("Could not read operation menu mode: %s", type(error).__name__)
+        await message.reply_text(texts.OPERATION_MENU_FAILED)
+        return
     except TelegramError as error:
         logger.warning("Could not refresh operation menu: %s", type(error).__name__)
         return
@@ -414,16 +426,16 @@ _ADMIN_ACTIONS = {
 }
 
 
-def _admin_keyboard(test_mode: bool = False) -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup([
-        [texts.MENU_MANUAL_BUTTON],
-        [texts.MENU_TEST_OFF_BUTTON if test_mode else texts.MENU_TEST_ON_BUTTON],
+def _admin_keyboard(test_mode: bool = False, *, pending: bool = False) -> ReplyKeyboardMarkup:
+    rows = [
+        [texts.MENU_MANUAL_BUTTON, texts.MENU_API_STATUS_BUTTON],
+        [texts.MENU_VERSION_BUTTON, texts.MENU_TEST_OFF_BUTTON if test_mode else texts.MENU_TEST_ON_BUTTON],
         [texts.MENU_HEALTH_BUTTON, texts.MENU_OPTIONS_BUTTON],
-        [texts.MENU_VERSION_BUTTON],
-        [texts.MENU_API_STATUS_BUTTON],
-        [texts.MENU_CLEAN_BUTTON],
-        [texts.HOME_BUTTON],
-    ], resize_keyboard=True, is_persistent=True,
+        [texts.MENU_CLEAN_BUTTON, texts.HOME_BUTTON],
+    ]
+    if pending:
+        rows.append([texts.MENU_CANCEL_BUTTON])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True, is_persistent=True,
         input_field_placeholder=texts.MENU_PLACEHOLDER)
 
 
@@ -507,7 +519,7 @@ async def _run_menu_action(
         await _show_command_screen(
             update,
             texts.MENU_ADMIN + (f"\n\n{texts.MODE_TRIAL}" if test_mode else ""),
-            _admin_keyboard(test_mode),
+            await _current_menu_keyboard(update, context, admin_menu=True, test_mode=test_mode),
         )
     elif action in {"test_on", "test_off"}:
         database: Database = context.application.bot_data["database"]
@@ -524,7 +536,7 @@ async def _run_menu_action(
         await _show_command_screen(
             update,
             texts.MODE_CHANGED.format(mode=texts.MODE_TRIAL) if enabled else texts.TEST_DISABLED,
-            _admin_keyboard(enabled),
+            await _current_menu_keyboard(update, context, admin_menu=True, test_mode=enabled),
         )
     elif action == "version":
         status = await asyncio.to_thread(_version_status, context, settings)

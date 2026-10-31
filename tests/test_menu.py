@@ -22,6 +22,46 @@ from vision.receipt_schema import ReceiptData
 
 
 class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
+    def test_paired_layouts_and_full_width_cancel_as_last_row(self) -> None:
+        for admin in (False, True):
+            for pending in (False, True):
+                keyboard = application._menu_keyboard(admin, pending=pending).keyboard
+                pairs = keyboard[:-1] if pending else keyboard
+                self.assertTrue(all(len(row) == 2 for row in pairs))
+                if pending:
+                    self.assertEqual([b.text for b in keyboard[-1]], [messages.MENU_CANCEL_BUTTON])
+                if admin:
+                    self.assertEqual([b.text for b in pairs[-1]], [messages.MENU_ADMIN_BUTTON, messages.MENU_API_STATUS_BUTTON])
+        for mode in (False, True):
+            for pending in (False, True):
+                keyboard = application._admin_keyboard(mode, pending=pending).keyboard
+                pairs = keyboard[:-1] if pending else keyboard
+                self.assertEqual(len(pairs), 4)
+                self.assertTrue(all(len(row) == 2 for row in pairs))
+                self.assertEqual([b.text for b in pairs[0]], [messages.MENU_MANUAL_BUTTON, messages.MENU_API_STATUS_BUTTON])
+                self.assertEqual([b.text for b in pairs[1]], [
+                    messages.MENU_VERSION_BUTTON, messages.MENU_TEST_OFF_BUTTON if mode else messages.MENU_TEST_ON_BUTTON
+                ])
+                self.assertEqual([b.text for b in pairs[-1]], [messages.MENU_CLEAN_BUTTON, messages.HOME_BUTTON])
+                if pending:
+                    self.assertEqual([b.text for b in keyboard[-1]], [messages.MENU_CANCEL_BUTTON])
+
+    async def test_admin_screen_keeps_paired_layout_when_pending_state_changes(self) -> None:
+        await application.menu_text(self.text_update(messages.MENU_ADMIN_BUTTON), self.context)
+        await application.menu_text(self.text_update(messages.MENU_MANUAL_BUTTON), self.context)
+        active = self.text_update("active")
+        await application.sync_operation_menu(active, self.context)
+        rows = active.message.reply_text.await_args.kwargs["reply_markup"].keyboard
+        self.assertEqual([b.text for b in rows[-1]], [messages.MENU_CANCEL_BUTTON])
+        self.assertEqual([b.text for b in rows[0]], [messages.MENU_MANUAL_BUTTON, messages.MENU_API_STATUS_BUTTON])
+        self.database.delete_conversation_state(12345)
+        done = self.text_update("done")
+        await application.sync_operation_menu(done, self.context)
+        rows = done.message.reply_text.await_args.kwargs["reply_markup"].keyboard
+        self.assertTrue(all(len(row) == 2 for row in rows))
+        self.assertNotIn(messages.MENU_CANCEL_BUTTON, [b.text for row in rows for b in row])
+        self.assertEqual([b.text for b in rows[-1]], [messages.MENU_CLEAN_BUTTON, messages.HOME_BUTTON])
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
