@@ -219,16 +219,22 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         state = self.database.get_conversation_state(12345)
         self.assertIsNotNone(state)
         assert state is not None
-        self.assertEqual(state[0], "awaiting_receipt_data")
+        self.assertEqual(state[0], "awaiting_confirmation")
         expense_id = state[1]["expense_id"]
         expense = self.database.get_expense(str(expense_id))
         self.assertIsNotNone(expense)
         assert expense is not None
         self.assertEqual(expense.payload["merchant"], "Negozio")
         self.assertTrue(Path(str(expense.payload["pending_path"])).is_file())
-        self.assertEqual(state[1]["input_field"], "merchant")
-        self.assertIn("Valore letto: Negozio", message.reply_text.await_args.args[0])
-        self.assertIsNotNone(message.reply_text.await_args.kwargs["reply_markup"])
+        shown = message.reply_text.await_args
+        self.assertIn(texts.RECEIPT_REVIEW, shown.args[0])
+        for value in ("Negozio", "12,50", "26/10/2026"):
+            self.assertIn(value, shown.args[0])
+        self.assertEqual(
+            self._buttons(shown.kwargs["reply_markup"]),
+            ["receipt:confirm", "receipt:edit:date", "receipt:edit:total_amount",
+             "receipt:edit:merchant", "receipt:cancel"],
+        )
 
     async def test_requests_missing_date_before_confirmation(self) -> None:
         self.analyzer.receipt = ReceiptData(
@@ -245,7 +251,9 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(state)
         assert state is not None
         self.assertEqual(state[0], "awaiting_receipt_data")
-        self.assertIn(texts.MANUAL_MERCHANT, message.reply_text.await_args.args[0])
+        self.assertEqual(state[1]["input_field"], "date")
+        self.assertEqual(state[1]["missing_fields"], ["date"])
+        self.assertIn(texts.MISSING_DATE, message.reply_text.await_args.args[0])
 
     async def test_persists_manual_recovery_before_analysis_and_bounds_total_wait(self) -> None:
         async def stalled_analysis(file_bytes: bytes, file_name: str) -> ReceiptData:
@@ -374,9 +382,8 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         )
         message, receipt_update, receipt_context = self.make_photo_update(b"receipt")
         await workflow.receive_receipt(receipt_update, receipt_context)
-        for _ in range(3):
-            proposal = await self._tap(workflow, receipt_update.effective_user, "receipt:accept")
-        account_markup = proposal.message.reply_text.await_args.kwargs["reply_markup"]
+        proposal = await self._tap(workflow, receipt_update.effective_user, "receipt:confirm")
+        account_markup = proposal.edit_message_text.await_args.kwargs["reply_markup"]
         self.assertEqual(
             account_markup.inline_keyboard[0][0].text,
             "Cassa dinamica",
@@ -444,7 +451,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             "receipt:confirm",
             "receipt:choose:0",
             "receipt:choose:0",
-            "receipt:no_notes",
+            "receipt:save",
         ):
             query = self.make_query(callback_data)
             await workflow.handle_callback(
@@ -472,7 +479,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         for expected in (
             "Prova Telegram",
             "0,10 € (entrata)",
-            "🏦 Cassa Co.ca",
+            "🏦 Cassa Co. ca",
             "🏷️ Tipo entrata",
             "👥 Gruppo G1",
         ):
@@ -491,7 +498,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             "receipt:choose:0",
             "receipt:direction:entrata",
             "receipt:choose:0",
-            "receipt:no_notes",
+            "receipt:save",
         ):
             query = await self._tap(workflow, user, data)
         result_text = query.edit_message_text.await_args.args[0]
@@ -510,7 +517,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             "receipt:choose:0",
             "receipt:direction:entrata",
             "receipt:choose:0",
-            "receipt:no_notes",
+            "receipt:save",
         ):
             query = await self._tap(workflow, user, data, context)
 
@@ -546,7 +553,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             "receipt:confirm",
             "receipt:choose:0",
             "receipt:choose:0",
-            "receipt:no_notes",
+            "receipt:save",
         ):
             await self._tap(workflow, SimpleNamespace(id=12345), data)
         self.assertTrue(portal.submitted[0][1])
@@ -579,7 +586,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
                 for data in (
                     "receipt:confirm", "receipt:choose:0",
                     "receipt:choose:0",
-                    "receipt:no_notes",
+                    "receipt:save",
                 ):
                     query = await self._tap(workflow, SimpleNamespace(id=12345), data, context)
                 text = query.edit_message_text.await_args.args[0]
@@ -666,7 +673,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             ),
             SimpleNamespace(),
         )
-        await self._tap(workflow, user, "receipt:no_notes")
+        await self._tap(workflow, user, "receipt:save")
 
         self.assertIsNone(self.database.get_conversation_state(user.id))
         self.assertEqual(
@@ -690,13 +697,11 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         )
         _, receipt_update, receipt_context = self.make_photo_update(b"receipt")
         await workflow.receive_receipt(receipt_update, receipt_context)
-        for _ in range(3):
-            await self._tap(workflow, receipt_update.effective_user, "receipt:accept")
         for callback_data in (
             "receipt:confirm",
             "receipt:choose:0",
             "receipt:choose:0",
-            "receipt:no_notes",
+            "receipt:save",
         ):
             query = self.make_query(callback_data)
             await workflow.handle_callback(
@@ -826,7 +831,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
                     "receipt:choose:0",
                     f"receipt:direction:{direction.value}",
                     "receipt:choose:0",
-                    "receipt:no_notes",
+                    "receipt:save",
                 ):
                     query = self.make_query(callback)
                     await workflow.handle_callback(
@@ -875,7 +880,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             button.callback_data for row in markup.inline_keyboard for button in row
         ])
         for data in (
-            "receipt:choose:0", "receipt:direction:uscita", "receipt:choose:0", "receipt:no_notes",
+            "receipt:choose:0", "receipt:direction:uscita", "receipt:choose:0", "receipt:save",
         ):
             query = await self._tap(workflow, user, data)
         self.assertEqual(len(portal.submitted), 1)
@@ -909,19 +914,20 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         message, update, context = self.make_photo_update(b"real-default")
         await workflow.receive_receipt(update, context)
         state = self.database.get_conversation_state(12345)
-        self.assertEqual(state[0], "awaiting_receipt_data")
+        self.assertEqual(state[0], "awaiting_confirmation")
         expense_id = state[1]["expense_id"]
         self.assertEqual(portal.submitted, [])
         self.assertNotIn(texts.MODE_REAL, message.reply_text.await_args.args[0])
         user = update.effective_user
-        for _ in range(2):
-            await self._tap(workflow, user, "receipt:accept")
+        await self._tap(workflow, user, "receipt:edit:total_amount")
         edited = SimpleNamespace(text="9,50", reply_text=AsyncMock())
         await workflow.handle_text(SimpleNamespace(message=edited, effective_user=user), context)
-        self.assertEqual(self.database.get_conversation_state(12345)[0], "awaiting_account")
+        self.assertEqual(self.database.get_conversation_state(12345)[0], "awaiting_confirmation")
         self.database.set_test_mode(True)
-        for data in ("receipt:choose:0", "receipt:choose:0", "receipt:no_notes"):
+        for data in ("receipt:confirm", "receipt:choose:0", "receipt:choose:0"):
             await self._tap(workflow, user, data)
+        self.assertEqual(portal.submitted, [])
+        await self._tap(workflow, user, "receipt:save")
         self.assertEqual(len(portal.submitted), 1)
         self.assertFalse(portal.submitted[0][1])
         self.assertEqual(portal.submitted[0][0].amount, Decimal("9.50"))
@@ -930,7 +936,6 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(Path(stored.archive_path).is_file())
         stale = await self._tap(workflow, user, "receipt:choose:0")
         stale.answer.assert_awaited_once_with(texts.STALE_BUTTON)
-        self.assertEqual(len(portal.submitted), 1)
 
     async def _start_manual(self, workflow: ReceiptWorkflow, user) -> str:
         await workflow.start_manual_expense(
@@ -965,13 +970,12 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             query.edit_message_text.assert_not_awaited()
             self.assertEqual(self.database.get_conversation_state(user.id), before)
 
-    async def _tap(self, workflow: ReceiptWorkflow, user, data: str, context=None):
-        if data == "receipt:confirm":
-            saved = self.database.get_conversation_state(user.id)
-            if saved and saved[0] == "awaiting_receipt_data":
-                for _ in range(3):
-                    await self._tap(workflow, user, "receipt:accept", context)
+    async def _tap(
+        self, workflow: ReceiptWorkflow, user, data: str, context=None, *, message_id=None
+    ):
         query = self.make_query(data)
+        if message_id is not None:
+            query.message.chat_id, query.message.message_id = user.id, message_id
         await workflow.handle_callback(
             SimpleNamespace(
                 callback_query=query,
@@ -1023,7 +1027,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             "receipt:choose:0",
             "receipt:direction:entrata",
             "receipt:choose:0",
-            "receipt:no_notes",
+            "receipt:save",
         ):
             await self._tap(workflow, user, data)
         before = self.database.get_conversation_state(user.id)
@@ -1039,7 +1043,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(portal.list_transaction_types.await_count, 1)
         self.assertEqual(len(portal.submitted), 1)
 
-    async def test_detail_is_requested_and_typing_it_saves_immediately(self) -> None:
+    async def test_note_text_updates_final_summary_and_only_accept_saves(self) -> None:
         portal = FakeBilancioClient()
         workflow = self._manual_portal_workflow(portal)
         user = SimpleNamespace(id=12345)
@@ -1051,43 +1055,63 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             "receipt:choose:0",
         ):
             query = await self._tap(workflow, user, data)
-        self.assertEqual(self.database.get_conversation_state(user.id)[0], "awaiting_notes")
+        self.assertEqual(
+            self.database.get_conversation_state(user.id)[0], "awaiting_final_confirmation"
+        )
         self.assertEqual(portal.submitted, [])
-        prompt = query.edit_message_text.await_args
-        self.assertIn("🗒️ Vuoi aggiungere una NOTA?", prompt.args[0])
-        self.assertIn("Prova Telegram", prompt.args[0])
-        buttons = [
-            button.callback_data
-            for row in prompt.kwargs["reply_markup"].inline_keyboard
-            for button in row
-        ]
-        self.assertEqual(buttons, ["receipt:no_notes", "receipt:cancel"])
+        summary = query.edit_message_text.await_args
+        self.assertIn(texts.FINAL_SUMMARY_TITLE, summary.args[0])
+        self.assertIn(texts.NO_NOTES_LINE, summary.args[0])
+        self.assertIn("Prova Telegram", summary.args[0])
+        self.assertEqual(
+            self._buttons(summary.kwargs["reply_markup"]),
+            ["receipt:save", "receipt:modify", "receipt:cancel"],
+        )
 
+        await self._tap(workflow, user, "receipt:modify")
+        note_prompt = await self._tap(workflow, user, "receipt:edit:notes")
+        self.assertEqual(self.database.get_conversation_state(user.id)[0], "awaiting_notes")
+        self.assertEqual(
+            self._buttons(note_prompt.edit_message_text.await_args.kwargs["reply_markup"]),
+            ["receipt:back", "receipt:cancel"],
+        )
         too_long = SimpleNamespace(text="x" * 501, reply_text=AsyncMock())
         await workflow.handle_text(
             SimpleNamespace(message=too_long, effective_user=user), SimpleNamespace()
         )
         self.assertIn("troppo lunga", too_long.reply_text.await_args.args[0])
-        self.assertEqual(portal.submitted, [])
+        self.assertEqual(self.database.get_conversation_state(user.id)[0], "awaiting_notes")
 
-        progress = SimpleNamespace(edit_text=AsyncMock())
         detail = SimpleNamespace(
-            text="  Pizza uscita sabato  ", reply_text=AsyncMock(return_value=progress)
+            text="  Pizza uscita sabato  ",
+            reply_text=AsyncMock(return_value=SimpleNamespace(chat_id=12345, message_id=78)),
         )
-        state, state_data = self.database.get_conversation_state(user.id)
-        state_data.update(summary_chat_id=12345, summary_message_id=77)
-        self.database.save_conversation_state(user.id, state, state_data)
         bot = SimpleNamespace(edit_message_text=AsyncMock())
         await workflow.handle_text(
             SimpleNamespace(message=detail, effective_user=user), SimpleNamespace(bot=bot)
         )
+        # The note returns to the final summary: nothing is saved before «Accetta».
+        self.assertEqual(portal.submitted, [])
+        state, data = self.database.get_conversation_state(user.id)
+        self.assertEqual(state, "awaiting_final_confirmation")
+        self.assertEqual(data["portal_notes"], "Pizza uscita sabato")
+        self.assertEqual(data["summary_message_id"], 78)
+        shown = detail.reply_text.await_args
+        self.assertIn("🗒️ Pizza uscita sabato", shown.args[0])
+        self.assertNotIn(texts.NO_NOTES_LINE, shown.args[0])
+        bot.edit_message_text.assert_not_awaited()
+
+        accept = self.make_query("receipt:save")
+        accept.message.chat_id, accept.message.message_id = 12345, 78
+        await workflow.handle_callback(SimpleNamespace(
+            callback_query=accept, effective_message=accept.message, effective_user=user
+        ), SimpleNamespace(bot=bot))
         self.assertEqual(len(portal.submitted), 1)
         self.assertEqual(portal.submitted[0][0].notes, "Pizza uscita sabato")
         self.assertIsNone(self.database.get_conversation_state(user.id))
-        detail.reply_text.assert_not_awaited()
         self.assertEqual(bot.edit_message_text.await_count, 2)
         for call in bot.edit_message_text.await_args_list:
-            self.assertEqual(call.kwargs["message_id"], 77)
+            self.assertEqual(call.kwargs["message_id"], 78)
             self.assertIsNone(call.kwargs["reply_markup"])
         self.assertIn(texts.INSERTING, bot.edit_message_text.await_args_list[0].kwargs["text"])
         result = bot.edit_message_text.await_args.kwargs["text"]
@@ -1112,22 +1136,29 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
                     callback_query=query, effective_message=query.message, effective_user=user
                 ), context)
                 self.assertEqual(self.database.get_conversation_state(user.id)[1]["summary_message_id"], 77)
-                workflow._database = Database(self.root / "bot.sqlite3")
-                message = SimpleNamespace(text="Nota esempio", reply_text=AsyncMock())
+                summary_id = 77
                 if note_as_text:
+                    await self._tap(workflow, user, "receipt:modify", context, message_id=77)
+                    await self._tap(workflow, user, "receipt:edit:notes", context, message_id=77)
+                    message = SimpleNamespace(text="Nota esempio", reply_text=AsyncMock(
+                        return_value=SimpleNamespace(chat_id=12345, message_id=78)
+                    ))
                     await workflow.handle_text(SimpleNamespace(message=message, effective_user=user), context)
-                else:
-                    query = self.make_query("receipt:no_notes")
-                    query.message.chat_id, query.message.message_id = 12345, 77
-                    await workflow.handle_callback(SimpleNamespace(
-                        callback_query=query, effective_message=query.message, effective_user=user
-                    ), context)
-                    query.message.reply_text.assert_not_awaited()
-                message.reply_text.assert_not_awaited()
+                    summary_id = 78
+                self.assertEqual(portal.submitted, [])
+                workflow._database = Database(self.root / "bot.sqlite3")
+                query = self.make_query("receipt:save")
+                query.message.chat_id, query.message.message_id = 12345, summary_id
+                await workflow.handle_callback(SimpleNamespace(
+                    callback_query=query, effective_message=query.message, effective_user=user
+                ), context)
+                query.message.reply_text.assert_not_awaited()
                 calls = context.bot.edit_message_text.await_args_list
                 self.assertEqual(len(calls), 2)
                 for call in calls:
-                    self.assertEqual((call.kwargs["chat_id"], call.kwargs["message_id"]), (12345, 77))
+                    self.assertEqual(
+                        (call.kwargs["chat_id"], call.kwargs["message_id"]), (12345, summary_id)
+                    )
                     self.assertIsNone(call.kwargs["reply_markup"])
                     self.assertIn("Prova Telegram", call.kwargs["text"])
                 self.assertIn(texts.INSERTING, calls[0].kwargs["text"])
@@ -1136,7 +1167,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(portal.submitted[0][1])
                 context.bot.delete_message.assert_not_awaited()
                 stored = self.database.get_expense(expense_id)
-                self.assertEqual(stored.payload["summary_message_id"], 77)
+                self.assertEqual(stored.payload["summary_message_id"], summary_id)
                 self.assertIn(texts.TRIAL_SAVED, stored.payload["telegram_summary_text"])
 
     async def test_summary_edit_errors_preserve_note_and_do_not_resubmit(self) -> None:
@@ -1151,26 +1182,33 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
                 workflow._settings = make_settings()
                 user = SimpleNamespace(id=12345)
                 expense_id = await self._start_manual(workflow, user)
-                for action in ("receipt:confirm", "receipt:choose:0", "receipt:direction:entrata", "receipt:choose:0"):
+                for action in ("receipt:confirm", "receipt:choose:0", "receipt:direction:entrata",
+                               "receipt:choose:0", "receipt:modify", "receipt:edit:notes"):
                     await self._tap(workflow, user, action)
-                state, data = self.database.get_conversation_state(user.id)
-                data.update(summary_chat_id=12345, summary_message_id=77)
-                self.database.save_conversation_state(user.id, state, data)
+                note = SimpleNamespace(text="Nota da conservare", reply_text=AsyncMock(
+                    return_value=SimpleNamespace(chat_id=12345, message_id=77)
+                ))
+                await workflow.handle_text(SimpleNamespace(message=note, effective_user=user), SimpleNamespace())
+                self.assertEqual(portal.submitted, [])
                 bot = SimpleNamespace(edit_message_text=AsyncMock(side_effect=[error, None]))
-                message = SimpleNamespace(text="Nota da conservare", reply_text=AsyncMock(
+                query = self.make_query("receipt:save")
+                query.message.chat_id, query.message.message_id = 12345, 77
+                query.message.reply_text = AsyncMock(
                     return_value=SimpleNamespace(chat_id=12345, message_id=88),
                     side_effect=NetworkError("offline") if fallback_fails else None,
-                ))
-                await workflow.handle_text(SimpleNamespace(message=message, effective_user=user), SimpleNamespace(bot=bot))
+                )
+                await workflow.handle_callback(SimpleNamespace(
+                    callback_query=query, effective_message=query.message, effective_user=user
+                ), SimpleNamespace(bot=bot))
                 self.assertEqual(len(portal.submitted), 1)
                 self.assertEqual(portal.submitted[0][0].notes, "Nota da conservare")
                 stored = self.database.get_expense(expense_id)
                 self.assertEqual(stored.payload["portal_notes"], "Nota da conservare")
                 self.assertIn(texts.TRIAL_SAVED, stored.payload["telegram_summary_text"])
                 if isinstance(error, BadRequest) and "not modified" in str(error):
-                    message.reply_text.assert_not_awaited()
+                    query.message.reply_text.assert_not_awaited()
                 elif not fallback_fails:
-                    message.reply_text.assert_awaited_once()
+                    query.message.reply_text.assert_awaited_once()
                     self.assertEqual(bot.edit_message_text.await_args.kwargs["message_id"], 88)
 
     async def test_total_telegram_delivery_failure_keeps_verified_result_and_note(self) -> None:
@@ -1179,15 +1217,21 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         workflow._settings = make_settings()
         user = SimpleNamespace(id=12345)
         expense_id = await self._start_manual(workflow, user)
-        for action in ("receipt:confirm", "receipt:choose:0", "receipt:direction:entrata", "receipt:choose:0"):
+        for action in ("receipt:confirm", "receipt:choose:0", "receipt:direction:entrata",
+                       "receipt:choose:0", "receipt:modify", "receipt:edit:notes"):
             await self._tap(workflow, user, action)
-        state, data = self.database.get_conversation_state(user.id)
-        data.update(summary_chat_id=12345, summary_message_id=77)
-        self.database.save_conversation_state(user.id, state, data)
+        note = SimpleNamespace(text="Nota privata", reply_text=AsyncMock(
+            return_value=SimpleNamespace(chat_id=12345, message_id=77)
+        ))
+        await workflow.handle_text(SimpleNamespace(message=note, effective_user=user), SimpleNamespace())
         bot = SimpleNamespace(edit_message_text=AsyncMock(side_effect=NetworkError("private")))
-        message = SimpleNamespace(text="Nota privata", reply_text=AsyncMock(side_effect=NetworkError("private")))
+        query = self.make_query("receipt:save")
+        query.message.chat_id, query.message.message_id = 12345, 77
+        query.message.reply_text = AsyncMock(side_effect=NetworkError("private"))
         with self.assertLogs("bot.receipt_workflow", level="WARNING") as logs:
-            await workflow.handle_text(SimpleNamespace(message=message, effective_user=user), SimpleNamespace(bot=bot))
+            await workflow.handle_callback(SimpleNamespace(
+                callback_query=query, effective_message=query.message, effective_user=user
+            ), SimpleNamespace(bot=bot))
         self.assertNotIn("private", "\n".join(logs.output))
         self.assertNotIn("Nota privata", "\n".join(logs.output))
         self.assertEqual(len(portal.submitted), 1)
@@ -1215,7 +1259,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         ), SimpleNamespace())
         self.assertEqual(self.database.get_conversation_state(user.id)[1]["summary_message_id"], 88)
         self.assertEqual(self.database.get_expense(expense_id).payload["summary_message_id"], 88)
-        stale = self.make_query("receipt:no_notes")
+        stale = self.make_query("receipt:save")
         stale.message.message_id = 77
         await workflow.handle_callback(SimpleNamespace(
             callback_query=stale, effective_message=stale.message, effective_user=user
@@ -1224,26 +1268,31 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(portal.submitted, [])
         await workflow.cancel_current(user.id)
 
-    async def test_analysis_proposals_require_each_field_and_allow_text_correction(self) -> None:
+    async def test_analysis_proposals_are_confirmed_once_and_corrected_from_summary(self) -> None:
         portal = FakeBilancioClient()
         self.workflow._bilancio = portal
         message, update, context = self.make_photo_update(b"synthetic-proposals")
         await self.workflow.receive_receipt(update, context)
         user = update.effective_user
         state, data = self.database.get_conversation_state(user.id)
+        self.assertEqual(state, "awaiting_confirmation")
         expense_id = data["expense_id"]
-        self.assertEqual(data["input_field"], "merchant")
-        early = self.make_query("receipt:confirm")
-        await self.workflow.handle_callback(SimpleNamespace(
-            callback_query=early, effective_message=early.message, effective_user=user
-        ), context)
-        early.answer.assert_awaited_once_with(texts.STALE_BUTTON)
-        self.assertEqual(portal.requested_dates, [])
-        for value, expected_field in (("Descrizione corretta", "date"), ("2 3 26", "total_amount")):
+        stale_accept = await self._tap(self.workflow, user, "receipt:accept", context)
+        stale_accept.answer.assert_awaited_once_with(texts.STALE_BUTTON)
+        for field, value in (("merchant", "Descrizione corretta"), ("date", "2 3 26")):
+            prompt = await self._tap(self.workflow, user, f"receipt:edit:{field}", context)
+            self.assertEqual(
+                self._buttons(prompt.edit_message_text.await_args.kwargs["reply_markup"]),
+                ["receipt:back", "receipt:cancel"],
+            )
             typed = SimpleNamespace(text=value, reply_text=AsyncMock())
             await self.workflow.handle_text(SimpleNamespace(message=typed, effective_user=user), context)
-            self.assertEqual(self.database.get_conversation_state(user.id)[1]["input_field"], expected_field)
-        await self._tap(self.workflow, user, "receipt:accept", context)
+            # Each correction returns to the initial summary instead of jumping ahead.
+            self.assertEqual(self.database.get_conversation_state(user.id)[0], "awaiting_confirmation")
+            self.assertIn(texts.RECEIPT_REVIEW, typed.reply_text.await_args.args[0])
+            self.assertIn(value if field == "merchant" else "02/03/2026", typed.reply_text.await_args.args[0])
+        self.assertEqual(portal.requested_dates, [])
+        await self._tap(self.workflow, user, "receipt:confirm", context)
         self.assertEqual(self.database.get_conversation_state(user.id)[0], "awaiting_account")
         payload = self.database.get_expense(expense_id).payload
         self.assertEqual(payload["merchant"], "Descrizione corretta")
@@ -1261,13 +1310,13 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             "receipt:choose:0",
             "receipt:direction:entrata",
             "receipt:choose:0",
-            "receipt:no_notes",
+            "receipt:save",
         ):
             query = await self._tap(workflow, user, data)
         self.assertEqual(len(portal.submitted), 1)
         self.assertIsNone(portal.submitted[0][0].notes)
         self.assertNotIn("🗒️", query.edit_message_text.await_args.args[0])
-        stale = await self._tap(workflow, user, "receipt:no_notes")
+        stale = await self._tap(workflow, user, "receipt:save")
         stale.answer.assert_awaited_once_with(texts.STALE_BUTTON)
         self.assertEqual(len(portal.submitted), 1)
 
@@ -1322,7 +1371,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
 
         state = self.database.get_conversation_state(user.id)
         self.assertEqual(state[0], "awaiting_confirmation")
-        self.assertIn("«Sì, è giusto» per riprovare", query.edit_message_text.await_args.args[0])
+        self.assertIn("«Conferma» per riprovare", query.edit_message_text.await_args.args[0])
         self.assertTrue(any((self.root / "pending").iterdir()))
 
     async def test_new_manual_test_replaces_stale_manual_test(self) -> None:
@@ -1361,7 +1410,8 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         labels = [row[0].text for row in markup.inline_keyboard]
         self.assertEqual(
             labels,
-            ["Tipo 8", "Tipo 3", "Tipo 0", "Tipo 1", "Tipo 2", "Tipo 4", "➕ Mostra altre (4)"],
+            ["Tipo 8", "Tipo 3", "Tipo 0", "Tipo 1", "Tipo 2", "Tipo 4", "➕ Mostra altre (4)",
+             texts.CANCEL_BUTTON],
         )
         self.database.transaction_type_usage.assert_called_once_with("Cassa Co.ca", "entrata")
 
@@ -1374,7 +1424,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         )
 
         await self._tap(workflow, user, "receipt:choose:9")
-        await self._tap(workflow, user, "receipt:no_notes")
+        await self._tap(workflow, user, "receipt:save")
         self.assertIsNone(self.database.get_conversation_state(user.id))
         self.assertEqual(portal.submitted[0][0].transaction_type.label, "Tipo 9")
 
@@ -1413,7 +1463,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
                 for data in (
                     "receipt:confirm", "receipt:choose:0",
                     "receipt:choose:0",
-                    "receipt:no_notes",
+                    "receipt:save",
                 ):
                     await self._tap(workflow, user, data, context)
                 stored = self.database.get_expense(expense_id)
@@ -1492,7 +1542,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
                                 effective_user=other),
                 SimpleNamespace(),
             )
-        for data in ("receipt:choose:0", "receipt:choose:0", "receipt:no_notes"):
+        for data in ("receipt:choose:0", "receipt:choose:0", "receipt:save"):
             await self._tap(workflow, other, data)
         self.assertEqual(len(portal.submitted), 1)
         self.assertEqual(portal.submitted[0][0].direction, TransactionDirection.INCOME)
@@ -1522,7 +1572,7 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             [call.args[0] for call in query.edit_message_text.await_args_list],
         )
         await self._tap(workflow, user, "receipt:choose:0")
-        await self._tap(workflow, user, "receipt:no_notes")
+        await self._tap(workflow, user, "receipt:save")
         self.assertEqual(len(portal.submitted), 1)
         self.assertEqual(portal.submitted[0][0].direction, TransactionDirection.INCOME)
         self.assertFalse(portal.submitted[0][1])
@@ -1583,6 +1633,352 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updated["total_amount"], "1234.56")
         self.assertEqual(updated["date"], "2026-10-26")
 
+    def _receipt_workflow(self, portal) -> ReceiptWorkflow:
+        return ReceiptWorkflow(
+            settings=make_settings(),
+            database=self.database,
+            analyzer=self.analyzer,
+            pending_store=PendingReceiptStore(self.root / "pending"),
+            archive=FileArchive(self.root / "archive"),
+            bilancio_client=portal,
+        )
+
+    async def _receipt_to_final_summary(self, portal, file_bytes: bytes = b"final-receipt"):
+        workflow = self._receipt_workflow(portal)
+        _, update, context = self.make_photo_update(file_bytes)
+        await workflow.receive_receipt(update, context)
+        user = update.effective_user
+        for data in ("receipt:confirm", "receipt:choose:0", "receipt:choose:0"):
+            query = await self._tap(workflow, user, data)
+        self.assertEqual(
+            self.database.get_conversation_state(user.id)[0], "awaiting_final_confirmation"
+        )
+        return workflow, user, query
+
+    async def _type_text(self, workflow: ReceiptWorkflow, user, text: str):
+        message = SimpleNamespace(text=text, reply_text=AsyncMock())
+        await workflow.handle_text(
+            SimpleNamespace(message=message, effective_user=user), SimpleNamespace()
+        )
+        return message
+
+    async def test_complete_ai_fields_need_one_confirmation_without_field_prompts(self) -> None:
+        portal = FakeBilancioClient()
+        workflow = self._receipt_workflow(portal)
+        message, update, context = self.make_photo_update(b"complete-fields")
+        await workflow.receive_receipt(update, context)
+        replies = [call.args[0] for call in message.reply_text.await_args_list]
+        field_prompts = (
+            texts.MISSING_DATE, texts.MISSING_MERCHANT, texts.MISSING_AMOUNT,
+            texts.MANUAL_DATE, texts.MANUAL_MERCHANT, texts.MANUAL_AMOUNT,
+            texts.EDIT_DATE, texts.EDIT_MERCHANT, texts.EDIT_AMOUNT,
+        )
+        for reply in replies:
+            for prompt in field_prompts:
+                self.assertNotIn(prompt, reply)
+        self.assertEqual(sum(texts.RECEIPT_REVIEW in reply for reply in replies), 1)
+        state, data = self.database.get_conversation_state(12345)
+        self.assertEqual(state, "awaiting_confirmation")
+        self.assertNotIn("input_field", data)
+        self.assertEqual(portal.requested_dates, [])
+
+        await self._tap(workflow, update.effective_user, "receipt:confirm")
+        self.assertEqual(self.database.get_conversation_state(12345)[0], "awaiting_account")
+        self.assertEqual(portal.requested_dates, [date(2026, 10, 26)])
+        self.assertEqual(portal.submitted, [])
+
+    async def test_only_missing_ai_fields_are_requested_as_text(self) -> None:
+        self.analyzer.receipt = ReceiptData(
+            date=None, merchant="Negozio", total_amount=None, confidence=0.6
+        )
+        portal = FakeBilancioClient()
+        workflow = self._receipt_workflow(portal)
+        message, update, context = self.make_photo_update(b"missing-fields")
+        await workflow.receive_receipt(update, context)
+        user = update.effective_user
+        prompt = message.reply_text.await_args
+        self.assertIn(texts.MISSING_DATE, prompt.args[0])
+        self.assertEqual(self._buttons(prompt.kwargs["reply_markup"]), ["receipt:cancel"])
+        state, data = self.database.get_conversation_state(user.id)
+        self.assertEqual((state, data["missing_fields"]), (
+            "awaiting_receipt_data", ["date", "total_amount"]
+        ))
+
+        typed = await self._type_text(workflow, user, "2/11/26")
+        self.assertIn(texts.MISSING_AMOUNT, typed.reply_text.await_args.args[0])
+        invalid = await self._type_text(workflow, user, "abc")
+        self.assertIn(texts.MANUAL_FORM_INVALID, invalid.reply_text.await_args.args[0])
+        self.assertEqual(
+            self.database.get_conversation_state(user.id)[1]["input_field"], "total_amount"
+        )
+        last = await self._type_text(workflow, user, "7,20")
+        shown = last.reply_text.await_args.args[0]
+        self.assertIn(texts.RECEIPT_REVIEW, shown)
+        for value in ("Negozio", "02/11/2026", "7,20"):
+            self.assertIn(value, shown)
+        self.assertEqual(self.database.get_conversation_state(user.id)[0], "awaiting_confirmation")
+        every_reply = [
+            call.args[0]
+            for mock in (message.reply_text, typed.reply_text, invalid.reply_text, last.reply_text)
+            for call in mock.await_args_list
+        ]
+        self.assertFalse(any(texts.MISSING_MERCHANT in reply for reply in every_reply))
+        self.assertEqual(portal.requested_dates, [])
+
+    async def test_initial_edit_returns_to_initial_confirmation(self) -> None:
+        portal = FakeBilancioClient()
+        workflow = self._receipt_workflow(portal)
+        _, update, context = self.make_photo_update(b"initial-edit")
+        await workflow.receive_receipt(update, context)
+        user = update.effective_user
+        await self._tap(workflow, user, "receipt:edit:total_amount")
+        state, data = self.database.get_conversation_state(user.id)
+        self.assertEqual((state, data["return_to"]), ("awaiting_edit", "initial"))
+        back = await self._tap(workflow, user, "receipt:back")
+        self.assertIn(texts.RECEIPT_REVIEW, back.edit_message_text.await_args.args[0])
+        self.assertEqual(self.database.get_conversation_state(user.id)[0], "awaiting_confirmation")
+
+        await self._tap(workflow, user, "receipt:edit:total_amount")
+        invalid = await self._type_text(workflow, user, "abc")
+        self.assertIn(texts.MANUAL_FORM_INVALID, invalid.reply_text.await_args.args[0])
+        self.assertEqual(self.database.get_conversation_state(user.id)[0], "awaiting_edit")
+        corrected = await self._type_text(workflow, user, "15")
+        shown = corrected.reply_text.await_args
+        self.assertIn(texts.RECEIPT_REVIEW, shown.args[0])
+        self.assertIn("15,00", shown.args[0])
+        self.assertIn("receipt:confirm", self._buttons(shown.kwargs["reply_markup"]))
+        self.assertEqual(self.database.get_conversation_state(user.id)[0], "awaiting_confirmation")
+        self.assertEqual(portal.requested_dates, [])
+        self.assertEqual(portal.submitted, [])
+
+    async def test_final_modify_fields_and_note_never_save_until_accept(self) -> None:
+        portal = FakeBilancioClient()
+        workflow, user, _ = await self._receipt_to_final_summary(portal)
+        menu = await self._tap(workflow, user, "receipt:modify")
+        self.assertEqual(self.database.get_conversation_state(user.id)[0], "awaiting_final_edit")
+        # Units and portal categories are not selectable in this path: no fake buttons.
+        self.assertEqual(self._buttons(menu.edit_message_text.await_args.kwargs["reply_markup"]), [
+            "receipt:edit:date", "receipt:edit:total_amount", "receipt:edit:merchant",
+            "receipt:edit:account", "receipt:edit:transaction_type", "receipt:edit:notes",
+            "receipt:back", "receipt:cancel",
+        ])
+        for field, value, expected in (
+            ("total_amount", "20", "20,00"),
+            ("merchant", "Cartoleria", "Cartoleria"),
+            ("date", "5/11/2026", "05/11/2026"),
+        ):
+            await self._tap(workflow, user, "receipt:modify")
+            prompt = await self._tap(workflow, user, f"receipt:edit:{field}")
+            self.assertEqual(
+                self._buttons(prompt.edit_message_text.await_args.kwargs["reply_markup"]),
+                ["receipt:back", "receipt:cancel"],
+            )
+            typed = await self._type_text(workflow, user, value)
+            shown = typed.reply_text.await_args.args[0]
+            self.assertIn(texts.FINAL_SUMMARY_TITLE, shown)
+            self.assertIn(expected, shown)
+            self.assertIn("Cassa dinamica", shown)
+            self.assertEqual(
+                self.database.get_conversation_state(user.id)[0], "awaiting_final_confirmation"
+            )
+        for note in ("Prima nota", None, "Nota finale"):
+            await self._tap(workflow, user, "receipt:modify")
+            await self._tap(workflow, user, "receipt:edit:notes")
+            if note is None:
+                cleared = await self._tap(workflow, user, "receipt:clear_notes")
+                self.assertIn(texts.NO_NOTES_LINE, cleared.edit_message_text.await_args.args[0])
+            else:
+                typed = await self._type_text(workflow, user, note)
+                self.assertIn(note, typed.reply_text.await_args.args[0])
+        await self._tap(workflow, user, "receipt:modify")
+        back = await self._tap(workflow, user, "receipt:back")
+        self.assertIn("Nota finale", back.edit_message_text.await_args.args[0])
+        self.assertEqual(portal.submitted, [])
+        # Same-year date change keeps the portal choices: no new account reading.
+        self.assertEqual(len(portal.requested_dates), 2)
+
+        accept = await self._tap(workflow, user, "receipt:save")
+        self.assertEqual(len(portal.submitted), 1)
+        submitted = portal.submitted[0][0]
+        self.assertEqual(
+            (submitted.amount, submitted.description, submitted.transaction_date, submitted.notes),
+            (Decimal("20"), "Cartoleria", date(2026, 11, 5), "Nota finale"),
+        )
+        self.assertEqual(submitted.account.label, "Cassa dinamica")
+        self.assertIn(texts.TRIAL_SAVED, accept.edit_message_text.await_args.args[0])
+        self.assertIsNone(self.database.get_conversation_state(user.id))
+
+    async def test_account_change_invalidates_type_and_same_account_keeps_it(self) -> None:
+        portal = FakeBilancioClient()
+        portal.list_accounts = AsyncMock(return_value=[
+            PortalOption("account-1", "Cassa Co.ca"), PortalOption("account-2", "Cassa reparto")
+        ])
+        portal.list_transaction_types = AsyncMock(return_value=[
+            PortalOption("type-1", "Tipo A"), PortalOption("type-2", "Tipo B")
+        ])
+        workflow, user, _ = await self._receipt_to_final_summary(portal)
+        await self._tap(workflow, user, "receipt:modify")
+        accounts = await self._tap(workflow, user, "receipt:edit:account")
+        self.assertIn(
+            "receipt:back",
+            self._buttons(accounts.edit_message_text.await_args.kwargs["reply_markup"]),
+        )
+        same = await self._tap(workflow, user, "receipt:choose:0")
+        self.assertIn(texts.FINAL_SUMMARY_TITLE, same.edit_message_text.await_args.args[0])
+        state, data = self.database.get_conversation_state(user.id)
+        self.assertEqual(state, "awaiting_final_confirmation")
+        self.assertEqual(data["transaction_type"]["label"], "Tipo A")
+        self.assertEqual(portal.list_transaction_types.await_count, 1)
+
+        await self._tap(workflow, user, "receipt:modify")
+        await self._tap(workflow, user, "receipt:edit:account")
+        types = await self._tap(workflow, user, "receipt:choose:1")
+        state, data = self.database.get_conversation_state(user.id)
+        self.assertEqual(state, "awaiting_transaction_type")
+        self.assertEqual(data["account"]["label"], "Cassa reparto")
+        self.assertIsNone(data["transaction_type"])
+        self.assertIsNone(data["unit"])
+        self.assertNotIn(
+            "receipt:back",
+            self._buttons(types.edit_message_text.await_args.kwargs["reply_markup"]),
+        )
+        await self._tap(workflow, user, "receipt:choose:1")
+        self.assertEqual(portal.submitted, [])
+        await self._tap(workflow, user, "receipt:save")
+        submitted = portal.submitted[0][0]
+        self.assertEqual(
+            (submitted.account.label, submitted.transaction_type.label),
+            ("Cassa reparto", "Tipo B"),
+        )
+
+    async def test_type_edit_offers_back_and_replaces_only_the_type(self) -> None:
+        portal = FakeBilancioClient()
+        portal.list_transaction_types = AsyncMock(return_value=[
+            PortalOption("type-1", "Tipo A"), PortalOption("type-2", "Tipo B")
+        ])
+        workflow, user, _ = await self._receipt_to_final_summary(portal)
+        for action in ("receipt:modify", "receipt:edit:notes"):
+            await self._tap(workflow, user, action)
+        await self._type_text(workflow, user, "Nota da tenere")
+        await self._tap(workflow, user, "receipt:modify")
+        types = await self._tap(workflow, user, "receipt:edit:transaction_type")
+        self.assertEqual(
+            self.database.get_conversation_state(user.id)[0], "awaiting_transaction_type"
+        )
+        self.assertIn(
+            "receipt:back",
+            self._buttons(types.edit_message_text.await_args.kwargs["reply_markup"]),
+        )
+        back = await self._tap(workflow, user, "receipt:back")
+        self.assertIn("Tipo A", back.edit_message_text.await_args.args[0])
+        await self._tap(workflow, user, "receipt:modify")
+        await self._tap(workflow, user, "receipt:edit:transaction_type")
+        changed = await self._tap(workflow, user, "receipt:choose:1")
+        shown = changed.edit_message_text.await_args.args[0]
+        for expected in ("Tipo B", "Cassa dinamica", "Nota da tenere"):
+            self.assertIn(expected, shown)
+        self.assertEqual(portal.submitted, [])
+        await self._tap(workflow, user, "receipt:save")
+        submitted = portal.submitted[0][0]
+        self.assertEqual(
+            (submitted.transaction_type.label, submitted.notes), ("Tipo B", "Nota da tenere")
+        )
+
+    async def test_manual_admin_direction_change_invalidates_type(self) -> None:
+        portal = FakeBilancioClient()
+        workflow = self._manual_portal_workflow(portal)
+        user = SimpleNamespace(id=12345)
+        await self._start_manual(workflow, user)
+        for data in ("receipt:confirm", "receipt:choose:0", "receipt:direction:entrata",
+                     "receipt:choose:0"):
+            await self._tap(workflow, user, data)
+        menu = await self._tap(workflow, user, "receipt:modify")
+        self.assertIn(
+            "receipt:edit:direction",
+            self._buttons(menu.edit_message_text.await_args.kwargs["reply_markup"]),
+        )
+        await self._tap(workflow, user, "receipt:edit:direction")
+        await self._tap(workflow, user, "receipt:direction:entrata")
+        state, data = self.database.get_conversation_state(user.id)
+        self.assertEqual(state, "awaiting_final_confirmation")
+        self.assertEqual(data["transaction_type"]["label"], "Tipo entrata")
+
+        await self._tap(workflow, user, "receipt:modify")
+        await self._tap(workflow, user, "receipt:edit:direction")
+        await self._tap(workflow, user, "receipt:direction:uscita")
+        state, data = self.database.get_conversation_state(user.id)
+        self.assertEqual(state, "awaiting_transaction_type")
+        self.assertIsNone(data["transaction_type"])
+        await self._tap(workflow, user, "receipt:choose:0")
+        self.assertEqual(portal.submitted, [])
+        await self._tap(workflow, user, "receipt:save")
+        submitted = portal.submitted[0][0]
+        self.assertEqual(submitted.direction, TransactionDirection.EXPENSE)
+        self.assertEqual(submitted.transaction_type.label, "Tipo uscita")
+
+    async def test_receipt_modify_menu_hides_direction_for_receipts(self) -> None:
+        portal = FakeBilancioClient()
+        workflow, user, _ = await self._receipt_to_final_summary(portal)
+        await self._tap(workflow, user, "receipt:modify")
+        hidden = await self._tap(workflow, user, "receipt:edit:direction")
+        hidden.edit_message_text.assert_awaited_once_with(texts.STALE_BUTTON)
+        self.assertEqual(portal.submitted, [])
+
+    async def test_date_in_other_scout_year_reselects_account_and_keeps_note(self) -> None:
+        portal = FakeBilancioClient()
+        workflow, user, _ = await self._receipt_to_final_summary(portal)
+        for action in ("receipt:modify", "receipt:edit:notes"):
+            await self._tap(workflow, user, action)
+        await self._type_text(workflow, user, "Nota conservata")
+        for action in ("receipt:modify", "receipt:edit:date"):
+            await self._tap(workflow, user, action)
+        typed = await self._type_text(workflow, user, "2/3/2026")
+        self.assertIn(texts.DATE_YEAR_CHANGED, typed.reply_text.await_args.args[0])
+        state, data = self.database.get_conversation_state(user.id)
+        self.assertEqual(state, "awaiting_account")
+        self.assertEqual(data["portal_notes"], "Nota conservata")
+        self.assertEqual(data["direction"], "uscita")
+        self.assertNotIn("transaction_type", data)
+        self.assertEqual(portal.requested_dates[-1], date(2026, 3, 2))
+        for action in ("receipt:choose:0", "receipt:choose:0"):
+            query = await self._tap(workflow, user, action)
+        self.assertIn("Nota conservata", query.edit_message_text.await_args.args[0])
+        self.assertEqual(portal.submitted, [])
+        await self._tap(workflow, user, "receipt:save")
+        submitted = portal.submitted[0][0]
+        self.assertEqual(
+            (submitted.transaction_date, submitted.notes), (date(2026, 3, 2), "Nota conservata")
+        )
+
+    async def test_portal_failure_during_final_edit_keeps_selection(self) -> None:
+        portal = FakeBilancioClient()
+        workflow, user, _ = await self._receipt_to_final_summary(portal)
+        portal.list_accounts = AsyncMock(side_effect=BilancioClientError("Unavailable"))
+        await self._tap(workflow, user, "receipt:modify")
+        failed = await self._tap(workflow, user, "receipt:edit:account")
+        shown = failed.edit_message_text.await_args.args[0]
+        self.assertIn(texts.FINAL_SUMMARY_TITLE, shown)
+        self.assertIn(texts.PORTAL_EDIT_READ_FAILED.format(subject=texts.ACCOUNTS_SUBJECT), shown)
+        state, data = self.database.get_conversation_state(user.id)
+        self.assertEqual(state, "awaiting_final_confirmation")
+        self.assertEqual(data["account"]["label"], "Cassa dinamica")
+        self.assertEqual(portal.submitted, [])
+
+    async def test_summary_buttons_from_old_messages_and_states_never_save(self) -> None:
+        portal = FakeBilancioClient()
+        workflow, user, _ = await self._receipt_to_final_summary(portal)
+        state, data = self.database.get_conversation_state(user.id)
+        data.update(summary_chat_id=12345, summary_message_id=77)
+        self.database.save_conversation_state(user.id, state, data)
+        stale = await self._tap(workflow, user, "receipt:save", message_id=76)
+        stale.answer.assert_awaited_once_with(texts.STALE_BUTTON)
+        await self._tap(workflow, user, "receipt:modify", message_id=77)
+        early = await self._tap(workflow, user, "receipt:save", message_id=77)
+        early.answer.assert_awaited_once_with(texts.STALE_BUTTON)
+        legacy = await self._tap(workflow, user, "receipt:no_notes")
+        legacy.answer.assert_awaited_once_with(texts.STALE_BUTTON)
+        self.assertEqual(portal.submitted, [])
+
     @staticmethod
     def make_photo_update(file_bytes: bytes):
         message = SimpleNamespace(
@@ -1601,6 +1997,10 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
             bot=SimpleNamespace(get_file=AsyncMock(return_value=telegram_file))
         )
         return message, update, context
+
+    @staticmethod
+    def _buttons(markup) -> list[str]:
+        return [button.callback_data for row in markup.inline_keyboard for button in row]
 
     @staticmethod
     def make_query(data: str):

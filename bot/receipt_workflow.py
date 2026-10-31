@@ -21,6 +21,7 @@ from bilancio.client import (
     PortalOption,
     TransactionDirection,
     default_unit_for_account,
+    scout_year_label,
 )
 from bot import messages as texts
 from config import Settings
@@ -37,7 +38,6 @@ from vision.preprocess import ImagePreprocessingError
 from vision.receipt_schema import (
     ReceiptData,
     ReceiptParseError,
-    missing_required_fields,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,18 +51,28 @@ _EDIT_PROMPTS = {
     "date": texts.EDIT_DATE,
     "merchant": texts.EDIT_MERCHANT,
     "total_amount": texts.EDIT_AMOUNT,
-    "suggested_category": texts.EDIT_CATEGORY,
 }
-_EDIT_FIELDS = {"date", "merchant", "total_amount", "suggested_category"}
+_EDIT_FIELDS = {"date", "merchant", "total_amount"}
 _MANUAL_EDIT_PROMPTS = {
     "date": texts.MANUAL_DATE,
     "merchant": texts.MANUAL_MERCHANT,
     "total_amount": texts.MANUAL_AMOUNT,
 }
+_TEXT_EDIT_FIELDS = ("date", "total_amount", "merchant")
 _CALLBACK_STATES = {
-    "accept": {"awaiting_receipt_data", "awaiting_edit"},
     "confirm": {"awaiting_confirmation"},
-    "edit": {"awaiting_confirmation", "awaiting_account", "awaiting_edit"},
+    "edit": {"awaiting_confirmation", "awaiting_final_edit"},
+    "save": {"awaiting_final_confirmation"},
+    "modify": {"awaiting_final_confirmation"},
+    "back": {
+        "awaiting_edit",
+        "awaiting_final_edit",
+        "awaiting_notes",
+        "awaiting_account",
+        "awaiting_direction",
+        "awaiting_transaction_type",
+    },
+    "clear_notes": {"awaiting_notes"},
     "manual_save": {"awaiting_manual_final_confirmation"},
     "direction": {"awaiting_direction"},
     "voice": {"awaiting_accounting_voice"},
@@ -73,9 +83,23 @@ _CALLBACK_STATES = {
         "awaiting_category",
     },
     "no_category": {"awaiting_category"},
+    # Legacy note prompt of older versions: it now only returns to the final summary.
     "no_notes": {"awaiting_notes"},
     "more_types": {"awaiting_transaction_type"},
 }
+_SUMMARY_REFERENCE_COMMANDS = {"save", "modify", "no_notes"}
+_FORM_REFERENCE_COMMANDS = {"confirm", "edit", "back", "clear_notes"}
+# Keys describing the current step only; never part of the final selection snapshot.
+_TRANSIENT_KEYS = (
+    "final_edit",
+    "edit_field",
+    "return_to",
+    "options",
+    "top_indices",
+    "input_field",
+    "missing_fields",
+    "review",
+)
 _STALE_CHOICE_TEXT = texts.STALE_BUTTON
 _BUSY_TEXT = texts.BUSY
 
@@ -84,7 +108,6 @@ _MANUAL_DEFAULT_DESCRIPTION = texts.MANUAL_DESCRIPTION
 _MANUAL_DEFAULT_AMOUNT = "0.10"
 _TOP_TYPES_COUNT = 6
 _ANALYSIS_PROGRESS_INTERVAL_SECONDS = 30
-_FORM_STATES = {"awaiting_receipt_data", "awaiting_edit"}
 _NOTES_MAX_LENGTH = 500
 _FORM_KEYS = {"form_chat_id", "form_message_id"}
 _INPUT_FIELDS = ("merchant", "date", "total_amount")
@@ -225,11 +248,7 @@ class ReceiptWorkflow:
                 payload, "merchant",
             )
             return
-        await self._save_state(user.id, "awaiting_confirmation", {"expense_id": expense_id})
-        await message.reply_text(
-            self._manual_confirmation_text(payload),
-            reply_markup=self._manual_confirmation_keyboard(),
-        )
+        await self._show_initial_confirmation(message, user.id, expense_id, payload)
 
     async def receive_receipt(
         self,
@@ -384,11 +403,17 @@ class ReceiptWorkflow:
             pending.receipt_id,
             data,
         )
-        # Analysis values are proposals: every field must be confirmed or replaced.
-        await self._show_manual_form(
-            message, user.id, "awaiting_receipt_data",
-            {"expense_id": pending.receipt_id}, data, "merchant",
-        )
+        # Analysis values are proposals: only missing fields are asked as text, then
+        # all values are shown together for one confirmation or a targeted correction.
+        missing = [name for name in _INPUT_FIELDS if data.get(name) is None]
+        if missing:
+            await self._show_manual_form(
+                message, user.id, "awaiting_receipt_data",
+                {"expense_id": pending.receipt_id, "missing_fields": missing, "review": True},
+                data, missing[0],
+            )
+            return
+        await self._show_initial_confirmation(message, user.id, pending.receipt_id, data)
 
     async def _analyze_receipt(
         self, file_bytes: bytes, file_name: str, progress_message: Message
@@ -474,69 +499,129 @@ class ReceiptWorkflow:
             )
             await self._offer_accounts(user.id, expense_id, updated, message, context)
             return
-        if self._is_manual_form(state, state_data, expense.payload):
-            await self._handle_manual_form_text(
-                message, context, user.id, state, state_data, expense_id, expense.payload
+        if state == "awaiting_receipt_data":
+            await self._handle_missing_field_text(
+                message, context, user.id, state_data, expense_id, expense.payload
+            )
+        elif state == "awaiting_edit":
+            await self._handle_edit_text(
+                message, context, user.id, state_data, expense_id, expense.payload
+            )
+        elif state == "awaiting_notes":
+            await self._handle_note_text(message, user.id, state_data, expense.payload)
+        elif state == "submitting":
+            await message.reply_text(_BUSY_TEXT)
+        else:
+            await message.reply_text(texts.USE_BUTTONS)
+
+    async def _handle_missing_field_text(
+        self,
+        message: Message,
+        context: ContextTypes.DEFAULT_TYPE,
+        user_id: int,
+        state_data: dict[str, object],
+        expense_id: str,
+        payload: dict[str, object],
+    ) -> None:
+        field_name = self._form_field("awaiting_receipt_data", state_data, payload)
+        if field_name not in _INPUT_FIELDS:
+            raise ValueError("Unsupported text field")
+        try:
+            updated = self._apply_user_value(payload, field_name, message.text or "")
+            self._receipt_from_payload(updated)
+        except (ValueError, TypeError):
+            await self._show_manual_form(
+                message, user_id, "awaiting_receipt_data", state_data, payload,
+                field_name, invalid=True,
             )
             return
-        if state == "awaiting_receipt_data":
-            field_name = self._next_missing_field(expense.payload)
-        elif state == "awaiting_edit":
-            field_name = state_data.get("edit_field")
-            if field_name not in _EDIT_FIELDS:
-                raise ValueError("Conversation state contains an unsupported edit field")
-        elif state == "awaiting_notes":
-            notes_text = message.text.strip()
-            if len(notes_text) > _NOTES_MAX_LENGTH:
-                await message.reply_text(
-                    texts.NOTES_TOO_LONG.format(limit=_NOTES_MAX_LENGTH),
-                    reply_markup=self._navigation_keyboard(cancel=True),
+        await asyncio.to_thread(self._database.update_expense_payload, expense_id, updated)
+        missing = state_data.get("missing_fields")
+        requested = missing if isinstance(missing, list) else list(_INPUT_FIELDS)
+        remaining = [
+            name for name in _INPUT_FIELDS
+            if name in requested and name != field_name and updated.get(name) is None
+        ]
+        review = state_data.get("review") is True
+        if remaining:
+            await self._show_manual_form(
+                message, user_id, "awaiting_receipt_data",
+                {"expense_id": expense_id, "missing_fields": remaining, "review": review},
+                updated, remaining[0],
+            )
+            return
+        if review:
+            await self._show_initial_confirmation(message, user_id, expense_id, updated)
+            return
+        await self._offer_accounts(user_id, expense_id, updated, message, context)
+
+    async def _handle_edit_text(
+        self,
+        message: Message,
+        context: ContextTypes.DEFAULT_TYPE,
+        user_id: int,
+        state_data: dict[str, object],
+        expense_id: str,
+        payload: dict[str, object],
+    ) -> None:
+        field_name = state_data.get("edit_field")
+        if not isinstance(field_name, str) or field_name not in _EDIT_FIELDS:
+            # Legacy states (e.g. the removed AI category field) cannot be edited anymore.
+            logger.warning("Ignoring unsupported edit field in conversation state")
+            await message.reply_text(texts.STALE_BUTTON)
+            return
+        try:
+            updated = self._apply_user_value(payload, field_name, message.text or "")
+            self._receipt_from_payload(updated)
+        except (ValueError, TypeError):
+            await self._show_manual_form(
+                message, user_id, "awaiting_edit", state_data, payload, field_name, invalid=True
+            )
+            return
+        await asyncio.to_thread(self._database.update_expense_payload, expense_id, updated)
+        if state_data.get("return_to") != "final":
+            await self._show_initial_confirmation(message, user_id, expense_id, updated)
+            return
+        if field_name == "date":
+            new_date = self._payload_date(updated)
+            previous = state_data.get("transaction_date")
+            if not isinstance(previous, str) or scout_year_label(
+                date.fromisoformat(previous)
+            ) != scout_year_label(new_date):
+                # Portal options depend on the scout year: account and type must be chosen again.
+                retained: dict[str, object] = {
+                    "direction": state_data.get("direction"),
+                    "portal_notes": state_data.get("portal_notes"),
+                    "final_edit": True,
+                }
+                await self._begin_portal_selection(
+                    user_id, expense_id, updated, message, context,
+                    retained=retained, prefix=texts.DATE_YEAR_CHANGED,
                 )
                 return
-            await self._submit_expense(
-                update,
-                context,
-                user.id,
-                expense_id,
-                expense.payload,
-                state_data,
-                notes_text,
-            )
-            return
-        else:
-            await message.reply_text(
-                texts.USE_BUTTONS
-            )
-            return
+            state_data["transaction_date"] = new_date.isoformat()
+        await self._show_final_summary(user_id, updated, state_data, message)
 
-        try:
-            updated = self._apply_user_value(expense.payload, field_name, message.text)
-        except (ValueError, TypeError):
-            if expense.payload.get("manual_entry") is True:
-                prompt = _MANUAL_EDIT_PROMPTS.get(field_name, self._prompt_for(field_name))
-            elif state == "awaiting_receipt_data":
-                prompt = _FIELD_PROMPTS[field_name]
-            else:
-                prompt = self._prompt_for(field_name)
-            await message.reply_text(prompt, reply_markup=self._navigation_keyboard(cancel=True))
-            return
-        await asyncio.to_thread(
-            self._database.update_expense_payload,
-            expense_id,
-            updated,
-        )
-        receipt = self._receipt_from_payload(updated)
-        missing = missing_required_fields(receipt)
-        if missing:
-            await self._save_state(user.id, "awaiting_receipt_data", state_data)
+    async def _handle_note_text(
+        self,
+        message: Message,
+        user_id: int,
+        state_data: dict[str, object],
+        payload: dict[str, object],
+    ) -> None:
+        notes_text = (message.text or "").strip()
+        if len(notes_text) > _NOTES_MAX_LENGTH:
             await message.reply_text(
-                _MANUAL_EDIT_PROMPTS[missing[0]]
-                if updated.get("manual_entry") is True
-                else _FIELD_PROMPTS[missing[0]],
+                texts.NOTES_TOO_LONG.format(limit=_NOTES_MAX_LENGTH),
                 reply_markup=self._navigation_keyboard(cancel=True),
             )
             return
-        await self._offer_accounts(user.id, expense_id, updated, message, context)
+        if not self._has_complete_selection(state_data):
+            await message.reply_text(texts.USE_BUTTONS)
+            return
+        # A note only updates the summary: saving always requires the final «Accetta».
+        state_data["portal_notes"] = notes_text or None
+        await self._show_final_summary(user_id, payload, state_data, message)
 
     async def handle_callback(
         self,
@@ -569,12 +654,15 @@ class ReceiptWorkflow:
         if command != "cancel" and (allowed_states is None or state not in allowed_states):
             await query.answer(_STALE_CHOICE_TEXT)
             return
-        reference_key = "summary_message_id" if command == "no_notes" else "form_message_id"
-        expected = state_data.get(reference_key)
-        if command in {"accept", "no_notes"} and isinstance(expected, int):
-            if getattr(query.message, "message_id", None) != expected:
-                await query.answer(_STALE_CHOICE_TEXT)
-                return
+        reference_key = (
+            "summary_message_id" if command in _SUMMARY_REFERENCE_COMMANDS
+            else "form_message_id" if command in _FORM_REFERENCE_COMMANDS
+            else None
+        )
+        expected = state_data.get(reference_key) if reference_key else None
+        if isinstance(expected, int) and getattr(query.message, "message_id", None) != expected:
+            await query.answer(_STALE_CHOICE_TEXT)
+            return
         await query.answer()
         self._busy_users.add(user.id)
         try:
@@ -611,43 +699,14 @@ class ReceiptWorkflow:
             )
             return
 
+        payload = expense.payload
         if value.startswith("cancel"):
-            await self._cancel_pending(user_id, expense_id, expense.payload)
+            await self._cancel_pending(user_id, expense_id, payload)
             await query.edit_message_text(texts.CANCELLED, reply_markup=self._navigation_keyboard())
-        elif value == "accept":
-            field_name = self._form_field(state, state_data, expense.payload)
-            if field_name not in _INPUT_FIELDS or expense.payload.get(field_name) is None:
-                await query.edit_message_text(texts.STALE_BUTTON)
-                return
-            await self._advance_text_field(
-                query.message, context, user_id, state, state_data,
-                expense_id, expense.payload, field_name,
-            )
         elif value.startswith("edit:"):
-            field_name = value.split(":", 1)[1]
-            if field_name not in _EDIT_FIELDS:
-                await query.edit_message_text(texts.STALE_BUTTON)
-                return
-            if self._is_manual_form(state, state_data, expense.payload) and (
-                field_name in _MANUAL_EDIT_PROMPTS
-            ):
-                await self._edit_manual_form(
-                    query, user_id, "awaiting_edit",
-                    {"expense_id": expense_id, "edit_field": field_name},
-                    expense.payload, field_name,
-                )
-                return
-            await self._save_state(
-                user_id,
-                "awaiting_edit",
-                {"expense_id": expense_id, "edit_field": field_name},
-            )
-            await query.edit_message_text(
-                _MANUAL_EDIT_PROMPTS[field_name]
-                if expense.payload.get("manual_entry") is True
-                and field_name in _MANUAL_EDIT_PROMPTS
-                else self._prompt_for(field_name),
-                reply_markup=self._navigation_keyboard(cancel=True),
+            await self._start_field_edit(
+                query, context, user_id, state, state_data, expense_id, payload,
+                value.split(":", 1)[1],
             )
         elif value == "confirm":
             if self._bilancio is None:
@@ -659,14 +718,36 @@ class ReceiptWorkflow:
             await self._begin_portal_selection(
                 user_id,
                 expense_id,
-                expense.payload,
+                payload,
                 query,
                 context,
             )
-        elif value == "no_notes":
+        elif value == "save":
+            if not self._has_complete_selection(state_data):
+                await query.edit_message_text(texts.STALE_BUTTON)
+                return
+            # The pressed summary becomes the message that shows progress and outcome.
+            summary = query.message
+            chat_id = getattr(summary, "chat_id", None)
+            message_id = getattr(summary, "message_id", None)
+            if isinstance(chat_id, int) and isinstance(message_id, int):
+                state_data.update(summary_chat_id=chat_id, summary_message_id=message_id)
+            notes = state_data.get("portal_notes")
             await self._submit_expense(
-                update, context, user_id, expense_id, expense.payload, state_data, ""
+                update, context, user_id, expense_id, payload, state_data,
+                notes if isinstance(notes, str) else "",
             )
+        elif value == "modify":
+            await self._show_final_edit_menu(query, user_id, payload, state_data)
+        elif value == "back":
+            await self._go_back(query, user_id, state, state_data, expense_id, payload)
+        elif value in {"clear_notes", "no_notes"}:
+            if not self._has_complete_selection(state_data):
+                await query.edit_message_text(texts.STALE_BUTTON)
+                return
+            if value == "clear_notes":
+                state_data["portal_notes"] = None
+            await self._show_final_summary(user_id, payload, state_data, query)
         elif value == "manual_save":
             if expense.payload.get("manual_entry") is not True:
                 await query.edit_message_text(texts.STALE_BUTTON)
@@ -728,6 +809,138 @@ class ReceiptWorkflow:
                 context,
             )
 
+    async def _start_field_edit(
+        self,
+        query: CallbackQuery,
+        context: ContextTypes.DEFAULT_TYPE,
+        user_id: int,
+        state: str,
+        state_data: dict[str, object],
+        expense_id: str,
+        payload: dict[str, object],
+        field_name: str,
+    ) -> None:
+        if field_name in _TEXT_EDIT_FIELDS:
+            if state == "awaiting_confirmation":
+                data: dict[str, object] = {"expense_id": expense_id, "return_to": "initial"}
+            else:
+                data = self._selection_snapshot(state_data)
+                data["return_to"] = "final"
+            data["edit_field"] = field_name
+            text = self._manual_form_text(
+                payload, field_name, user_id=user_id,
+                prompt=self._field_prompt(payload, field_name, "awaiting_edit", data),
+            )
+            await self._edit_panel(
+                query, user_id, "awaiting_edit", data, text,
+                self._manual_form_keyboard(back=True),
+            )
+            return
+        if (
+            state != "awaiting_final_edit"
+            or self._bilancio is None
+            or not self._has_complete_selection(state_data)
+        ):
+            await query.edit_message_text(texts.STALE_BUTTON)
+            return
+        data = self._selection_snapshot(state_data)
+        data["final_edit"] = True
+        if field_name == "account":
+            await self._show_progress(query, texts.ACCOUNTS_PROGRESS)
+            await self._show_account_choice(user_id, expense_id, payload, data, query, context)
+        elif field_name == "transaction_type":
+            voice = data.get("accounting_voice")
+            await self._save_state(user_id, "awaiting_accounting_voice", data)
+            await self._select_accounting_voice(
+                user_id, expense_id, payload, "awaiting_accounting_voice", data,
+                voice if voice in {"Voci Scout", "Voci Ministero"} else "Voci Scout",
+                query, context,
+            )
+        elif field_name == "direction" and self._direction_selectable(payload, user_id):
+            await self._save_state(user_id, "awaiting_direction", data)
+            await self._show_direction_prompt(query, user_id, expense_id, payload, data)
+        elif field_name == "notes":
+            notes = data.get("portal_notes")
+            current = (
+                texts.NOTE_CURRENT.format(value=texts.safe_text(notes, _NOTES_MAX_LENGTH))
+                if isinstance(notes, str) and notes.strip()
+                else ""
+            )
+            rows: list[list[InlineKeyboardButton]] = []
+            if current:
+                rows.append([InlineKeyboardButton(
+                    texts.CLEAR_NOTE_BUTTON, callback_data="receipt:clear_notes"
+                )])
+            rows.extend(self._navigation_rows(data))
+            await self._edit_panel(
+                query, user_id, "awaiting_notes", data,
+                texts.NOTE_EDIT_PROMPT.format(limit=_NOTES_MAX_LENGTH, current=current),
+                InlineKeyboardMarkup(rows),
+            )
+        else:
+            await query.edit_message_text(texts.STALE_BUTTON)
+
+    async def _go_back(
+        self,
+        query: CallbackQuery,
+        user_id: int,
+        state: str,
+        state_data: dict[str, object],
+        expense_id: str,
+        payload: dict[str, object],
+    ) -> None:
+        if state == "awaiting_edit" and state_data.get("return_to") != "final":
+            await self._show_initial_confirmation(query, user_id, expense_id, payload)
+            return
+        final_step = (
+            state in {"awaiting_edit", "awaiting_final_edit", "awaiting_notes"}
+            or state_data.get("final_edit") is True
+        )
+        if not final_step or not self._has_complete_selection(state_data):
+            await query.edit_message_text(texts.STALE_BUTTON)
+            return
+        await self._show_final_summary(user_id, payload, state_data, query)
+
+    async def _show_final_edit_menu(
+        self,
+        query: CallbackQuery,
+        user_id: int,
+        payload: dict[str, object],
+        state_data: dict[str, object],
+    ) -> None:
+        if not self._has_complete_selection(state_data):
+            await query.edit_message_text(texts.STALE_BUTTON)
+            return
+        data = self._selection_snapshot(state_data)
+        rows = [
+            [
+                InlineKeyboardButton(texts.DATE_BUTTON, callback_data="receipt:edit:date"),
+                InlineKeyboardButton(texts.AMOUNT_BUTTON, callback_data="receipt:edit:total_amount"),
+            ],
+            [InlineKeyboardButton(texts.DESCRIPTION_BUTTON, callback_data="receipt:edit:merchant")],
+            [
+                InlineKeyboardButton(texts.ACCOUNT_BUTTON, callback_data="receipt:edit:account"),
+                InlineKeyboardButton(
+                    texts.TYPE_BUTTON, callback_data="receipt:edit:transaction_type"
+                ),
+            ],
+        ]
+        # Unit and portal category are not chosen in the current path, so no buttons.
+        if self._direction_selectable(payload, user_id):
+            rows.append([InlineKeyboardButton(
+                texts.DIRECTION_BUTTON, callback_data="receipt:edit:direction"
+            )])
+        rows.append([InlineKeyboardButton(texts.NOTE_BUTTON, callback_data="receipt:edit:notes")])
+        rows.append([InlineKeyboardButton(
+            texts.BACK_TO_SUMMARY_BUTTON, callback_data="receipt:back"
+        )])
+        rows.append([InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")])
+        await self._edit_panel(
+            query, user_id, "awaiting_final_edit", data,
+            texts.FINAL_EDIT_PROMPT.format(details=self._operation_details(payload, data)),
+            InlineKeyboardMarkup(rows),
+        )
+
     async def _show_progress(self, query: CallbackQuery, text: str) -> None:
         try:
             await query.edit_message_text(text)
@@ -753,12 +966,22 @@ class ReceiptWorkflow:
         )
 
     @staticmethod
-    def _is_manual_form(
-        state: str, state_data: dict[str, object], payload: dict[str, object]
-    ) -> bool:
-        if state not in _FORM_STATES:
-            return False
-        return state != "awaiting_edit" or state_data.get("edit_field") in _MANUAL_EDIT_PROMPTS
+    def _field_prompt(
+        payload: dict[str, object],
+        field_name: str | None,
+        state: str,
+        state_data: dict[str, object],
+    ) -> str:
+        if not field_name:
+            return ""
+        manual = payload.get("manual_entry") is True
+        if state == "awaiting_receipt_data":
+            if state_data.get("review") is True and not manual:
+                return _FIELD_PROMPTS.get(field_name, "")
+            return _MANUAL_EDIT_PROMPTS.get(field_name, "")
+        if manual:
+            return _MANUAL_EDIT_PROMPTS.get(field_name, "")
+        return _EDIT_PROMPTS.get(field_name, "")
 
     def _manual_form_text(
         self,
@@ -767,8 +990,11 @@ class ReceiptWorkflow:
         *,
         invalid: bool = False,
         user_id: int | None = None,
+        prompt: str | None = None,
     ) -> str:
-        text = _MANUAL_EDIT_PROMPTS.get(field_name, "") if field_name else ""
+        if prompt is None:
+            prompt = _MANUAL_EDIT_PROMPTS.get(field_name, "") if field_name else ""
+        text = prompt
         if invalid:
             text = texts.MANUAL_FORM_INVALID + "\n\n" + text
         value = payload.get(field_name) if field_name else None
@@ -782,14 +1008,11 @@ class ReceiptWorkflow:
         return text + (f"\n\n{mode}" if mode else "")
 
     @staticmethod
-    def _manual_form_keyboard(
-        field_name: str | None,
-        payload: dict[str, object] | None = None,
-    ) -> InlineKeyboardMarkup:
+    def _manual_form_keyboard(*, back: bool = False) -> InlineKeyboardMarkup:
         rows: list[list[InlineKeyboardButton]] = []
-        if field_name and (payload or {}).get(field_name) is not None:
+        if back:
             rows.append([InlineKeyboardButton(
-                texts.FIELD_ACCEPT_BUTTON, callback_data="receipt:accept"
+                texts.BACK_TO_SUMMARY_BUTTON, callback_data="receipt:back"
             )])
         rows.append([InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")])
         return InlineKeyboardMarkup(rows)
@@ -823,11 +1046,17 @@ class ReceiptWorkflow:
         *,
         invalid: bool = False,
     ) -> None:
-        await self._save_state(user_id, state, {**state_data, "input_field": field_name})
+        data = {**state_data}
+        if state == "awaiting_receipt_data":
+            data["input_field"] = field_name
+        await self._save_state(user_id, state, data)
+        text = self._manual_form_text(
+            payload, field_name, invalid=invalid, user_id=user_id,
+            prompt=self._field_prompt(payload, field_name, state, data),
+        )
         try:
             sent = await message.reply_text(
-                self._manual_form_text(payload, field_name, invalid=invalid, user_id=user_id),
-                reply_markup=self._manual_form_keyboard(field_name, payload),
+                text, reply_markup=self._manual_form_keyboard(back=state == "awaiting_edit")
             )
         except TelegramError as error:
             logger.warning("Telegram field prompt failed: %s", type(error).__name__)
@@ -836,80 +1065,85 @@ class ReceiptWorkflow:
             user_id,
             state,
             self._form_data(
-                {**state_data, "input_field": field_name},
-                getattr(sent, "chat_id", None), getattr(sent, "message_id", None)
+                data, getattr(sent, "chat_id", None), getattr(sent, "message_id", None)
             ),
         )
 
-    async def _edit_manual_form(
+    async def _edit_panel(
         self,
         query: CallbackQuery,
         user_id: int,
         state: str,
         state_data: dict[str, object],
-        payload: dict[str, object],
-        field_name: str,
-        *,
-        invalid: bool = False,
+        text: str,
+        keyboard: InlineKeyboardMarkup,
     ) -> None:
+        """Show a step in the pressed message, falling back to a new message."""
         form = query.message
+        data = self._form_data(
+            state_data, getattr(form, "chat_id", None), getattr(form, "message_id", None)
+        )
+        await self._save_state(user_id, state, data)
+        try:
+            await query.edit_message_text(text, reply_markup=keyboard)
+        except BadRequest as error:
+            if "not modified" in str(error).lower():
+                return
+            logger.warning("Telegram panel edit failed: %s", type(error).__name__)
+        except TelegramError as error:
+            logger.warning("Telegram panel edit failed: %s", type(error).__name__)
+        else:
+            return
+        if form is None or not hasattr(form, "reply_text"):
+            return
+        sent = await form.reply_text(text, reply_markup=keyboard)
         await self._save_state(
             user_id,
             state,
             self._form_data(
-                state_data, getattr(form, "chat_id", None), getattr(form, "message_id", None)
+                data, getattr(sent, "chat_id", None), getattr(sent, "message_id", None)
             ),
         )
-        try:
-            await query.edit_message_text(
-                self._manual_form_text(
-                    payload, field_name, invalid=invalid, user_id=user_id,
-                ),
-                reply_markup=self._manual_form_keyboard(field_name, payload),
-            )
-        except BadRequest as error:
-            if "not modified" not in str(error).lower():
-                raise
 
-    async def _handle_manual_form_text(
+    def _initial_confirmation(
+        self, user_id: int, payload: dict[str, object]
+    ) -> tuple[str, InlineKeyboardMarkup]:
+        if payload.get("manual_entry") is True:
+            text = self._manual_confirmation_text(payload)
+            keyboard = self._manual_confirmation_keyboard()
+        else:
+            confidence = payload.get("confidence")
+            text = texts.receipt_confirmation(
+                payload,
+                float(confidence) if isinstance(confidence, (int, float)) else 0.0,
+                header=texts.RECEIPT_REVIEW,
+            )
+            keyboard = self._confirmation_keyboard()
+        mode = self._mode_text(payload, user_id)
+        return text + (f"\n\n{mode}" if mode else ""), keyboard
+
+    async def _show_initial_confirmation(
         self,
-        message: Message,
-        context: ContextTypes.DEFAULT_TYPE,
+        target: CallbackQuery | Message,
         user_id: int,
-        state: str,
-        state_data: dict[str, object],
         expense_id: str,
         payload: dict[str, object],
     ) -> None:
-        field_name = self._form_field(state, state_data, payload)
-        if field_name not in _INPUT_FIELDS:
-            raise ValueError("Unsupported text field")
-        try:
-            updated = self._apply_user_value(payload, field_name, message.text or "")
-            self._receipt_from_payload(updated)
-        except (ValueError, TypeError):
-            await self._show_manual_form(
-                message, user_id, state, state_data, payload, field_name, invalid=True
-            )
-        else:
-            await self._advance_text_field(
-                message, context, user_id, state, state_data, expense_id, updated, field_name
-            )
-
-    async def _advance_text_field(
-        self, message: Message, context: ContextTypes.DEFAULT_TYPE, user_id: int,
-        state: str, state_data: dict[str, object], expense_id: str,
-        payload: dict[str, object], field_name: str,
-    ) -> None:
-        await asyncio.to_thread(self._database.update_expense_payload, expense_id, payload)
-        if state != "awaiting_edit" and field_name != _INPUT_FIELDS[-1]:
-            next_field = _INPUT_FIELDS[_INPUT_FIELDS.index(field_name) + 1]
-            await self._show_manual_form(
-                message, user_id, "awaiting_receipt_data", {"expense_id": expense_id},
-                payload, next_field,
-            )
-        else:
-            await self._offer_accounts(user_id, expense_id, payload, message, context)
+        """Show all operation data once: confirm, or correct one field and come back."""
+        text, keyboard = self._initial_confirmation(user_id, payload)
+        data: dict[str, object] = {"expense_id": expense_id}
+        if not isinstance(target, Message) and not hasattr(target, "reply_text"):
+            await self._edit_panel(target, user_id, "awaiting_confirmation", data, text, keyboard)
+            return
+        await self._save_state(user_id, "awaiting_confirmation", data)
+        sent = await target.reply_text(text, reply_markup=keyboard)
+        await self._save_state(
+            user_id,
+            "awaiting_confirmation",
+            self._form_data(
+                data, getattr(sent, "chat_id", None), getattr(sent, "message_id", None)
+            ),
+        )
 
     @staticmethod
     async def _selection_reply(
@@ -966,7 +1200,19 @@ class ReceiptWorkflow:
         payload: dict[str, object],
         query: CallbackQuery | Message,
         subject: str,
+        state_data: dict[str, object] | None = None,
     ) -> None:
+        if (
+            state_data is not None
+            and state_data.get("final_edit") is True
+            and self._has_complete_selection(state_data)
+        ):
+            # A failed read during a final edit keeps the previous complete selection.
+            await self._show_final_summary(
+                user_id, payload, state_data, query,
+                prefix=texts.PORTAL_EDIT_READ_FAILED.format(subject=subject),
+            )
+            return
         await self._save_state(
             user_id,
             "awaiting_confirmation",
@@ -991,10 +1237,30 @@ class ReceiptWorkflow:
         payload: dict[str, object],
         query: CallbackQuery | Message,
         context: ContextTypes.DEFAULT_TYPE,
+        *,
+        retained: dict[str, object] | None = None,
+        prefix: str = "",
     ) -> None:
+        """Show the account list; ``retained`` keeps choices from a final edit."""
         if self._bilancio is None:
             raise RuntimeError("Bilancio client is not configured")
         transaction_date = self._payload_date(payload)
+        notes = payload.get("portal_notes")
+        data: dict[str, object] = {
+            "expense_id": expense_id,
+            "direction": (
+                payload.get("direction", TransactionDirection.INCOME.value)
+                if payload.get("manual_entry") is True
+                else TransactionDirection.EXPENSE.value
+            ),
+            "portal_notes": notes if isinstance(notes, str) and notes else None,
+        }
+        if retained:
+            data.update(
+                {key: value for key, value in retained.items() if key not in _FORM_KEYS}
+            )
+        data["expense_id"] = expense_id
+        data["transaction_date"] = transaction_date.isoformat()
         try:
             options = await self._bilancio.list_accounts(
                 transaction_date=transaction_date
@@ -1008,53 +1274,63 @@ class ReceiptWorkflow:
                 error,
             )
             await self._portal_read_failed(
-                user_id,
-                expense_id,
-                payload,
-                query,
-                texts.ACCOUNTS_SUBJECT,
+                user_id, expense_id, payload, query, texts.ACCOUNTS_SUBJECT, data
             )
             return
         if not options:
             logger.warning("The portal returned no available accounts")
             await self._portal_read_failed(
-                user_id,
-                expense_id,
-                payload,
-                query,
-                texts.ACCOUNTS_SUBJECT,
+                user_id, expense_id, payload, query, texts.ACCOUNTS_SUBJECT, data
             )
             return
-        data: dict[str, object] = {
-            "expense_id": expense_id,
-            "direction": (
-                payload.get("direction", TransactionDirection.INCOME.value)
-                if payload.get("manual_entry") is True
-                else TransactionDirection.EXPENSE.value
-            ),
-            "transaction_date": transaction_date.isoformat(),
-            "options": self._serialize_options(options),
-        }
+        data["options"] = self._serialize_options(options)
         await self._save_state(user_id, "awaiting_account", data)
-        edit_rows = [
-            [
-                InlineKeyboardButton(texts.EDIT_DATE_BUTTON, callback_data="receipt:edit:date"),
-                InlineKeyboardButton(texts.EDIT_AMOUNT_BUTTON, callback_data="receipt:edit:total_amount"),
-                InlineKeyboardButton(texts.DESCRIPTION_BUTTON, callback_data="receipt:edit:merchant"),
-            ],
-        ]
-        if payload.get("manual_entry") is not True:
-            edit_rows.append([
-                InlineKeyboardButton(texts.EDIT_CATEGORY_BUTTON, callback_data="receipt:edit:suggested_category")
-            ])
-        edit_rows.append([InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")])
+        mode = self._mode_text(payload, user_id)
         await self._selection_reply(
             query,
-            texts.ACCOUNT_PROMPT + (
-                f"\n\n{self._mode_text(payload, user_id)}"
-                if self._mode_text(payload, user_id) else ""
+            prefix + texts.ACCOUNT_PROMPT + (f"\n\n{mode}" if mode else ""),
+            reply_markup=self._option_keyboard(
+                options, extra_rows=self._navigation_rows(data)
             ),
-            reply_markup=self._option_keyboard(options, extra_rows=edit_rows),
+        )
+
+    async def _show_account_choice(
+        self,
+        user_id: int,
+        expense_id: str,
+        payload: dict[str, object],
+        state_data: dict[str, object],
+        query: CallbackQuery,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        await self._begin_portal_selection(
+            user_id, expense_id, payload, query, context, retained=state_data
+        )
+
+    async def _show_direction_prompt(
+        self,
+        query: CallbackQuery,
+        user_id: int,
+        expense_id: str,
+        payload: dict[str, object],
+        state_data: dict[str, object],
+    ) -> None:
+        stored = await asyncio.to_thread(self._database.get_expense, expense_id)
+        has_receipt = stored is not None and await asyncio.to_thread(
+            has_receipt_file, payload, stored.archive_path
+        )
+        directions = [
+            InlineKeyboardButton(texts.INCOME, callback_data="receipt:direction:entrata")
+        ]
+        manual = payload.get("manual_entry") is True and user_id == self._settings.admin_user_id
+        if has_receipt or manual:
+            directions.append(
+                InlineKeyboardButton(texts.EXPENSE, callback_data="receipt:direction:uscita")
+            )
+        keyboard = InlineKeyboardMarkup([directions, *self._navigation_rows(state_data)])
+        await query.edit_message_text(
+            texts.DIRECTION_PROMPT if has_receipt or manual else texts.INCOME_ONLY_PROMPT,
+            reply_markup=keyboard,
         )
 
     async def _select_direction(
@@ -1092,6 +1368,16 @@ class ReceiptWorkflow:
                 ]),
             )
             return
+        if (
+            state_data.get("final_edit") is True
+            and self._has_complete_selection(state_data)
+            and state_data.get("direction") == value
+        ):
+            await self._show_final_summary(user_id, payload, state_data, query)
+            return
+        if state_data.get("direction") != value:
+            # Portal types depend on the direction: the previous type is no longer valid.
+            state_data.update(transaction_type=None, unit=None, category=None)
         state_data["direction"] = value
         await self._save_state(user_id, "awaiting_accounting_voice", state_data)
         await self._select_accounting_voice(
@@ -1153,20 +1439,12 @@ class ReceiptWorkflow:
                 error,
             )
             await self._portal_read_failed(
-                user_id,
-                expense_id,
-                payload,
-                query,
-                texts.TYPES_SUBJECT,
+                user_id, expense_id, payload, query, texts.TYPES_SUBJECT, state_data
             )
             return
         if not options:
             await self._portal_read_failed(
-                user_id,
-                expense_id,
-                payload,
-                query,
-                texts.TYPES_SUBJECT,
+                user_id, expense_id, payload, query, texts.TYPES_SUBJECT, state_data
             )
             return
         state_data.update(
@@ -1195,6 +1473,7 @@ class ReceiptWorkflow:
             if hidden
             else []
         )
+        extra_rows.extend(self._navigation_rows(state_data))
         await query.edit_message_text(
             title,
             reply_markup=self._option_keyboard(
@@ -1235,7 +1514,7 @@ class ReceiptWorkflow:
             reply_markup=self._option_keyboard(
                 options,
                 indices=[index for index in range(len(options)) if index not in shown],
-                extra_rows=[[InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")]],
+                extra_rows=self._navigation_rows(state_data),
             ),
         )
 
@@ -1282,7 +1561,18 @@ class ReceiptWorkflow:
         )
 
         if state == "awaiting_account":
-            state_data.update(account=self._serialize_option(selected))
+            chosen = self._serialize_option(selected)
+            if (
+                state_data.get("final_edit") is True
+                and self._has_complete_selection(state_data)
+                and state_data.get("account") == chosen
+            ):
+                await self._show_final_summary(user_id, payload, state_data, query)
+                return
+            if state_data.get("account") != chosen:
+                # Types (and the default unit) depend on the account: choose them again.
+                state_data.update(transaction_type=None, unit=None, category=None)
+            state_data["account"] = chosen
             await self._save_state(user_id, "awaiting_direction", state_data)
             if direction is not None:
                 await self._select_direction(
@@ -1290,28 +1580,7 @@ class ReceiptWorkflow:
                     state_data, direction.value, query, context,
                 )
                 return
-            stored = await asyncio.to_thread(self._database.get_expense, expense_id)
-            has_receipt = stored is not None and await asyncio.to_thread(
-                has_receipt_file, payload, stored.archive_path
-            )
-            directions = [
-                InlineKeyboardButton(texts.INCOME, callback_data="receipt:direction:entrata")
-            ]
-            manual = payload.get("manual_entry") is True and user_id == self._settings.admin_user_id
-            if has_receipt or manual:
-                directions.append(
-                    InlineKeyboardButton(texts.EXPENSE, callback_data="receipt:direction:uscita")
-                )
-            keyboard = InlineKeyboardMarkup(
-                [
-                    directions,
-                    [InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")],
-                ]
-            )
-            await query.edit_message_text(
-                texts.DIRECTION_PROMPT if has_receipt or manual else texts.INCOME_ONLY_PROMPT,
-                reply_markup=keyboard,
-            )
+            await self._show_direction_prompt(query, user_id, expense_id, payload, state_data)
             return
         if direction is None:
             await query.edit_message_text(texts.CHOOSE_DIRECTION)
@@ -1322,12 +1591,12 @@ class ReceiptWorkflow:
 
         state_data.update(transaction_type=self._serialize_option(selected))
         unit = default_unit_for_account(account)
+        # The note is kept: it is only changed from the final «Modifica» menu.
         state_data.update(
             unit=self._serialize_option(unit) if unit is not None else None,
             category=None,
-            portal_notes=None,
         )
-        await self._ask_for_notes(user_id, payload, state_data, query)
+        await self._show_final_summary(user_id, payload, state_data, query)
 
     async def _complete_portal_selection(
         self,
@@ -1339,14 +1608,16 @@ class ReceiptWorkflow:
         query: CallbackQuery,
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
+        if not isinstance(state_data.get("transaction_type"), dict):
+            await query.edit_message_text(texts.STALE_BUTTON)
+            return
         account = self._option_from(state_data, "account")
         unit = default_unit_for_account(account)
         state_data.update(
             unit=self._serialize_option(unit) if unit is not None else None,
             category=None,
-            portal_notes=None,
         )
-        await self._ask_for_notes(user_id, payload, state_data, query)
+        await self._show_final_summary(user_id, payload, state_data, query)
 
     async def _submit_expense(
         self,
@@ -1371,7 +1642,8 @@ class ReceiptWorkflow:
         state_data["portal_notes"] = notes_text or None
         payload["portal_notes"] = notes_text or None
         await asyncio.to_thread(self._database.update_expense_payload, expense_id, payload)
-        await self._save_state(user_id, "awaiting_notes", state_data)
+        # A distinct state blocks new edits or a second «Accetta» while saving.
+        await self._save_state(user_id, "submitting", state_data)
         await self._update_summary(
             update, context, user_id, payload, state_data,
             f"{texts.INSERTING}\n\n{self._operation_details(payload, state_data)}\n\n"
@@ -1602,56 +1874,129 @@ class ReceiptWorkflow:
             title = texts.RECEIPT_SAVED
         await send(f"{title}\n\n{details}")
 
-    async def _ask_for_notes(
+    @staticmethod
+    def _has_complete_selection(state_data: dict[str, object]) -> bool:
+        return (
+            isinstance(state_data.get("account"), dict)
+            and isinstance(state_data.get("transaction_type"), dict)
+            and isinstance(state_data.get("direction"), str)
+            and isinstance(state_data.get("transaction_date"), str)
+        )
+
+    @staticmethod
+    def _selection_snapshot(state_data: dict[str, object]) -> dict[str, object]:
+        return {
+            key: value for key, value in state_data.items() if key not in _TRANSIENT_KEYS
+        }
+
+    def _direction_selectable(self, payload: dict[str, object], user_id: int) -> bool:
+        # Only the administrator /manual path lets the user choose the direction.
+        return (
+            payload.get("manual_entry") is True
+            and payload.get("direction") is None
+            and user_id == self._settings.admin_user_id
+        )
+
+    def _back_rows(self, state_data: dict[str, object]) -> list[list[InlineKeyboardButton]]:
+        if state_data.get("final_edit") is True and self._has_complete_selection(state_data):
+            return [[InlineKeyboardButton(
+                texts.BACK_TO_SUMMARY_BUTTON, callback_data="receipt:back"
+            )]]
+        return []
+
+    def _navigation_rows(self, state_data: dict[str, object]) -> list[list[InlineKeyboardButton]]:
+        return [
+            *self._back_rows(state_data),
+            [InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")],
+        ]
+
+    def _final_summary_text(
+        self, user_id: int, payload: dict[str, object], state_data: dict[str, object]
+    ) -> str:
+        details = self._operation_details(payload, state_data)
+        notes = state_data.get("portal_notes")
+        if not (isinstance(notes, str) and notes.strip()):
+            details += "\n" + texts.NO_NOTES_LINE
+        mode = self._mode_text(payload, user_id)
+        return (
+            f"{texts.FINAL_SUMMARY_TITLE}\n\n{details}\n\n"
+            + (f"{mode}\n\n" if mode else "")
+            + texts.FINAL_SUMMARY_HINT
+        )
+
+    @staticmethod
+    def _final_summary_keyboard() -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton(texts.FINAL_ACCEPT_BUTTON, callback_data="receipt:save")],
+                [InlineKeyboardButton(texts.FINAL_MODIFY_BUTTON, callback_data="receipt:modify")],
+                [InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")],
+            ]
+        )
+
+    async def _show_final_summary(
         self,
         user_id: int,
         payload: dict[str, object],
         state_data: dict[str, object],
-        query: CallbackQuery,
+        target: CallbackQuery | Message,
+        *,
+        prefix: str = "",
     ) -> None:
-        message = query.message
-        chat_id = getattr(message, "chat_id", None)
-        message_id = getattr(message, "message_id", None)
+        """Show the final summary; nothing is saved until «Accetta» is pressed."""
+        data = self._selection_snapshot(state_data)
+        for key in ("summary_chat_id", "summary_message_id", *_FORM_KEYS):
+            data.pop(key, None)
+        notes = data.get("portal_notes")
+        data["portal_notes"] = notes if isinstance(notes, str) and notes.strip() else None
+        expense_id = str(data["expense_id"])
+        text = prefix + self._final_summary_text(user_id, payload, data)
+        keyboard = self._final_summary_keyboard()
+        await self._save_state(user_id, "awaiting_final_confirmation", data)
+        shown: object | None = None
+        if isinstance(target, Message) or hasattr(target, "reply_text"):
+            try:
+                shown = await target.reply_text(text, reply_markup=keyboard)
+            except TelegramError as error:
+                logger.warning("Telegram summary delivery failed: %s", type(error).__name__)
+                return
+        else:
+            try:
+                await target.edit_message_text(text, reply_markup=keyboard)
+                shown = target.message
+            except BadRequest as error:
+                if "not modified" in str(error).lower():
+                    shown = target.message
+                else:
+                    logger.warning("Telegram summary edit rejected: %s", type(error).__name__)
+            except TelegramError as error:
+                logger.warning("Telegram summary edit failed: %s", type(error).__name__)
+            if shown is None:
+                message = target.message
+                if message is None or not hasattr(message, "reply_text"):
+                    return
+                try:
+                    shown = await message.reply_text(text, reply_markup=keyboard)
+                except TelegramError as error:
+                    logger.warning(
+                        "Telegram summary fallback failed: %s", type(error).__name__
+                    )
+                    return
+        chat_id = getattr(shown, "chat_id", None)
+        message_id = getattr(shown, "message_id", None)
         if isinstance(chat_id, int) and isinstance(message_id, int):
-            state_data.update(summary_chat_id=chat_id, summary_message_id=message_id)
-        await self._save_state(user_id, "awaiting_notes", state_data)
-        text = texts.NOTES_PROMPT.format(
-            details=self._operation_details(payload, state_data),
-            mode=self._mode_text(payload, user_id),
-        )
-        keyboard = InlineKeyboardMarkup(
-            [
-                [InlineKeyboardButton(texts.NOTES_SKIP_BUTTON, callback_data="receipt:no_notes")],
-                [InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")],
-            ]
-        )
-        expense_id = str(state_data["expense_id"])
+            data.update(
+                summary_chat_id=chat_id, summary_message_id=message_id,
+                form_chat_id=chat_id, form_message_id=message_id,
+            )
         payload.update(
-            summary_chat_id=chat_id, summary_message_id=message_id,
+            summary_chat_id=data.get("summary_chat_id"),
+            summary_message_id=data.get("summary_message_id"),
             telegram_summary_text=text,
+            portal_notes=data["portal_notes"],
         )
         await asyncio.to_thread(self._database.update_expense_payload, expense_id, payload)
-        try:
-            await query.edit_message_text(text, reply_markup=keyboard)
-            return
-        except BadRequest as error:
-            if "not modified" in str(error).lower():
-                return
-            logger.warning("Telegram note prompt edit rejected: %s", type(error).__name__)
-        except TelegramError as error:
-            logger.warning("Telegram note prompt edit failed: %s", type(error).__name__)
-        try:
-            replacement = await message.reply_text(text, reply_markup=keyboard)
-        except TelegramError as error:
-            logger.warning("Telegram note prompt fallback failed: %s", type(error).__name__)
-            return
-        chat_id = getattr(replacement, "chat_id", None)
-        message_id = getattr(replacement, "message_id", None)
-        if isinstance(chat_id, int) and isinstance(message_id, int):
-            state_data.update(summary_chat_id=chat_id, summary_message_id=message_id)
-            payload.update(summary_chat_id=chat_id, summary_message_id=message_id)
-            await asyncio.to_thread(self._database.update_expense_payload, expense_id, payload)
-            await self._save_state(user_id, "awaiting_notes", state_data)
+        await self._save_state(user_id, "awaiting_final_confirmation", data)
 
     async def _update_summary(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int,
@@ -1698,8 +2043,9 @@ class ReceiptWorkflow:
             state_data.update(summary_chat_id=chat_id, summary_message_id=message_id)
             payload.update(summary_chat_id=chat_id, summary_message_id=message_id)
             await asyncio.to_thread(self._database.update_expense_payload, expense_id, payload)
-            if await asyncio.to_thread(self._database.get_conversation_state, user_id) is not None:
-                await self._save_state(user_id, "awaiting_notes", state_data)
+            saved = await asyncio.to_thread(self._database.get_conversation_state, user_id)
+            if saved is not None:
+                await self._save_state(user_id, saved[0], state_data)
 
     async def _notify_admin(
         self,
@@ -1863,13 +2209,10 @@ class ReceiptWorkflow:
             [
                 [InlineKeyboardButton(texts.RECEIPT_CONFIRM_BUTTON, callback_data="receipt:confirm")],
                 [
-                    InlineKeyboardButton(texts.EDIT_DATE_BUTTON, callback_data="receipt:edit:date"),
-                    InlineKeyboardButton(texts.EDIT_AMOUNT_BUTTON, callback_data="receipt:edit:total_amount"),
+                    InlineKeyboardButton(texts.DATE_BUTTON, callback_data="receipt:edit:date"),
+                    InlineKeyboardButton(texts.AMOUNT_BUTTON, callback_data="receipt:edit:total_amount"),
                 ],
-                [
-                    InlineKeyboardButton(texts.EDIT_MERCHANT_BUTTON, callback_data="receipt:edit:merchant"),
-                    InlineKeyboardButton(texts.EDIT_CATEGORY_BUTTON, callback_data="receipt:edit:suggested_category"),
-                ],
+                [InlineKeyboardButton(texts.DESCRIPTION_BUTTON, callback_data="receipt:edit:merchant")],
                 [InlineKeyboardButton(texts.CANCEL_BUTTON, callback_data="receipt:cancel")],
             ]
         )

@@ -98,7 +98,8 @@ class TelegramMessagesTests(unittest.TestCase):
         details = ReceiptWorkflow._operation_details(payload, self.selections)
         self.assertIn("📝 Negozio esempio", details)
         self.assertNotIn("🏪", details)
-        self.assertIn("senza altre conferme", messages.MENU_ADMIN_HELP)
+        self.assertIn("solo con «Accetta»", messages.MENU_ADMIN_HELP)
+        self.assertNotIn("senza altre conferme", messages.MENU_ADMIN_HELP)
         self.assertIn("modalità prova", messages.MENU_ADMIN_HELP)
         self.assertIn("Amministrazione", messages.MENU_ADMIN_HELP)
         form = messages.manual_form(
@@ -148,13 +149,26 @@ class TelegramMessagesTests(unittest.TestCase):
             for button in row
         ]
         self.assertEqual(buttons, [
-            ("✅ Sì, è giusto", "receipt:confirm"),
+            ("✅ Conferma", "receipt:confirm"),
             ("📅 Data", "receipt:edit:date"),
             ("💶 Importo", "receipt:edit:total_amount"),
-            ("🏪 Negozio", "receipt:edit:merchant"),
-            ("🏷️ Categoria", "receipt:edit:suggested_category"),
+            ("✏️ Descrizione", "receipt:edit:merchant"),
             ("Annulla", "receipt:cancel"),
         ])
+
+    def test_final_summary_keyboard_has_accept_and_modify_only(self) -> None:
+        buttons = [
+            (button.text, button.callback_data)
+            for row in ReceiptWorkflow._final_summary_keyboard().inline_keyboard
+            for button in row
+        ]
+        self.assertEqual(buttons, [
+            ("✅ Accetta", "receipt:save"),
+            ("✏️ Modifica", "receipt:modify"),
+            ("Annulla", "receipt:cancel"),
+        ])
+        self.assertIn("finché non premi «Accetta»", messages.FINAL_SUMMARY_HINT)
+        self.assertNotIn("senza altre conferme", messages.MODE_REAL)
 
 
 if __name__ == "__main__":

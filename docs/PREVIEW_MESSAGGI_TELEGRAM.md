@@ -1,10 +1,10 @@
 # Anteprime dei messaggi Telegram
 
-Catalogo: menu e inserimento aggiornati il 31 ottobre 2026 (TASK 1) dai testi centralizzati in [bot/messages.py](../bot/messages.py). Le anteprime dell'analisi AI restano storiche e non fanno parte di questo intervento.
+Catalogo: menu e inserimento aggiornati il 31 ottobre 2026 (TASK 1) dai testi centralizzati in [bot/messages.py](../bot/messages.py); conferma unica dei dati letti e riepilogo finale con «Accetta»/«Modifica» aggiornati lo stesso giorno, superando il salvataggio immediato dopo la nota. Le anteprime dell'analisi AI restano storiche e non fanno parte di questo intervento.
 
 I dati sono inventati; casse, tipologie e unità sono esempi, non elenchi reali. I percorsi diagnostici usano segnaposto e sono visibili solo all'amministratore. I pulsanti sono indicati tra parentesi quadre.
 
-Per provare questi messaggi attiva prima **Modalità PROVA** da Amministrazione e controlla l'indicatore. Nell'uso normale scontrini, `/manual` e `/entrata` salvano davvero dopo la tipologia e la nota facoltativa, senza conferma aggiuntiva. `/pulisci` cancella la cronologia locale dopo conferma. `/testspesa` è stato rimosso.
+Per provare questi messaggi attiva prima **Modalità PROVA** da Amministrazione e controlla l'indicatore. Nell'uso normale scontrini, `/manual` e `/entrata` salvano davvero solo quando premi **✅ Accetta** nel riepilogo finale. `/pulisci` cancella la cronologia locale dopo conferma. `/testspesa` è stato rimosso.
 
 ## A. Avvio e aiuto
 
@@ -14,8 +14,6 @@ Per provare questi messaggi attiva prima **Modalità PROVA** da Amministrazione 
 👋 Ciao! Qui tieni in ordine le spese.
 
 📷 Mandami una foto o un PDF dello scontrino, oppure scegli cosa fare con i pulsanti qui sotto.
-
-✅ Modalità REALE: dopo la tipologia e la nota facoltativa salvo nel portale, senza altre conferme.
 ```
 
 Menu fisso in basso, al posto della tastiera del telefono:
@@ -69,11 +67,11 @@ In prova il primo pulsante diventa **✅ Torna ai salvataggi reali**. La scelta 
 ```text
 ❓ Come funziona
 
-📷 Nuovo scontrino: invia una foto o un PDF, controlla i dati e scegli cassa e tipologia. Se non riesco a leggerlo, ti chiedo i dati a mano.
+📷 Nuovo scontrino: invia una foto o un PDF. Ti mostro insieme i dati letti: confermali o correggi solo quello sbagliato. Se manca qualcosa, ti chiedo solo quel dato; poi scegli cassa e tipologia.
 
 💰 Nuova entrata: registra un’entrata senza foto.
 
-Dopo la tipologia puoi scrivere una nota o saltarla: poi registro subito, senza altre conferme. Solo in modalità PROVA non salvo nel portale.
+Alla fine ti mostro il riepilogo: «Accetta» registra, «Modifica» ti permette di cambiare un dato, la cassa, la tipologia o la nota. Non salvo nulla prima di «Accetta». Solo in modalità PROVA non salvo nel portale.
 
 📊 Riepilogo: consulta i saldi delle casse.
 📋 Ultime operazioni: controlla le tue registrazioni.
@@ -87,7 +85,7 @@ Per l'amministratore si aggiunge:
 ```text
 In ⚙️ Amministrazione trovi:
 ✍️ Inserisci a mano: registra un’entrata o un’uscita senza foto.
-Dopo la tipologia scrivi una nota o saltala e registri subito, senza altre conferme.
+Alla fine controlli il riepilogo e registri solo con «Accetta».
 🧪 Lì puoi anche attivare o disattivare la modalità prova.
 ```
 
@@ -130,22 +128,31 @@ Alla fine dell'attesa il messaggio viene sostituito da:
 
 I frammenti non vengono mostrati né usati per registrare operazioni. Il limite predefinito è 10 minuti; eventuali valori espliciti già configurati restano validi. Dopo un timeout o una risposta interrotta compare il recupero manuale.
 
-### 5 · Controllo dei dati letti, un campo alla volta
+### 5 · Controllo dei dati letti, tutti insieme
+
+Con descrizione, data e importo letti compare un solo messaggio:
 
 ```text
-✏️ Scrivi la descrizione dell’operazione.
+🧾 Ecco i dati letti dalla ricevuta.
+Se sono giusti premi «Conferma», altrimenti tocca il dato da correggere.
 
-Valore letto: Negozio esempio
-Premi «Conferma valore» oppure scrivi quello corretto.
-
-✅ Modalità REALE: dopo la tipologia e la nota facoltativa salvo nel portale, senza altre conferme.
+📅 29/10/2026
+🏪 Negozio esempio
+💶 12,50 €
 ```
 
-Sotto ogni proposta: **[✅ Conferma valore] [Annulla]**. Conferma oppure scrivi una correzione. Seguono data e importo allo stesso modo; un campo non letto viene richiesto senza proposta. Nessun dato letto passa automaticamente alla scelta della cassa.
+```text
+[✅ Conferma]
+[📅 Data] [💶 Importo]
+[✏️ Descrizione]
+[Annulla]
+```
 
-### 6 · Dati mancanti o modifica
+«Conferma» passa alla scelta della cassa. Non ci sono più proposte campo per campo né il pulsante «Conferma valore» (decisione superata il 31 ottobre 2026). Se la lettura è incerta compare anche `⚠️ Non sono sicuro di aver letto bene: controlla con attenzione.`
 
-Lettura fallita, una richiesta per messaggio:
+### 6 · Dati mancanti o correzione
+
+Se l'analisi non ha letto un campo, il bot chiede **solo quelli mancanti**, uno per messaggio, con il solo pulsante **[Annulla]**; poi mostra il riepilogo della sezione 5:
 
 ```text
 Non sono riuscito a leggere la data. Me la scrivi come giorno-mese-anno? (es. 29-10-2026 o 29/10/26)
@@ -159,10 +166,20 @@ Non sono riuscito a leggere il negozio. Come si chiama?
 Non sono riuscito a leggere il totale. Quanto hai speso? (es. 12,50)
 ```
 
-Modifica scelta dall'utente, una richiesta per messaggio:
+Se l'analisi fallisce del tutto, si compilano descrizione, data e importo come in `/entrata` (sezione 13).
+
+Correzione scelta dall'utente (dal riepilogo iniziale o da «Modifica» nel riepilogo finale), ad esempio:
 
 ```text
 Qual è la data giusta? Scrivila come giorno-mese-anno (es. 29-10-2026 o 29/10/26)
+
+Valore attuale: 29/10/2026
+Scrivi il valore corretto oppure premi «⬅️ Torna al riepilogo».
+```
+
+```text
+[⬅️ Torna al riepilogo]
+[Annulla]
 ```
 
 Le date sono sempre in forma italiana giorno-mese-anno. Separatori ammessi: `-`, `/`, `.` o spazio; giorno e mese anche con una cifra (`2-3-26`), anno con due o quattro cifre (`26` = `2026`).
@@ -175,9 +192,7 @@ Come si chiama il negozio?
 Qual è l'importo giusto? (es. 12,50)
 ```
 
-```text
-Che categoria vuoi? Scrivi "-" per lasciarla vuota.
-```
+Dopo il nuovo valore il bot torna al riepilogo da cui è partita la correzione: quello iniziale (sezione 5) oppure quello finale (sezione 9 bis), senza saltare passaggi e senza salvare. Un valore non valido mostra `⚠️ Non ho capito il valore scritto. Riprova.` e ripete la richiesta. La correzione della categoria letta dall'AI non è più proposta: non viene inviata al portale.
 
 ### 7 · Scelta della cassa
 
@@ -187,17 +202,15 @@ Che categoria vuoi? Scrivi "-" per lasciarla vuota.
 
 ```text
 🏦 Quale cassa vuoi usare? (1 di 3)
-
-✅ Modalità REALE: dopo la tipologia e la nota facoltativa salvo nel portale, senza altre conferme.
 ```
 
 ```text
 [Cassa esempio A]
 [Cassa esempio B]
-[📅 Data] [💶 Importo] [✏️ Descrizione]
-[🏷️ Categoria]
 [Annulla]
 ```
+
+Quando la cassa si cambia da «Modifica» compare anche **[⬅️ Torna al riepilogo]**. Scegliere la stessa cassa torna subito al riepilogo finale; una cassa diversa richiede di nuovo la tipologia.
 
 ### 8 · Entrata o uscita
 
@@ -209,7 +222,10 @@ Questo passaggio compare solo con `/manual`. `/entrata` è già impostato su Ent
 
 ```text
 [⬇️ Entrata] [⬆️ Uscita]
+[Annulla]
 ```
+
+Nel `/manual` dell'amministratore la direzione si può cambiare da «Modifica» (**↔️ Entrata/Uscita**): la stessa scelta torna al riepilogo, quella opposta richiede di nuovo la tipologia.
 
 ### 9 · Tipologia
 
@@ -226,7 +242,10 @@ Ti mostro le più usate.
 [Tipologia esempio A]
 [Tipologia esempio B]
 [➕ Mostra altre (8)]
+[Annulla]
 ```
+
+Quando la tipologia si cambia da «Modifica» compare anche **[⬅️ Torna al riepilogo]**.
 
 Con tutte le voci subito disponibili:
 
@@ -240,33 +259,79 @@ Dopo «Mostra altre»:
 🏷️ Altre tipologie
 ```
 
-### 9 bis · NOTA facoltativa
+### 9 bis · Riepilogo finale: Accetta o Modifica
 
-Dopo la tipologia il bot mostra il riepilogo e chiede una NOTA. Scriverla avvia subito il salvataggio; il pulsante salva con la nota vuota.
+Dopo la tipologia lo stesso messaggio diventa il riepilogo finale. Nulla è salvato finché non premi «Accetta».
 
 ```text
+📋 Riepilogo finale: controlla i dati prima di registrare.
+
 📅 29/10/2026
 🏪 Negozio esempio
 💶 12,50 € (uscita)
 🏦 Cassa esempio
 🏷️ Tipologia esempio
+👥 Unità esempio
+🗒️ Nessuna nota
 
-✅ Modalità REALE: dopo la tipologia e la nota facoltativa salvo nel portale, senza altre conferme.
-
-🗒️ Vuoi aggiungere una NOTA?
-Scrivila qui e salvo subito con la nota nel portale.
-Se non serve, premi «Salva senza nota».
+Premi «✅ Accetta» per registrare l’operazione, oppure «✏️ Modifica» per cambiare un dato o aggiungere una nota. Non salvo nulla finché non premi «Accetta».
 ```
 
 ```text
-[💾 Salva senza nota]
-[❌ Annulla]
+[✅ Accetta]
+[✏️ Modifica]
+[Annulla]
 ```
 
-Una nota oltre 500 caratteri viene rifiutata:
+Per l'amministratore in prova compare anche `🧪 Modalità PROVA: non viene salvato nulla nel portale.` prima dell'ultima riga. **Accetta** salva con la nota attuale oppure senza nota.
+
+**Modifica** mostra i dati e i campi modificabili:
+
+```text
+✏️ Cosa vuoi modificare?
+Dopo la modifica torni al riepilogo: non salvo nulla finché non premi «Accetta».
+```
+
+```text
+[📅 Data] [💶 Importo]
+[✏️ Descrizione]
+[🏦 Cassa] [🏷️ Tipologia]
+[↔️ Entrata/Uscita]   ← solo /manual dell'amministratore
+[🗒️ Nota]
+[⬅️ Torna al riepilogo]
+[Annulla]
+```
+
+Unità e categoria del portale non hanno pulsanti: nel percorso attuale non si scelgono (unità predefinita della cassa, categoria vuota). Una data in un altro anno scout fa scegliere di nuovo cassa e tipologia, con il prefisso:
+
+```text
+📅 La nuova data è in un altro anno scout: scegli di nuovo cassa e tipologia.
+```
+
+**Nota**:
+
+```text
+🗒️ Scrivi la NOTA per il portale (massimo 500 caratteri).
+Nota attuale: Nota esempio
+Dopo l’invio torni al riepilogo: non salvo nulla finché non premi «Accetta».
+```
+
+```text
+[🧹 Togli la nota]   ← solo se c'è già una nota
+[⬅️ Torna al riepilogo]
+[Annulla]
+```
+
+Scritta la nota, compare un nuovo riepilogo finale con la riga `🗒️ Nota esempio`: **non** parte il salvataggio. Una nota oltre 500 caratteri viene rifiutata:
 
 ```text
 La nota è troppo lunga: scrivila in massimo 500 caratteri.
+```
+
+Se il portale non risponde durante una modifica, il riepilogo finale torna con le scelte precedenti e il prefisso:
+
+```text
+⚠️ Non riesco a leggere le casse dal portale adesso: ho lasciato i dati come prima.
 ```
 
 ### 10 · Salvataggio in corso
@@ -286,7 +351,7 @@ La nota è troppo lunga: scrivila in massimo 500 caratteri.
 🧪 Modalità PROVA: non viene salvato nulla nel portale.
 ```
 
-Quello stesso messaggio del riepilogo viene modificato, prima per il progresso e poi per l'esito, senza pulsanti. Anche scrivendo la nota non compare un nuovo risultato. Solo se Telegram rifiuta l'edit viene usato un messaggio sostitutivo; se anche questo fallisce, dati, nota ed esito restano nel database e l'errore viene registrato senza ripetere la registrazione.
+Il messaggio del riepilogo finale su cui hai premuto «Accetta» viene modificato, prima per il progresso e poi per l'esito, senza pulsanti. Non compare un nuovo risultato. Solo se Telegram rifiuta l'edit viene usato un messaggio sostitutivo; se anche questo fallisce, dati, nota ed esito restano nel database e l'errore viene registrato senza ripetere la registrazione.
 
 ### 11 · Spesa salvata
 
@@ -359,13 +424,11 @@ Se un valore non è valido, il bot mostra `⚠️ Non ho capito il valore scritt
 Dopo aver compilato i dati:
 
 ```text
-Ecco i dati dell’operazione. Puoi correggerli prima di scegliere la cassa.
+Ecco i dati dell’operazione. Potrai correggerli nel riepilogo finale con «Modifica».
 
 📅 29/10/2026
 📝 Prova Telegram
 💶 0,10 €
-
-✅ Modalità REALE: dopo la tipologia e la nota facoltativa salvo nel portale, senza altre conferme.
 ```
 
 Sticker, audio, video e file diversi da foto o PDF vengono eliminati e il bot risponde:
@@ -376,7 +439,7 @@ Sticker, audio, video e altri file non sono supportati e non li conservo. Usa i 
 
 ### 14 · Ultima scelta manuale
 
-Non compare una conferma finale. Dopo la tipologia il bot chiede la NOTA facoltativa (sezione 9 bis): scriverla o premere «Salva senza nota» porta direttamente al salvataggio o alla prova e poi all'esito nello stesso messaggio.
+Dopo la tipologia compare il riepilogo finale della sezione 9 bis: **✅ Accetta** salva (o fa la prova) e mostra l'esito nello stesso messaggio; **✏️ Modifica** permette di cambiare dati, cassa, tipologia, nota e, nel `/manual` dell'amministratore, Entrata/Uscita. La precedente regola «nota o Salva senza nota salvano subito» è superata dal 31 ottobre 2026.
 
 ### 15 · Inserimento manuale completato
 
@@ -754,7 +817,7 @@ Agli utenti non autorizzati non viene inviata alcuna risposta.
 ### 27 · Errore leggendo casse o tipologie
 
 ```text
-Non riesco a leggere le casse dal portale adesso. Non ho salvato nulla e i dati dello scontrino restano qui: premi «Sì, è giusto» per riprovare oppure Annulla.
+Non riesco a leggere le casse dal portale adesso. Non ho salvato nulla e i dati dello scontrino restano qui: premi «Conferma» per riprovare oppure Annulla.
 ```
 
 ```text

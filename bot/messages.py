@@ -48,10 +48,12 @@ HOME_TEXT = (
 BACK_BUTTON = "⬅️ Indietro"
 MENU_HELP = (
     "❓ Come funziona\n\n"
-    "📷 Nuovo scontrino: invia una foto o un PDF, controlla i dati e scegli "
-    "cassa e tipologia. Se non riesco a leggerlo, ti chiedo i dati a mano.\n\n"
+    "📷 Nuovo scontrino: invia una foto o un PDF. Ti mostro insieme i dati letti: "
+    "confermali o correggi solo quello sbagliato. Se manca qualcosa, ti chiedo solo "
+    "quel dato; poi scegli cassa e tipologia.\n\n"
     "💰 Nuova entrata: registra un’entrata senza foto.\n\n"
-    "Dopo la tipologia puoi scrivere una nota o saltarla: poi registro subito, senza altre conferme. "
+    "Alla fine ti mostro il riepilogo: «Accetta» registra, «Modifica» ti permette di "
+    "cambiare un dato, la cassa, la tipologia o la nota. Non salvo nulla prima di «Accetta». "
     "Solo in modalità PROVA non salvo nel portale.\n\n"
     "📊 Riepilogo: consulta i saldi delle casse.\n"
     "📋 Ultime operazioni: controlla le tue registrazioni.\n"
@@ -62,13 +64,13 @@ MENU_HELP = (
 MENU_ADMIN_HELP = (
     "\n\nIn ⚙️ Amministrazione trovi:\n"
     "✍️ Inserisci a mano: registra un’entrata o un’uscita senza foto.\n"
-    "Dopo la tipologia scrivi una nota o saltala e registri subito, senza altre conferme.\n"
+    "Alla fine controlli il riepilogo e registri solo con «Accetta».\n"
     "🧪 Lì puoi anche attivare o disattivare la modalità prova."
 )
 MENU_RECEIPT = (
     "📷 Nuovo scontrino\n\nInvia qui una foto o un PDF della ricevuta. "
-    "Lo conserverò e ti farò controllare i dati prima di scegliere la cassa. "
-    "Dopo la tipologia scrivi una nota o saltala: registro senza altre conferme."
+    "Ti mostro i dati letti tutti insieme da confermare o correggere, poi scegli cassa "
+    "e tipologia. Registro solo quando premi «Accetta» nel riepilogo finale."
 )
 MENU_ADMIN = "⚙️ Strumenti amministratore\n\nScegli un’operazione."
 MENU_PLACEHOLDER = "Scegli dal menu o invia una foto"
@@ -102,7 +104,7 @@ SUMMARY_TOTALS = (
     "Saldo iniziale: {opening}\nEntrate: {income}\n"
     "Uscite: {expense}\nSaldo finale: {balance}"
 )
-MODE_REAL = "✅ Modalità REALE: dopo la tipologia e la nota facoltativa salvo nel portale, senza altre conferme."
+MODE_REAL = "✅ Modalità REALE: salvo nel portale solo dopo «Accetta» nel riepilogo finale."
 COMMAND_START = "Apri il menu del bot"
 COMMAND_HELP = "Guida e comandi"
 COMMAND_LATEST = "Le tue ultime spese"
@@ -232,7 +234,13 @@ RECEIPT_TRANSFER_FAILED = (
     "da Telegram. L'analisi non è iniziata e non ho registrato nulla. "
     "Attendi un momento e invia di nuovo il file."
 )
-RECEIPT_DETAILS = "Ecco i dati dell’operazione. Puoi correggerli prima di scegliere la cassa."
+RECEIPT_DETAILS = (
+    "Ecco i dati dell’operazione. Potrai correggerli nel riepilogo finale con «Modifica»."
+)
+RECEIPT_REVIEW = (
+    "🧾 Ecco i dati letti dalla ricevuta.\n"
+    "Se sono giusti premi «Conferma», altrimenti tocca il dato da correggere."
+)
 LOW_CONFIDENCE = "⚠️ Non sono sicuro di aver letto bene: controlla con attenzione."
 MISSING_DATE = (
     "Non sono riuscito a leggere la data. Me la scrivi come giorno-mese-anno? "
@@ -243,7 +251,6 @@ MISSING_AMOUNT = "Non sono riuscito a leggere il totale. Quanto hai speso? (es. 
 EDIT_DATE = "Qual è la data giusta? Scrivila come giorno-mese-anno (es. 29-10-2026 o 29/10/26)"
 EDIT_MERCHANT = "Come si chiama il negozio?"
 EDIT_AMOUNT = "Qual è l'importo giusto? (es. 12,50)"
-EDIT_CATEGORY = 'Che categoria vuoi? Scrivi "-" per lasciarla vuota.'
 MANUAL_DATE = (
     "📅 Scrivi la data come "
     "giorno-mese-anno, ad esempio 29-10-2026, 29/10/26 o 2-3-26."
@@ -252,8 +259,10 @@ MANUAL_MERCHANT = "✏️ Scrivi la descrizione dell’operazione."
 MANUAL_AMOUNT = (
     "💶 Scrivi l’importo (es. 12,50)."
 )
-FIELD_SUGGESTION = "\n\nValore letto: {value}\nPremi «Conferma valore» oppure scrivi quello corretto."
-FIELD_ACCEPT_BUTTON = "✅ Conferma valore"
+FIELD_SUGGESTION = (
+    "\n\nValore attuale: {value}\n"
+    "Scrivi il valore corretto oppure premi «⬅️ Torna al riepilogo»."
+)
 HOME_BUTTON = "🏠 Menu principale"
 INSERTING = "⏳ Sto inserendo…"
 MANUAL_DESCRIPTION = "Prova Telegram"
@@ -275,7 +284,7 @@ MANUAL_FORM_EMPTY = "da inserire"
 MANUAL_FORM_INVALID = "⚠️ Non ho capito il valore scritto. Riprova."
 MANUAL_FORM_NEXT = "👉 {prompt}"
 MANUAL_FORM_FOOTER = (
-    "Poi sceglierai cassa e tipologia: poi scrivi una nota o saltala e registro subito, senza altre conferme."
+    "Poi sceglierai cassa e tipologia e controllerai il riepilogo: registro solo con «Accetta»."
 )
 MANUAL_FORM_DONE = "✍️ Dati inseriti:\n\n{details}"
 TODAY_BUTTON = "📅 Oggi"
@@ -324,12 +333,11 @@ TRIAL_PROGRESS = (
     "🧪 Faccio la prova nel portale (non salvo nulla)… " "Un attimo, non premere altro."
 )
 MANUAL_CONFIRM_BUTTON = "✅ Va bene"
-RECEIPT_CONFIRM_BUTTON = "✅ Sì, è giusto"
+RECEIPT_CONFIRM_BUTTON = "✅ Conferma"
 DATE_BUTTON = EDIT_DATE_BUTTON = "📅 Data"
 AMOUNT_BUTTON = EDIT_AMOUNT_BUTTON = "💶 Importo"
 DESCRIPTION_BUTTON = "✏️ Descrizione"
 EDIT_MERCHANT_BUTTON = "🏪 Negozio"
-EDIT_CATEGORY_BUTTON = "🏷️ Categoria"
 CANCEL_BUTTON = "Annulla"
 NO_CATEGORY_BUTTON = "Senza categoria"
 
@@ -455,7 +463,10 @@ PORTAL_UNAVAILABLE_RECEIPT = (
     "Il collegamento al portale non è ancora attivo. "
     "Non ho salvato nulla: lo scontrino resta in attesa."
 )
-PORTAL_READ_FAILED = "Non riesco a leggere {subject} dal portale adesso. Non ho salvato nulla e i dati dello scontrino restano qui: premi «Sì, è giusto» per riprovare oppure Annulla."
+PORTAL_READ_FAILED = "Non riesco a leggere {subject} dal portale adesso. Non ho salvato nulla e i dati dello scontrino restano qui: premi «Conferma» per riprovare oppure Annulla."
+PORTAL_EDIT_READ_FAILED = (
+    "⚠️ Non riesco a leggere {subject} dal portale adesso: ho lasciato i dati come prima.\n\n"
+)
 PORTAL_MANUAL_READ_FAILED = "Non riesco a leggere {subject} dal portale. Non ho inserito nulla e ho conservato i dati: premi «Va bene» per riprovare oppure Annulla."
 ACCOUNTS_SUBJECT = "le casse"
 TYPES_SUBJECT = "le tipologie"
@@ -525,13 +536,32 @@ ACCOUNT_LINE = "🏦 {value}"
 UNIT_LINE = "👥 {value}"
 PORTAL_CATEGORY_LINE = "🗂️ {value}"
 NOTES_LINE = "🗒️ {value}"
-NOTES_PROMPT = (
-    "{details}\n\n{mode}\n\n"
-    "🗒️ Vuoi aggiungere una NOTA?\n"
-    "Scrivila qui e salvo subito con la nota nel portale.\n"
-    "Se non serve, premi «Salva senza nota»."
+NO_NOTES_LINE = "🗒️ Nessuna nota"
+FINAL_SUMMARY_TITLE = "📋 Riepilogo finale: controlla i dati prima di registrare."
+FINAL_SUMMARY_HINT = (
+    "Premi «✅ Accetta» per registrare l’operazione, oppure «✏️ Modifica» per cambiare "
+    "un dato o aggiungere una nota. Non salvo nulla finché non premi «Accetta»."
 )
-NOTES_SKIP_BUTTON = "💾 Salva senza nota"
+FINAL_ACCEPT_BUTTON = "✅ Accetta"
+FINAL_MODIFY_BUTTON = "✏️ Modifica"
+FINAL_EDIT_PROMPT = (
+    "{details}\n\n✏️ Cosa vuoi modificare?\n"
+    "Dopo la modifica torni al riepilogo: non salvo nulla finché non premi «Accetta»."
+)
+BACK_TO_SUMMARY_BUTTON = "⬅️ Torna al riepilogo"
+ACCOUNT_BUTTON = "🏦 Cassa"
+TYPE_BUTTON = "🏷️ Tipologia"
+DIRECTION_BUTTON = "↔️ Entrata/Uscita"
+NOTE_BUTTON = "🗒️ Nota"
+CLEAR_NOTE_BUTTON = "🧹 Togli la nota"
+NOTE_EDIT_PROMPT = (
+    "🗒️ Scrivi la NOTA per il portale (massimo {limit} caratteri).\n{current}"
+    "Dopo l’invio torni al riepilogo: non salvo nulla finché non premi «Accetta»."
+)
+NOTE_CURRENT = "Nota attuale: {value}\n"
+DATE_YEAR_CHANGED = (
+    "📅 La nuova data è in un altro anno scout: scegli di nuovo cassa e tipologia.\n\n"
+)
 NOTES_TOO_LONG = "La nota è troppo lunga: scrivila in massimo {limit} caratteri."
 ROW_SEPARATOR = " · "
 INCOME_LABEL = "entrata"
@@ -646,12 +676,14 @@ def manual_form(
     return "\n\n".join(sections)
 
 
-def receipt_confirmation(payload: Mapping[str, object], confidence: float) -> str:
+def receipt_confirmation(
+    payload: Mapping[str, object], confidence: float, *, header: str = RECEIPT_DETAILS
+) -> str:
     details = operation_details(payload, {})
     category = safe_text(payload.get("suggested_category"))
     if category:
         details += "\n" + CATEGORY_LINE.format(value=category)
-    text = f"{RECEIPT_DETAILS}\n\n{details}"
+    text = f"{header}\n\n{details}"
     if confidence < 0.7:
         text += f"\n\n{LOW_CONFIDENCE}"
     return text
