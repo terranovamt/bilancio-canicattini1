@@ -8,7 +8,7 @@ Il bot, l'analisi locale, l'archivio, SQLite, la coda dei ritentativi e il clien
 
 È disponibile anche `bilancio/csv_import.py` per importare CSV con classificazioni AGESCI. L'import completato comprendeva 112 movimenti: 80 entrate e 32 uscite. Due uscite già presenti sono state escluse dal nuovo invio; le altre 110 sono state elaborate e verificate nel registro. Due timeout di autenticazione hanno interrotto i primi blocchi, poi ripresi senza reinviare le righe già verificate. Il verificatore riconosce l'unità `Gruppo G1` anche quando il registro la mostra come `G1`.
 
-Il comportamento predefinito è **REALE** (`DRY_RUN=false`): dopo l'ultima scelta contabile il bot chiede un dettaglio facoltativo: scriverlo o premere «Salva senza dettaglio» salva e verifica l'operazione nel portale, senza «Va bene» o «Salva davvero». Vale per scontrini, `/entrata` e `/manual`; quest'ultimo permette entrate e uscite senza ricevuta. Per non salvare, l'amministratore deve scegliere esplicitamente **Amministrazione → Attiva modalità prova**. La ricevuta viene archiviata sul NAS e non allegata alla registrazione web. L'importatore CSV mantiene le proprie protezioni: simulazione predefinita, `--apply`, conteggio e conferma digitata per gli import reali.
+Il comportamento predefinito è **REALE** (`DRY_RUN=false`): dopo l'ultima scelta contabile il bot mostra il riepilogo e chiede una **nota facoltativa**: scriverla o premere «Salva senza nota» salva e verifica l'operazione nel portale, senza altre conferme. Vale per scontrini, `/entrata` e `/manual`; quest'ultimo permette entrate e uscite senza ricevuta. Per non salvare, l'amministratore deve scegliere esplicitamente **Amministrazione → Attiva modalità prova**. La ricevuta viene archiviata sul NAS e non allegata alla registrazione web. L'importatore CSV mantiene le proprie protezioni: simulazione predefinita, `--apply`, conteggio e conferma digitata per gli import reali.
 
 La modalità scelta dall'amministratore vale per tutti i nuovi inserimenti, fino alla disattivazione, anche dopo un riavvio. È conservata nel database e prevale su `DRY_RUN`; in assenza di una scelta usa il valore di `.env`, ora reale per impostazione predefinita. **Per un NAS già configurato con `DRY_RUN=true`, dopo l'aggiornamento premi «Torna ai salvataggi reali» una volta**: il programma non modifica automaticamente `.env`. Ogni operazione conserva la modalità iniziale, anche nei ritentativi; le vecchie code senza modalità registrata vengono riprovate solo in simulazione, per non trasformare vecchie prove in inserimenti reali.
 
@@ -99,24 +99,26 @@ Il bot legge token e ID dal file `.env`; non inviare quel file o le sue credenzi
 
 Per un'entrata senza ricevuta, qualunque utente autorizzato può premere **💰 Nuova entrata** nel menu principale (oppure scrivere `/entrata`):
 
-1. Il modulo chiede un dato alla volta: data, descrizione e importo. Ogni volta che scrivi un dato, il tuo messaggio viene tolto e il modulo si aggiorna in fondo alla chat, con i pulsanti sempre visibili.
-2. **Data**: scegli il giorno dal calendario sotto il modulo (con ◀️/▶️ cambi mese; i giorni futuri non sono selezionabili) oppure premi **📅 Oggi** o **Ieri**. Puoi anche scriverla come **giorno-mese-anno**: valgono `29-10-2026`, `29/10/2026`, `29.10.26` o `2-3-26` (giorno e mese anche con una sola cifra, anno anche con due: `26` diventa `2026`).
-3. **Descrizione**: scrivila con la tastiera normale.
-4. **Importo**: componilo con il tastierino numerico sotto il modulo (cifre, virgola e ⌫), poi premi **✅ Conferma importo**; oppure scrivilo, ad esempio `12,50`. I tasti modificano lo stesso messaggio, senza aggiungere messaggi in chat.
-5. Per correggere un campo premi **📅 Data**, **✏️ Descrizione** o **💶 Importo** nel modulo.
-6. Scegli cassa e tipologia: la direzione è già Entrata. Dopo la tipologia scrivi un dettaglio (diventa la nota nel portale) oppure premi **💾 Salva senza dettaglio**: il salvataggio parte subito, senza conferma aggiuntiva. Per una prova senza salvataggio attiva prima **Modalità PROVA** da Amministrazione.
+1. Scrivi la **descrizione** dell'operazione come normale messaggio.
+2. Scrivi la **data**, giorno-mese-anno: valgono `29-10-2026`, `29/10/2026`, `29.10.26`, `2 3 26` o `2-3-26` (anno `26` = `2026`). Resta accettato anche il formato ISO.
+3. Scrivi l'**importo**, ad esempio `12,50`. Un dato non valido viene richiesto di nuovo, senza cancellare alcuna risposta.
+4. Scegli cassa e tipologia: la direzione è già Entrata. Prima della cassa puoi ancora correggere i dati con i pulsanti del riepilogo.
+5. Nell'ultimo messaggio controlla il riepilogo e scrivi una **NOTA** facoltativa (massimo 500 caratteri), oppure premi **💾 Salva senza nota**: il salvataggio parte subito. Per una prova senza salvataggio attiva prima **Modalità PROVA** da Amministrazione.
+6. **Quello stesso messaggio** mostra «Sto inserendo…» mantenendo il riepilogo, poi l'esito e i dati; il pulsante sparisce. Vale anche quando la nota arriva come testo: non viene inviato un nuovo risultato.
 
 Per inserire a mano un'entrata **o un'uscita senza ricevuta**, l'amministratore può aprire **⚙️ Amministrazione** e premere **✍️ Inserisci a mano** (oppure scrivere `/manual`):
 
-1. Compila lo stesso modulo; non vengono proposti importi di prova.
-2. Scegli cassa, **Entrata** o **Uscita**, poi la tipologia. Scrivi un dettaglio o premi **💾 Salva senza dettaglio**: il salvataggio parte senza un'altra conferma.
+1. Scrivi descrizione, data e importo nei tre passaggi testuali; non vengono proposti importi di prova.
+2. Scegli cassa, **Entrata** o **Uscita**, poi la tipologia. Scrivi una nota o premi **💾 Salva senza nota**: il salvataggio parte senza un'altra conferma.
 3. Attendi l'esito verificato. Se la modalità prova era attiva all'inizio, non viene salvato nulla nel portale.
 
-Telegram non permette veri campi di input dentro la chat senza una pagina web esterna, né permette al bot di aprire la tastiera numerica del telefono: per questo il modulo è un messaggio che si aggiorna, con calendario e tastierino fatti di pulsanti. Sticker, audio, video e file diversi da foto o PDF vengono eliminati dalla chat e il bot ricorda cosa inviare.
+Non ci sono modulo, calendario o tastierino: si usano normali messaggi separati e le risposte restano in chat. Sticker, audio, video e file diversi da foto o PDF restano non supportati e vengono eliminati come prima.
+
+Se Telegram non permette di modificare il riepilogo (ad esempio perché è stato eliminato), il bot registra l'errore e usa un messaggio sostitutivo solo quando necessario. Se fallisce anche l'invio sostitutivo, nota, dati, esito e riferimento restano nel database locale; non viene ripetuta la registrazione solo per un problema di notifica. Il recapito di quell'esito non viene ritentato automaticamente: chiedi all'amministratore di controllare **Ultime operazioni** e i log locali prima di reinserire.
 
 Il vecchio `/testspesa` è stato rimosso per non confondere una prova con un inserimento reale: usa **Inserisci a mano** e scegli la modalità desiderata in Amministrazione.
 
-Inviando una foto o un PDF, invece, la direzione è già **Uscita**. Il bot prova prima un OCR locale e poi Gemini. Se non riesce a leggere il documento, anche per timeout, ricevi un avviso e puoi compilare data, descrizione e importo a mano, poi scegliere cassa e tipologia senza dover selezionare di nuovo Uscita. File e stato per il recupero manuale vengono conservati prima di avviare l'AI. L'attesa totale dell'analisi è limitata da `GEMINI_TIMEOUT_SECONDS` (oppure `LOCAL_VISION_TIMEOUT_SECONDS` per compatibilità). Il file resta temporaneamente sul NAS: compare nell'archivio `scontrini` quando avvii il salvataggio, con i dati e la cassa scelti. `/annulla` elimina la copia temporanea, non le ricevute già archiviate. La compilazione a mano mantiene la modalità con cui hai inviato la ricevuta. Questo percorso è disponibile agli stessi utenti autorizzati che possono inviare scontrini, anche se Gemini non è configurato. Fuori dal percorso manuale dell'amministratore, un'uscita senza file resta bloccata, anche nei ritentativi della coda.
+Inviando una foto o un PDF, invece, la direzione è già **Uscita**. Il bot prova prima un OCR locale e poi Gemini. Ogni valore letto è proposto nel relativo passaggio (descrizione, data, importo): premi **Conferma valore** oppure scrivi quello corretto. Non viene usato automaticamente senza il tuo controllo. Se l'analisi fallisce, anche per timeout, ricevi un avviso e compili gli stessi tre campi a mano, poi scegli cassa e tipologia senza dover selezionare di nuovo Uscita. File e stato per il recupero manuale vengono conservati prima di avviare l'AI. L'attesa totale dell'analisi è limitata da `GEMINI_TIMEOUT_SECONDS` (oppure `LOCAL_VISION_TIMEOUT_SECONDS` per compatibilità). Il file resta temporaneamente sul NAS: compare nell'archivio `scontrini` quando avvii il salvataggio, con i dati e la cassa scelti. `/annulla` elimina la copia temporanea, non le ricevute già archiviate. La compilazione a mano mantiene la modalità con cui hai inviato la ricevuta. Questo percorso è disponibile agli stessi utenti autorizzati che possono inviare scontrini, anche se Gemini non è configurato. Fuori dal percorso manuale dell'amministratore, un'uscita senza file resta bloccata, anche nei ritentativi della coda.
 
 ### Attesa dell'analisi immagini
 
@@ -138,8 +140,8 @@ Per usare il bot non occorre ricordare i comandi:
 
 1. Su Telegram premi **Avvia**, oppure invia `/start` una volta. Al posto della tastiera del telefono compare il **menu fisso in basso**; dopo un aggiornamento del bot invia `/start` una volta per vedere il menu nuovo.
 2. Premi un pulsante del menu in basso: **📷 Nuovo scontrino**, **💰 Nuova entrata**, **📊 Riepilogo**, **📋 Ultime operazioni**, **⏳ Operazioni in attesa**, **❓ Aiuto** o **✖️ Annulla operazione**. Il pulsante premuto compare in chat come un tuo messaggio e il bot risponde con un nuovo messaggio: è il funzionamento normale di Telegram. Per scrivere un testo usa l'icona della tastiera accanto al campo del messaggio.
-3. Se sei amministratore, trovi anche **⚙️ Amministrazione**, che contiene **✍️ Inserisci a mano** (entrate e uscite senza ricevuta) e gli strumenti di gestione. **💰 Nuova entrata** è invece nel menu principale, per tutti gli utenti autorizzati. La modalità prova/reale è indicata per tutti; gli inserimenti manuali seguono la stessa modalità degli scontrini.
-4. I messaggi non hanno più il pulsante **🏠 Menu principale**: il menu resta sempre in basso. Negli strumenti amministratore trovi **⬅️ Indietro**. Il menu non cancella i dati di un inserimento già aperto.
+3. Se sei amministratore, **⚙️ Amministrazione** sostituisce la stessa tastiera in basso con **✍️ Inserisci a mano** e gli strumenti di gestione, tutti protetti dai permessi. **💰 Nuova entrata** resta nel menu principale per tutti gli utenti autorizzati. La modalità prova/reale è indicata per tutti.
+4. Nella tastiera amministratore premi **🏠 Menu principale** per ripristinare quella principale. Negli strumenti resta anche **⬅️ Indietro**. Cambiare menu non cancella i dati di un inserimento già aperto.
 5. Per interrompere un inserimento premi **Annulla** nel suo messaggio, oppure **✖️ Annulla operazione** nel menu in basso.
 
 In **Amministrazione** trovi modalità prova, verifica del collegamento, aggiornamento casse e tipologie, versione e aggiornamenti del bot, pulizia della cronologia. **Attiva modalità prova** disabilita i salvataggi nel portale per tutti i nuovi inserimenti; **Torna ai salvataggi reali** ripristina il funzionamento normale. Installazione degli aggiornamenti e pulizia mantengono le proprie conferme. Versione attiva e disponibile si consultano da **Versione e aggiornamenti**.
@@ -174,7 +176,7 @@ Nel passaggio delle tipologie il bot mostra prima le 6 più usate per quella cas
 I percorsi manuali usano `Voci Scout` e le tipologie disponibili per cassa e direzione. Impostano l'unità predefinita associata alla cassa; se il portale non offre alcuna unità («No results»), lasciano l'unità vuota e non la mostrano nel riepilogo. La categoria resta vuota.
 
 - `/manual` e `/entrata` salvano davvero per impostazione predefinita; rispettano la modalità prova come gli scontrini.
-- Usa `/annulla` o il pulsante **Annulla** prima di scrivere o saltare il dettaglio per interrompere senza salvare.
+- Usa `/annulla` o il pulsante **Annulla** prima di scrivere o saltare la nota per interrompere senza salvare.
 - Se il salvataggio non viene verificato, il bot non riprova da solo: controlla nel portale e ripeti `/manual` o `/entrata` solo se l'operazione non c'è.
 - Durante le operazioni lente compare un messaggio di attesa e i pulsanti spariscono. Se tocchi di nuovo un pulsante vecchio, il bot lo ignora e mostra «Questo pulsante non è più attivo».
 - Se il portale non risponde mentre il bot legge casse o tipologie, i dati manuali restano conservati: premi **✅ Va bene** per riprovare oppure **Annulla**. Per uno scontrino, il file resta salvato e il bot propone **✅ Sì, è giusto** per riprovare oppure **Annulla**.
@@ -198,15 +200,32 @@ Per la prima prova usa una descrizione chiaramente riconoscibile e controlla con
 `/riepilogo` legge dal portale AGESCI, in sola lettura, i saldi di tutte le casse dell'anno scout corrente. Lo possono usare tutti gli utenti autorizzati e non modifica nulla.
 
 1. Su Telegram invia `/riepilogo`.
-2. Attendi circa un minuto: compare «⏳ Leggo i saldi dal portale…».
+2. Compare «⏳ Leggo i saldi dal portale…». Il bot legge la tabella generale di Prima Nota, senza entrare nelle singole casse.
 3. Il messaggio si trasforma nel riepilogo. Per ogni cassa vedi:
    - il saldo attuale, cioè quanto dovresti avere in contanti o sul conto;
    - le entrate e le uscite;
-   - l'ultima operazione.
-4. Premi **📈 Dettagli** per vedere anche il saldo iniziale al 1° ottobre, l'andamento mese per mese e le ultime 3 operazioni. Il bot rilegge l'anno selezionato senza modificare nulla.
+   - il saldo iniziale.
+4. Premi **📈 Dettagli** per vedere l'andamento mese per mese e le ultime 3 operazioni. Solo per questa vista il bot entra nei registri delle singole casse, senza modificare nulla.
 5. Premi **⬅️ Anno …** per vedere l'anno scout precedente, **Anno … ➡️** per tornare avanti, oppure **🔄 Aggiorna** per rileggere il portale e tornare alla vista compatta.
 
-Se compare «❌ Non riesco a leggere i saldi adesso», riprova più tardi. Se compare «⚠️ Il portale mostra solo … righe su …», il saldo è comunque quello del portale, ma andamento e ultime operazioni sono parziali.
+Ogni lettura riuscita salva in SQLite uno **snapshot persistente dei soli saldi del portale**, separato per anno scout e con data e ora di lettura. Se compare «❌ Non riesco a leggere i saldi adesso», il bot mostra anche lo snapshot dello **stesso anno**, se disponibile, preceduto da «Ultimi dati letti dal portale il … alle …» e dall'avviso che sono dati non aggiornati. Non calcola mai i saldi dalle operazioni locali del bot. Una lettura fallita o invalida non sovrascrive lo snapshot precedente.
+
+La tabella generale deve essere completa e gli importi coerenti, altrimenti viene segnalato un errore. Nella vista Dettagli, se compare «⚠️ Il portale mostra solo … righe su …», il saldo è comunque quello del portale, ma andamento e ultime operazioni sono parziali. Se Dettagli fallisce, l'eventuale cache viene mostrata **solo come saldi**, con «dettagli non disponibili»: non sostituisce andamento e operazioni.
+
+### Lettura e resoconto giornaliero dell'amministratore
+
+Con il bot acceso, **ogni mezzanotte locale** il bot legge i saldi dell'anno scout corrente dalla tabella generale (`read_ledgers(include_entries=False)`) e aggiorna lo snapshot persistente. Usa `settings.timezone`, configurato da `TZ` (predefinito `Europe/Rome`), compresi i cambi tra ora solare e legale. Non serve un'attività DSM separata.
+
+Solo l'amministratore riceve sempre un tentativo di notifica dell'esito della lettura, riuscita o fallita, e il resoconto del **giorno calendario precedente**:
+
+- conteggi delle operazioni, delle entrate e delle uscite; importi globali e per cassa, calcolati con `Decimal`;
+- solo operazioni reali `submitted` con evento di verifica persistito dal bot, incluse quelle riuscite tramite retry;
+- escluse prove/dry-run, operazioni incomplete, in coda o fallite e risultati «già presenti»; un evento per operazione evita ricontaggi;
+- nessuna descrizione, nota, identità utente o ricevuta nel report o nei suoi log; se non ci sono operazioni compare **zero movimenti**.
+
+**Quale data conta:** il primo evento di registrazione verificata salvato nel DB, convertito nel fuso configurato, **non la data della ricevuta**. Il vecchio `updated_at` cambia anche con l'aggiornamento dei messaggi e non consente una ricostruzione certa; i vecchi `submitted` senza questo evento non vengono conteggiati automaticamente. Le nuove tabelle sono aggiunte senza cancellare o riscrivere le operazioni esistenti.
+
+Lo snapshot resta nel volume del database dopo un riavvio. Se il portale viene letto ma SQLite non può salvare, la notifica distingue lettura riuscita da cache non aggiornata. Se non è possibile calcolare il report, viene mostrato un errore, non uno zero inventato. Il job richiede il bot acceso: non recupera automaticamente mezzanotti perse durante uno spegnimento. Un errore Telegram viene registrato senza contenuti privati; il recapito non è garantibile e non è ritentato automaticamente.
 
 Dopo la pulizia la classifica delle tipologie più usate riparte da zero.
 
@@ -225,6 +244,18 @@ python -m compileall -q bot bilancio db storage vision tests
 ```
 
 Queste verifiche non accedono al portale AGESCI e non contattano Telegram.
+
+Per verificare solo snapshot, report e integrazioni relative, con l'ambiente virtuale locale e senza avviare il bot:
+
+```powershell
+$env:DRY_RUN = "true"
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p test_daily.py -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p test_bot_application.py -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p test_receipt_workflow.py -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p test_retry_service.py -v
+```
+
+Questi test usano database temporanei e client finti, anche quando simulano esiti reali. `DRY_RUN=true` da solo non autorizza prove manuali su servizi reali.
 
 ## Repository GitHub privato
 

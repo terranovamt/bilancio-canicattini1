@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 
+from bilancio.client import AccountLedger, PortalExpense, PortalOption, PortalSubmissionResult
+from db.ledger_snapshot import LedgerSnapshot, compact_ledgers
 _HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _EXPENSE_STATUSES = {
     "received",
@@ -38,6 +41,15 @@ class RetryEntry:
     attempts: int
     next_attempt_at: str
     last_error_code: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedMovement:
+    account_value: str
+    account_label: str
+    direction: str
+    amount: Decimal
+    verified_at: datetime
 
 
 class Database:
@@ -98,8 +110,126 @@ class Database:
                     ON retry_queue(next_attempt_at);
                 CREATE INDEX IF NOT EXISTS expenses_user_created_idx
                     ON expenses(telegram_user_id, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS ledger_snapshots (
+                    start_year INTEGER PRIMARY KEY,
+                    read_at TEXT NOT NULL,
+                    balances_json TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS verified_submissions (
+                    expense_id TEXT PRIMARY KEY
+                        REFERENCES expenses(expense_id) ON DELETE CASCADE,
+                    verified_at TEXT NOT NULL,
+                    account_value TEXT NOT NULL,
+                    account_label TEXT NOT NULL,
+                    direction TEXT NOT NULL CHECK (direction IN ('entrata', 'uscita')),
+                    amount TEXT NOT NULL,
+                    dry_run INTEGER NOT NULL CHECK (dry_run IN (0, 1)),
+                    already_present INTEGER NOT NULL CHECK (already_present IN (0, 1))
+                );
+                CREATE INDEX IF NOT EXISTS verified_submissions_time_idx
+                    ON verified_submissions(verified_at);
                 """
             )
+
+    def save_ledger_snapshot(
+        self, start_year: int, read_at: datetime, ledgers: Sequence[AccountLedger],
+    ) -> None:
+        compact = compact_ledgers(ledgers)
+        if read_at.tzinfo is None or read_at.utcoffset() is None:
+            raise ValueError("Snapshot timestamp must be timezone-aware")
+        balances = [
+            {
+                "value": ledger.account.value, "label": ledger.account.label,
+                "opening": str(ledger.opening_balance), "income": str(ledger.total_income),
+                "expense": str(ledger.total_expense), "balance": str(ledger.balance),
+            }
+            for ledger in compact
+        ]
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO ledger_snapshots (start_year, read_at, balances_json)
+                VALUES (?, ?, ?)
+                ON CONFLICT(start_year) DO UPDATE SET
+                    read_at = excluded.read_at, balances_json = excluded.balances_json
+                WHERE excluded.read_at >= ledger_snapshots.read_at
+                """,
+                (start_year, read_at.astimezone(timezone.utc).isoformat(), json.dumps(balances)),
+            )
+
+    def get_ledger_snapshot(self, start_year: int) -> LedgerSnapshot | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT read_at, balances_json FROM ledger_snapshots WHERE start_year = ?",
+                (start_year,),
+            ).fetchone()
+        if row is None:
+            return None
+        read_at = datetime.fromisoformat(row["read_at"])
+        if read_at.tzinfo is None:
+            raise ValueError("Stored snapshot timestamp must be timezone-aware")
+        balances = json.loads(row["balances_json"])
+        ledgers = [
+            AccountLedger(
+                PortalOption(item["value"], item["label"]), Decimal(item["opening"]),
+                Decimal(item["income"]), Decimal(item["expense"]), Decimal(item["balance"]),
+                entries=(), total_rows=0, complete=True, entries_available=False,
+            )
+            for item in balances
+        ]
+        return LedgerSnapshot(start_year, read_at, compact_ledgers(ledgers))
+
+    def record_verified_submission(
+        self, expense_id: str, expense: PortalExpense, result: PortalSubmissionResult,
+    ) -> None:
+        """Atomically store the first verification event and the final operation status."""
+        if not result.verified:
+            raise ValueError("Submission must be verified")
+        now = self._now()
+        with self._connection() as connection:
+            cursor = connection.execute(
+                "UPDATE expenses SET status = ?, updated_at = ? WHERE expense_id = ?",
+                ("dry_run" if result.dry_run else "submitted", now, expense_id),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError("Expense not found")
+            connection.execute(
+                """
+                INSERT INTO verified_submissions (
+                    expense_id, verified_at, account_value, account_label,
+                    direction, amount, dry_run, already_present
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(expense_id) DO NOTHING
+                """,
+                (expense_id, now, expense.account.value, expense.account.label,
+                 expense.direction.value, str(expense.amount), int(result.dry_run),
+                 int(result.confirmation_id == "existing-entry")),
+            )
+
+    def list_verified_movements(self, start: datetime, end: datetime) -> list[VerifiedMovement]:
+        if start.tzinfo is None or end.tzinfo is None or start >= end:
+            raise ValueError("Movement interval must be aware and increasing")
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT v.account_value, v.account_label, v.direction, v.amount, v.verified_at
+                FROM verified_submissions v JOIN expenses e ON e.expense_id = v.expense_id
+                WHERE e.status = 'submitted' AND v.dry_run = 0 AND v.already_present = 0
+                  AND v.verified_at >= ? AND v.verified_at < ?
+                ORDER BY v.verified_at, v.expense_id
+                """,
+                (start.astimezone(timezone.utc).isoformat(timespec="seconds"),
+                 end.astimezone(timezone.utc).isoformat(timespec="seconds")),
+            ).fetchall()
+        return [
+            VerifiedMovement(
+                row["account_value"], row["account_label"], row["direction"],
+                Decimal(row["amount"]), datetime.fromisoformat(row["verified_at"]),
+            )
+            for row in rows
+        ]
 
     def get_test_mode(self, *, default: bool) -> bool:
         with self._connection() as connection:

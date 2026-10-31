@@ -1,10 +1,10 @@
 # Anteprime dei messaggi Telegram
 
-Catalogo aggiornato il 29 ottobre 2026 dai testi centralizzati in [bot/messages.py](../bot/messages.py).
+Catalogo: menu e inserimento aggiornati il 31 ottobre 2026 (TASK 1) dai testi centralizzati in [bot/messages.py](../bot/messages.py). Le anteprime dell'analisi AI restano storiche e non fanno parte di questo intervento.
 
 I dati sono inventati; casse, tipologie e unità sono esempi, non elenchi reali. I percorsi diagnostici usano segnaposto e sono visibili solo all'amministratore. I pulsanti sono indicati tra parentesi quadre.
 
-Per provare questi messaggi attiva prima **Modalità PROVA** da Amministrazione e controlla l'indicatore. Nell'uso normale scontrini, `/manual` e `/entrata` salvano davvero dopo la tipologia e il dettaglio facoltativo, senza conferma aggiuntiva. `/pulisci` cancella la cronologia locale dopo conferma. `/testspesa` è stato rimosso.
+Per provare questi messaggi attiva prima **Modalità PROVA** da Amministrazione e controlla l'indicatore. Nell'uso normale scontrini, `/manual` e `/entrata` salvano davvero dopo la tipologia e la nota facoltativa, senza conferma aggiuntiva. `/pulisci` cancella la cronologia locale dopo conferma. `/testspesa` è stato rimosso.
 
 ## A. Avvio e aiuto
 
@@ -15,7 +15,7 @@ Per provare questi messaggi attiva prima **Modalità PROVA** da Amministrazione 
 
 📷 Mandami una foto o un PDF dello scontrino, oppure scegli cosa fare con i pulsanti qui sotto.
 
-✅ Modalità REALE: dopo la tipologia e il dettaglio facoltativo salvo nel portale, senza altre conferme.
+✅ Modalità REALE: dopo la tipologia e la nota facoltativa salvo nel portale, senza altre conferme.
 ```
 
 Menu fisso in basso, al posto della tastiera del telefono:
@@ -45,7 +45,7 @@ La modalità è indicata per tutti. Se l'amministratore ha attivato la prova, l'
 [✖️ Annulla operazione] [⚙️ Amministrazione]
 ```
 
-**⚙️ Amministrazione** apre un messaggio con i pulsanti sotto il messaggio:
+**⚙️ Amministrazione** sostituisce la tastiera persistente in basso con gli strumenti amministratore:
 
 La schermata Amministrazione contiene:
 
@@ -55,7 +55,9 @@ La schermata Amministrazione contiene:
 [🔌 Verifica collegamento]
 [🔄 Aggiorna casse e tipologie]
 [🔖 Versione e aggiornamenti]
+[🔄 Installa aggiornamento]
 [🧹 Pulisci cronologia]
+[🏠 Menu principale]
 ```
 
 Versione attiva e disponibile vengono mostrate nella schermata **Versione e aggiornamenti**, con **Installa aggiornamento** e **Indietro**. Il pulsante di installazione apre la conferma, non installa subito. La pulizia mantiene la propria conferma.
@@ -71,7 +73,7 @@ In prova il primo pulsante diventa **✅ Torna ai salvataggi reali**. La scelta 
 
 💰 Nuova entrata: registra un’entrata senza foto.
 
-Dopo la tipologia puoi scrivere un dettaglio o saltarlo: poi registro subito, senza altre conferme. Solo in modalità PROVA non salvo nel portale.
+Dopo la tipologia puoi scrivere una nota o saltarla: poi registro subito, senza altre conferme. Solo in modalità PROVA non salvo nel portale.
 
 📊 Riepilogo: consulta i saldi delle casse.
 📋 Ultime operazioni: controlla le tue registrazioni.
@@ -85,11 +87,11 @@ Per l'amministratore si aggiunge:
 ```text
 In ⚙️ Amministrazione trovi:
 ✍️ Inserisci a mano: registra un’entrata o un’uscita senza foto.
-Dopo la tipologia scrivi un dettaglio o saltalo e registri subito, senza altre conferme.
+Dopo la tipologia scrivi una nota o saltala e registri subito, senza altre conferme.
 🧪 Lì puoi anche attivare o disattivare la modalità prova.
 ```
 
-Le schermate non hanno più **Menu principale**: il menu resta in basso. Gli strumenti amministratore hanno **Indietro**. Usare il menu non cancella un inserimento. I moduli conservano correzione e annullamento, non conferme aggiuntive. Le schermate informative sono accessibili durante le attese dell'AI o del portale; salvataggi e altre azioni che cambiano dati restano sequenziali.
+Il ritorno **Menu principale** è nella tastiera amministratore, non nei messaggi dell'inserimento. Gli strumenti amministratore mantengono **Indietro**. Usare il menu non cancella un inserimento. I passaggi testuali conservano le risposte; non c'è un modulo, calendario o tastierino. Le schermate informative sono accessibili durante le attese dell'AI o del portale; salvataggi e altre azioni che cambiano dati restano sequenziali.
 
 ## B. Inserimento da scontrino
 
@@ -128,23 +130,18 @@ Alla fine dell'attesa il messaggio viene sostituito da:
 
 I frammenti non vengono mostrati né usati per registrare operazioni. Il limite predefinito è 10 minuti; eventuali valori espliciti già configurati restano validi. Dopo un timeout o una risposta interrotta compare il recupero manuale.
 
-### 5 · Controllo dei dati
+### 5 · Controllo dei dati letti, un campo alla volta
 
 ```text
-Ecco i dati dell’operazione. Puoi correggerli prima di scegliere la cassa.
+✏️ Scrivi la descrizione dell’operazione.
 
-📅 29/10/2026
-🏪 Negozio esempio
-💶 12,50 €
+Valore letto: Negozio esempio
+Premi «Conferma valore» oppure scrivi quello corretto.
 
-✅ Modalità REALE: dopo la tipologia e il dettaglio facoltativo salvo nel portale, senza altre conferme.
+✅ Modalità REALE: dopo la tipologia e la nota facoltativa salvo nel portale, senza altre conferme.
 ```
 
-Solo sotto il 70% si aggiunge questo avviso, senza percentuali:
-
-```text
-⚠️ Non sono sicuro di aver letto bene: controlla con attenzione.
-```
+Sotto ogni proposta: **[✅ Conferma valore] [Annulla]**. Conferma oppure scrivi una correzione. Seguono data e importo allo stesso modo; un campo non letto viene richiesto senza proposta. Nessun dato letto passa automaticamente alla scelta della cassa.
 
 ### 6 · Dati mancanti o modifica
 
@@ -191,7 +188,7 @@ Che categoria vuoi? Scrivi "-" per lasciarla vuota.
 ```text
 🏦 Quale cassa vuoi usare? (1 di 3)
 
-✅ Modalità REALE: dopo la tipologia e il dettaglio facoltativo salvo nel portale, senza altre conferme.
+✅ Modalità REALE: dopo la tipologia e la nota facoltativa salvo nel portale, senza altre conferme.
 ```
 
 ```text
@@ -243,45 +240,53 @@ Dopo «Mostra altre»:
 🏷️ Altre tipologie
 ```
 
-### 9 bis · Dettaglio facoltativo
+### 9 bis · NOTA facoltativa
 
-Dopo la tipologia il bot chiede un dettaglio, che finisce nelle note del portale. Scriverlo avvia subito il salvataggio; il pulsante salva con le note vuote.
+Dopo la tipologia il bot mostra il riepilogo e chiede una NOTA. Scriverla avvia subito il salvataggio; il pulsante salva con la nota vuota.
 
 ```text
-🗒️ Vuoi aggiungere un dettaglio?
-Scrivilo qui e salvo subito, con il dettaglio come nota nel portale.
-Se non serve, premi «Salva senza dettaglio».
-
 📅 29/10/2026
 🏪 Negozio esempio
 💶 12,50 € (uscita)
 🏦 Cassa esempio
 🏷️ Tipologia esempio
 
-🟢 Modalità REALE: salvo davvero nel portale.
+✅ Modalità REALE: dopo la tipologia e la nota facoltativa salvo nel portale, senza altre conferme.
+
+🗒️ Vuoi aggiungere una NOTA?
+Scrivila qui e salvo subito con la nota nel portale.
+Se non serve, premi «Salva senza nota».
 ```
 
 ```text
-[💾 Salva senza dettaglio]
+[💾 Salva senza nota]
 [❌ Annulla]
-[🏠 Menu]
 ```
 
-Un dettaglio oltre 500 caratteri viene rifiutato:
+Una nota oltre 500 caratteri viene rifiutata:
 
 ```text
-Il dettaglio è troppo lungo: scrivilo in massimo 500 caratteri.
+La nota è troppo lunga: scrivila in massimo 500 caratteri.
 ```
 
 ### 10 · Salvataggio in corso
 
 ```text
-⏳ Salvo nel portale e controllo che sia andato tutto bene… Un attimo, non premere altro.
+⏳ Sto inserendo…
+
+📅 29/10/2026
+🏪 Negozio esempio
+💶 12,50 € (uscita)
+🏦 Cassa esempio
+🏷️ Tipologia esempio
+🗒️ Nota esempio
 ```
 
 ```text
-🧪 Faccio la prova nel portale (non salvo nulla)… Un attimo, non premere altro.
+🧪 Modalità PROVA: non viene salvato nulla nel portale.
 ```
+
+Quello stesso messaggio del riepilogo viene modificato, prima per il progresso e poi per l'esito, senza pulsanti. Anche scrivendo la nota non compare un nuovo risultato. Solo se Telegram rifiuta l'edit viene usato un messaggio sostitutivo; se anche questo fallisce, dati, nota ed esito restano nel database e l'errore viene registrato senza ripetere la registrazione.
 
 ### 11 · Spesa salvata
 
@@ -294,10 +299,10 @@ Il dettaglio è troppo lungo: scrivilo in massimo 500 caratteri.
 🏦 Cassa esempio
 🏷️ Tipologia esempio
 👥 Unità esempio
-🗒️ Dettaglio esempio
+🗒️ Nota esempio
 ```
 
-I campi vuoti non compaiono. La riga 👥 manca anche quando il portale non offre unità per l'anno; la riga 🗒️ manca se hai salvato senza dettaglio. Non vengono mostrate voci contabili, percorsi o informazioni sull'archivio.
+I campi vuoti non compaiono. La riga 👥 manca anche quando il portale non offre unità per l'anno; la riga 🗒️ manca se hai salvato senza nota. Non vengono mostrate voci contabili, percorsi o informazioni sull'archivio.
 
 ### 12 · Prova riuscita o già presente
 
@@ -327,62 +332,29 @@ I campi vuoti non compaiono. La riga 👥 manca anche quando il portale non offr
 
 ### 13 · Inserimento manuale: «Nuova entrata» / Amministrazione → «Inserisci a mano»
 
-**💰 Nuova entrata** è nel menu principale ed è disponibile a tutti gli utenti autorizzati; **✍️ Inserisci a mano** (entrata o uscita) è nella schermata ⚙️ Amministrazione. Restano disponibili anche `/entrata` e, per l'amministratore, `/manual`. Si apre un modulo unico che chiede un dato alla volta, con i tasti adatti al campo: calendario per la data, tastiera normale per la descrizione, tastierino numerico per l'importo. Ogni dato scritto viene tolto dalla chat e il modulo si ripresenta aggiornato in fondo; i tasti del calendario e del tastierino modificano lo stesso messaggio.
+**💰 Nuova entrata** è nel menu principale per tutti gli utenti autorizzati; **✍️ Inserisci a mano** (entrata o uscita) è nella tastiera ⚙️ Amministrazione, solo per l'amministratore. Restano `/entrata` e `/manual`. Ogni richiesta è un messaggio separato: descrizione, data italiana, importo. Le risposte non vengono eliminate.
 
 ```text
-💰 Nuova entrata a mano
-
-Usa i tasti sotto il modulo oppure scrivi il dato richiesto: il modulo si aggiorna e i pulsanti restano in fondo. Per cambiare un campo premi il suo pulsante.
-
-📅 Data: da inserire
-✏️ Descrizione: da inserire
-💶 Importo: da inserire
-
-👉 📅 Scegli il giorno dal calendario o premi «Oggi»/«Ieri». Puoi anche scriverla come giorno-mese-anno, ad esempio 29-10-2026, 29/10/26 o 2-3-26.
-
-Poi sceglierai cassa e tipologia: dopo la tipologia scrivi un dettaglio o premi «Salva senza dettaglio» e il bot registra subito, senza altre conferme.
-
-✅ Modalità REALE: dopo la tipologia e il dettaglio facoltativo salvo nel portale, senza altre conferme.
+✏️ Scrivi la descrizione dell’operazione.
 ```
 
 ```text
-[📅 Oggi] [Ieri]
-[◀️] [Ottobre 2026] [·]
-[L] [M] [M] [G] [V] [S] [D]
-[·] [·] [1] [2] [3] [4] [5]
-…
-[27] [28] [29] [·] [·] [·] [·]
-[📅 Data] [✏️ Descrizione] [💶 Importo]
 [Annulla]
 ```
 
-«Inserisci a mano» usa il titolo `✍️ Nuova operazione a mano (entrata o uscita)`. Il calendario compare solo quando è richiesta la data: ◀️/▶️ cambiano mese senza andare oltre il mese corrente, i giorni futuri e le caselle vuote sono `·` e non fanno nulla. Dopo la data:
+Dopo la descrizione:
 
 ```text
-📅 Data: 02/03/2026
-✏️ Descrizione: da inserire
-💶 Importo: da inserire
-
-👉 ✏️ Scrivi la descrizione dell’operazione.
+📅 Scrivi la data come giorno-mese-anno, ad esempio 29-10-2026, 29/10/26 o 2-3-26.
 ```
 
-Quando è richiesto l'importo compare il tastierino; mentre componi, il modulo mostra il valore, ad esempio `💶 Importo: 12,5 € ✏️`:
+Dopo la data:
 
 ```text
-👉 💶 Componi l’importo con i tasti qui sotto e premi «Conferma importo», oppure scrivilo (es. 12,50).
+💶 Scrivi l’importo (es. 12,50).
 ```
 
-```text
-[1] [2] [3]
-[4] [5] [6]
-[7] [8] [9]
-[,] [0] [⌫]
-[✅ Conferma importo]
-[📅 Data] [✏️ Descrizione] [💶 Importo]
-[Annulla]
-```
-
-Il tastierino accetta al massimo due decimali. Se il valore non è valido (anche vuoto o zero), il modulo mostra `⚠️ Non ho capito il valore scritto. Riprova.` e ripete la richiesta.
+Se un valore non è valido, il bot mostra `⚠️ Non ho capito il valore scritto. Riprova.` e ripete la richiesta. Ogni passaggio mostra anche la modalità iniziale dell'operazione.
 
 Dopo aver compilato i dati:
 
@@ -393,7 +365,7 @@ Ecco i dati dell’operazione. Puoi correggerli prima di scegliere la cassa.
 📝 Prova Telegram
 💶 0,10 €
 
-✅ Modalità REALE: dopo la tipologia e il dettaglio facoltativo salvo nel portale, senza altre conferme.
+✅ Modalità REALE: dopo la tipologia e la nota facoltativa salvo nel portale, senza altre conferme.
 ```
 
 Sticker, audio, video e file diversi da foto o PDF vengono eliminati e il bot risponde:
@@ -404,7 +376,7 @@ Sticker, audio, video e altri file non sono supportati e non li conservo. Usa i 
 
 ### 14 · Ultima scelta manuale
 
-Non compare una conferma finale. Dopo la tipologia il bot chiede il dettaglio facoltativo (sezione 9 bis): scriverlo o premere «Salva senza dettaglio» porta direttamente al salvataggio o alla prova in corso e poi all'esito verificato.
+Non compare una conferma finale. Dopo la tipologia il bot chiede la NOTA facoltativa (sezione 9 bis): scriverla o premere «Salva senza nota» porta direttamente al salvataggio o alla prova e poi all'esito nello stesso messaggio.
 
 ### 15 · Inserimento manuale completato
 

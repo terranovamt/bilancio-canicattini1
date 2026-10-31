@@ -32,6 +32,19 @@ def ledger(label: str, entries: list[LedgerEntry], balance: str, *, complete: bo
 
 
 class SummaryFormatTests(unittest.TestCase):
+    def test_overview_does_not_claim_no_movements_when_entries_were_not_read(self) -> None:
+        sample = AccountLedger(
+            account=PortalOption("Cassa test", "Cassa test"),
+            opening_balance=Decimal("10"), total_income=Decimal("2"),
+            total_expense=Decimal("3"), balance=Decimal("9"), entries=(),
+            total_rows=0, complete=True, entries_available=False,
+        )
+        text = "\n".join(format_ledger_summary([sample], 2026))
+        self.assertIn("Saldo: 9,00 €", text)
+        self.assertIn("Saldo iniziale: 10,00 €", text)
+        self.assertNotIn("Nessun", text)
+        self.assertNotIn("Ultima operazione", text)
+
     def test_default_summary_shows_only_latest_operation_without_details(self) -> None:
         sample = ledger(
             "Cassa esempio",

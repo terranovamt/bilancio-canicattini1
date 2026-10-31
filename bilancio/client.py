@@ -120,6 +120,7 @@ class AccountLedger:
     entries: tuple[LedgerEntry, ...]
     total_rows: int
     complete: bool
+    entries_available: bool = True
 
 
 class BilancioClient(Protocol):
@@ -173,6 +174,7 @@ class BilancioClient(Protocol):
         self,
         *,
         transaction_date: date,
+        include_entries: bool = True,
     ) -> Sequence[AccountLedger]:
         """Read balances and operations of every account without changing data."""
 

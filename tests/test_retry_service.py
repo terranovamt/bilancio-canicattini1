@@ -1,8 +1,10 @@
 import tempfile
 import unittest
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 from bilancio.client import (
     BilancioClientError,
@@ -83,6 +85,10 @@ class ExpenseRetryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(portal.received_expenses[0][1])
         self.assertEqual(bot.messages[0][0], 12345)
         self.assertIn("🧪 Nuovo tentativo in prova", bot.messages[0][1])
+        now = datetime.now(timezone.utc)
+        self.assertEqual(self.database.list_verified_movements(
+            now - timedelta(days=1), now + timedelta(days=1),
+        ), [])
 
     async def test_processes_queued_expense_without_a_unit(self) -> None:
         self.create_queued_expense(with_unit=False)
@@ -183,6 +189,34 @@ class ExpenseRetryServiceTests(unittest.IsolatedAsyncioTestCase):
         result = await service.process_due(bot)
         self.assertEqual((result.succeeded, result.trials), (1, 0))
         self.assertEqual(bot.messages[0][1], "✅ Salvata: Negozio, 12,50 € (26/10).")
+        now = datetime.now(timezone.utc)
+        movements = self.database.list_verified_movements(
+            now - timedelta(days=1), now + timedelta(days=1),
+        )
+        self.assertEqual(len(movements), 1)
+        self.assertEqual(movements[0].amount, Decimal("12.50"))
+        self.assertEqual(movements[0].direction, "uscita")
+
+    async def test_existing_entry_retry_is_submitted_but_excluded_from_daily_report(self) -> None:
+        self.create_queued_expense()
+        stored = self.database.get_expense("expense-1")
+        self.database.update_expense_payload("expense-1", {**stored.payload, "dry_run": False})
+        portal = FakeRetryPortal()
+        portal.create_expense = AsyncMock(return_value=PortalSubmissionResult(
+            True, confirmation_id="existing-entry",
+        ))
+        service = ExpenseRetryService(
+            settings=make_settings(), database=self.database, bilancio_client=portal,
+            archive=FileArchive(self.root / "archive"),
+            pending_store=PendingReceiptStore(self.root / "pending"),
+        )
+        result = await service.process_due(FakeBot())
+        self.assertEqual(result.succeeded, 1)
+        self.assertEqual(self.database.get_expense("expense-1").status, "submitted")
+        now = datetime.now(timezone.utc)
+        self.assertEqual(self.database.list_verified_movements(
+            now - timedelta(days=1), now + timedelta(days=1),
+        ), [])
 
     async def test_legacy_queue_without_mode_cannot_become_real_by_default(self) -> None:
         self.create_queued_expense()

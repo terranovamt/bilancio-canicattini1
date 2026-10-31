@@ -70,8 +70,10 @@ def _format_account(ledger: AccountLedger, *, details: bool) -> str:
             income=format_euro(ledger.total_income), expense=format_euro(ledger.total_expense)
         ),
     ]
-    if details:
+    if details or not ledger.entries_available:
         lines.append(texts.OPENING_BALANCE.format(amount=format_euro(ledger.opening_balance)))
+    if not ledger.entries_available:
+        return "\n".join(lines)
     movements = sorted(
         (entry for entry in ledger.entries if not entry.is_opening_balance),
         key=lambda entry: entry.transaction_date,

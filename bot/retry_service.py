@@ -197,11 +197,11 @@ class ExpenseRetryService:
             )
             return "pending"
 
-        status = "dry_run" if result.dry_run else "submitted"
         await asyncio.to_thread(
-            self._database.update_expense_status,
+            self._database.record_verified_submission,
             entry.expense_id,
-            status,
+            portal_expense,
+            result,
         )
         await asyncio.to_thread(
             self._database.remove_retry,

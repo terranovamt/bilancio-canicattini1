@@ -6,6 +6,40 @@ from datetime import date
 from decimal import Decimal
 from typing import Mapping
 
+DAILY_READ_SUCCESS = (
+    "✅ Saldi letti dal portale e salvati localmente · anno scout {year}.\n"
+    "Lettura del {day:%d/%m/%Y} alle {clock:%H:%M:%S} ({zone})."
+)
+DAILY_READ_FAILED = (
+    "❌ Non riesco ad aggiornare i saldi dal portale · anno scout {year}.\n"
+    "L'eventuale snapshot precedente resta invariato."
+)
+DAILY_READ_CACHE_FAILED = (
+    "✅ Saldi letti dal portale · anno scout {year}.\n"
+    "Lettura del {day:%d/%m/%Y} alle {clock:%H:%M:%S} ({zone}).\n"
+    "❌ Non riesco a salvare lo snapshot locale; i dati precedenti restano invariati."
+)
+DAILY_REPORT_HEADER = (
+    "📊 Operazioni BOT del {day:%d/%m/%Y}\n"
+    "Solo registrazioni reali verificate: giorno del primo evento di verifica "
+    "(ora locale configurata), non data della ricevuta. Escluse prove e già presenti.\n"
+    "Gli eventi storici senza timestamp di verifica certo non sono conteggiati."
+)
+DAILY_TOTALS = (
+    "Operazioni: {count}\n"
+    "Entrate: {income_count} · {income}\n"
+    "Uscite: {expense_count} · {expense}"
+)
+DAILY_ACCOUNT = "🏦 {account}"
+DAILY_GLOBAL = "Totale globale"
+DAILY_ZERO_MOVEMENTS = "Nessuna operazione reale verificata dal bot nel giorno: zero movimenti."
+DAILY_REPORT_FAILED = "❌ Non riesco a calcolare il resoconto delle operazioni BOT."
+SUMMARY_CACHED = (
+    "Ultimi dati letti dal portale il {day:%d/%m/%Y} alle {clock:%H:%M:%S} ({zone}).\n"
+    "⚠️ Solo saldi salvati localmente, non aggiornati; dettagli non disponibili."
+)
+SUMMARY_CACHE_SAVE_FAILED = "⚠️ Saldi letti dal portale, ma non salvati nella cache locale."
+
 HOME_TEXT = (
     "👋 Ciao! Qui tieni in ordine le spese.\n\n"
     "📷 Mandami una foto o un PDF dello scontrino, oppure scegli cosa fare "
@@ -17,7 +51,7 @@ MENU_HELP = (
     "📷 Nuovo scontrino: invia una foto o un PDF, controlla i dati e scegli "
     "cassa e tipologia. Se non riesco a leggerlo, ti chiedo i dati a mano.\n\n"
     "💰 Nuova entrata: registra un’entrata senza foto.\n\n"
-    "Dopo la tipologia puoi scrivere un dettaglio o saltarlo: poi registro subito, senza altre conferme. "
+    "Dopo la tipologia puoi scrivere una nota o saltarla: poi registro subito, senza altre conferme. "
     "Solo in modalità PROVA non salvo nel portale.\n\n"
     "📊 Riepilogo: consulta i saldi delle casse.\n"
     "📋 Ultime operazioni: controlla le tue registrazioni.\n"
@@ -28,13 +62,13 @@ MENU_HELP = (
 MENU_ADMIN_HELP = (
     "\n\nIn ⚙️ Amministrazione trovi:\n"
     "✍️ Inserisci a mano: registra un’entrata o un’uscita senza foto.\n"
-    "Dopo la tipologia scrivi un dettaglio o saltalo e registri subito, senza altre conferme.\n"
+    "Dopo la tipologia scrivi una nota o saltala e registri subito, senza altre conferme.\n"
     "🧪 Lì puoi anche attivare o disattivare la modalità prova."
 )
 MENU_RECEIPT = (
     "📷 Nuovo scontrino\n\nInvia qui una foto o un PDF della ricevuta. "
     "Lo conserverò e ti farò controllare i dati prima di scegliere la cassa. "
-    "Dopo la tipologia scrivi un dettaglio o saltalo: registro senza altre conferme."
+    "Dopo la tipologia scrivi una nota o saltala: registro senza altre conferme."
 )
 MENU_ADMIN = "⚙️ Strumenti amministratore\n\nScegli un’operazione."
 MENU_PLACEHOLDER = "Scegli dal menu o invia una foto"
@@ -62,7 +96,7 @@ MODE_CHANGED = (
 )
 MODE_CHANGE_FAILED = "❌ Non riesco a cambiare modalità. Non ho modificato l’impostazione: riprova."
 MODE_TRIAL = "🧪 Modalità PROVA: non viene salvato nulla nel portale."
-MODE_REAL = "✅ Modalità REALE: dopo la tipologia e il dettaglio facoltativo salvo nel portale, senza altre conferme."
+MODE_REAL = "✅ Modalità REALE: dopo la tipologia e la nota facoltativa salvo nel portale, senza altre conferme."
 COMMAND_START = "Apri il menu del bot"
 COMMAND_HELP = "Guida e comandi"
 COMMAND_LATEST = "Le tue ultime spese"
@@ -201,14 +235,17 @@ EDIT_MERCHANT = "Come si chiama il negozio?"
 EDIT_AMOUNT = "Qual è l'importo giusto? (es. 12,50)"
 EDIT_CATEGORY = 'Che categoria vuoi? Scrivi "-" per lasciarla vuota.'
 MANUAL_DATE = (
-    "📅 Scegli il giorno dal calendario o premi «Oggi»/«Ieri». Puoi anche scriverla come "
+    "📅 Scrivi la data come "
     "giorno-mese-anno, ad esempio 29-10-2026, 29/10/26 o 2-3-26."
 )
 MANUAL_MERCHANT = "✏️ Scrivi la descrizione dell’operazione."
 MANUAL_AMOUNT = (
-    "💶 Componi l’importo con i tasti qui sotto e premi «Conferma importo», "
-    "oppure scrivilo (es. 12,50)."
+    "💶 Scrivi l’importo (es. 12,50)."
 )
+FIELD_SUGGESTION = "\n\nValore letto: {value}\nPremi «Conferma valore» oppure scrivi quello corretto."
+FIELD_ACCEPT_BUTTON = "✅ Conferma valore"
+HOME_BUTTON = "🏠 Menu principale"
+INSERTING = "⏳ Sto inserendo…"
 MANUAL_DESCRIPTION = "Prova Telegram"
 MANUAL_CONFIRMATION = (
     "✍️ Operazione a mano, senza ricevuta\n\n{details}\n\n"
@@ -228,7 +265,7 @@ MANUAL_FORM_EMPTY = "da inserire"
 MANUAL_FORM_INVALID = "⚠️ Non ho capito il valore scritto. Riprova."
 MANUAL_FORM_NEXT = "👉 {prompt}"
 MANUAL_FORM_FOOTER = (
-    "Poi sceglierai cassa e tipologia: poi scrivi un dettaglio o saltalo e registro subito, senza altre conferme."
+    "Poi sceglierai cassa e tipologia: poi scrivi una nota o saltala e registro subito, senza altre conferme."
 )
 MANUAL_FORM_DONE = "✍️ Dati inseriti:\n\n{details}"
 TODAY_BUTTON = "📅 Oggi"
@@ -476,13 +513,13 @@ UNIT_LINE = "👥 {value}"
 PORTAL_CATEGORY_LINE = "🗂️ {value}"
 NOTES_LINE = "🗒️ {value}"
 NOTES_PROMPT = (
-    "🗒️ Vuoi aggiungere un dettaglio?\n"
-    "Scrivilo qui e salvo subito, con il dettaglio come nota nel portale.\n"
-    "Se non serve, premi «Salva senza dettaglio».\n\n"
-    "{details}\n\n{mode}"
+    "{details}\n\n{mode}\n\n"
+    "🗒️ Vuoi aggiungere una NOTA?\n"
+    "Scrivila qui e salvo subito con la nota nel portale.\n"
+    "Se non serve, premi «Salva senza nota»."
 )
-NOTES_SKIP_BUTTON = "💾 Salva senza dettaglio"
-NOTES_TOO_LONG = "Il dettaglio è troppo lungo: scrivilo in massimo {limit} caratteri."
+NOTES_SKIP_BUTTON = "💾 Salva senza nota"
+NOTES_TOO_LONG = "La nota è troppo lunga: scrivila in massimo {limit} caratteri."
 ROW_SEPARATOR = " · "
 INCOME_LABEL = "entrata"
 EXPENSE_LABEL = "uscita"
@@ -551,7 +588,7 @@ def operation_details(
         value = safe_text(option.get("label")) if isinstance(option, dict) else ""
         if value:
             lines.append(template.format(value=value))
-    notes = safe_text(selections.get("portal_notes"))
+    notes = safe_text(selections.get("portal_notes"), limit=500)
     if notes:
         lines.append(NOTES_LINE.format(value=notes))
     return "\n".join(lines)

@@ -413,10 +413,14 @@ class PlaywrightBilancioClient:
         self,
         *,
         transaction_date: date,
+        include_entries: bool = True,
     ) -> Sequence[AccountLedger]:
         async def read(page: Page) -> list[AccountLedger]:
+            accounts = await self._read_accounts(page)
+            if not include_entries:
+                return await self._read_account_overview(page, accounts)
             ledgers: list[AccountLedger] = []
-            for account in await self._read_accounts(page):
+            for account in accounts:
                 await self._open_account_ledger(page, account)
                 await page.wait_for_url(
                     lambda url: _ledger_url_account(url) == account.label,
@@ -1190,6 +1194,57 @@ class PlaywrightBilancioClient:
                 return True
             await asyncio.sleep(0.25)
         return False
+
+    async def _read_account_overview(
+        self, page: Page, accounts: Sequence[PortalOption]
+    ) -> list[AccountLedger]:
+        rows = self._locator(page, "ledger_rows")
+        first, last, total = await _wait_for_ledger_data(
+            self._locator(page, "ledger_loading_overlay"),
+            self._locator(page, "ledger_page_indicator"),
+            rows,
+            self._timeout_ms,
+        )
+        if first != 1 or last != total or total != len(accounts):
+            raise PortalOptionsUnavailable("AGESCI account overview is incomplete")
+        headers = [
+            _normalize_ledger_header(text)
+            for text in await rows.nth(1).get_by_role("columnheader").all_text_contents()
+        ]
+        required = ("Conto", "Saldo Iniziale", "Entrate", "Uscite", "Saldo")
+        if any(headers.count(header) != 1 for header in required):
+            raise PortalOptionsUnavailable("AGESCI account overview columns are invalid")
+        columns = {header: headers.index(header) for header in required}
+        known = {account.label: account for account in accounts}
+        result: list[AccountLedger] = []
+        seen: set[str] = set()
+        for index in range(2, await rows.count()):
+            cells = await rows.nth(index).get_by_role("cell").all_text_contents()
+            if len(cells) != len(headers):
+                raise PortalOptionsUnavailable("AGESCI account overview row is invalid")
+            label = " ".join(cells[columns["Conto"]].split())
+            if label not in known or label in seen:
+                raise PortalOptionsUnavailable("AGESCI account overview account is invalid")
+            values: dict[str, Decimal] = {}
+            for header in required[1:]:
+                value = cells[columns[header]]
+                if not value.strip():
+                    raise PortalOptionsUnavailable("AGESCI account overview amount is empty")
+                values[header] = _parse_ledger_amount(value)
+            if values["Saldo Iniziale"] + values["Entrate"] - values["Uscite"] != values["Saldo"]:
+                raise PortalOptionsUnavailable("AGESCI account overview balance is inconsistent")
+            seen.add(label)
+            result.append(AccountLedger(
+                account=known[label],
+                opening_balance=values["Saldo Iniziale"],
+                total_income=values["Entrate"],
+                total_expense=values["Uscite"],
+                balance=values["Saldo"],
+                entries=(), total_rows=0, complete=True, entries_available=False,
+            ))
+        if seen != set(known):
+            raise PortalOptionsUnavailable("AGESCI account overview accounts are missing")
+        return result
 
     async def _read_account_ledger(
         self,

@@ -218,12 +218,12 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(texts.MENU_INCOME_BUTTON, labels)
         self.assertIn(texts.MENU_ADMIN_BUTTON, labels)
         admin_buttons = [
-            button.callback_data
-            for row in _admin_keyboard().inline_keyboard
+            button.text
+            for row in _admin_keyboard().keyboard
             for button in row
         ]
-        self.assertEqual(admin_buttons[0], "menu:manual")
-        self.assertNotIn("menu:income", admin_buttons)
+        self.assertEqual(admin_buttons[0], texts.MENU_MANUAL_BUTTON)
+        self.assertNotIn(texts.MENU_INCOME_BUTTON, admin_buttons)
         self.assertFalse(any("/" in button.text for button in buttons))
         self.assertNotIn("/", text)
         admin_call = context.bot.set_my_commands.await_args
@@ -393,6 +393,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             client.read_ledgers.await_args.kwargs["transaction_date"], date.today()
         )
+        self.assertFalse(client.read_ledgers.await_args.kwargs["include_entries"])
         edit = context.bot.edit_message_text.await_args
         self.assertIn("Cassa RS\n💰 Saldo: 97,75 €", edit.args[0])
         self.assertEqual((edit.kwargs["chat_id"], edit.kwargs["message_id"]), (777, 55))
@@ -488,6 +489,7 @@ class BotApplicationTests(unittest.IsolatedAsyncioTestCase):
         context.bot = SimpleNamespace(edit_message_text=AsyncMock(), send_message=AsyncMock())
         await ledger_summary_job(context)
         self.assertIn("Saldo iniziale: 10,00 €", context.bot.edit_message_text.await_args.args[0])
+        self.assertTrue(client.read_ledgers.await_args.kwargs["include_entries"])
 
     async def test_retry_summary_does_not_call_simulations_real_saves(self) -> None:
         database = SimpleNamespace(request_retry_for_user=Mock(return_value=1))

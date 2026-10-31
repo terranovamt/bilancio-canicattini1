@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Awaitable, Sequence
 from datetime import date, datetime, time as day_time, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from telegram import (
     BotCommand,
@@ -35,6 +36,7 @@ from bot import messages as texts
 from bot.access import is_authorized_user
 from bot.receipt_workflow import ReceiptAnalyzer, ReceiptWorkflow
 from bot.retry_service import ExpenseRetryService
+from bot.daily import daily_ledger_job, local_now
 from bot.updates import (
     InstallOutcome,
     RunningVersion,
@@ -61,6 +63,7 @@ from bilancio.client import (
 from bilancio.playwright_client import ManualPortalLoginRequired
 from config import Settings
 from db.database import Database, StoredExpense
+from db.ledger_snapshot import compact_ledgers
 from storage.archive import FileArchive
 from storage.pending import PendingReceiptStore
 
@@ -169,7 +172,14 @@ def create_application(
         Path(settings.data_path) / "update"
     )
     application.bot_data["running_version"] = RunningVersion.from_env()
+    if application.job_queue is None:
+        raise RuntimeError("python-telegram-bot job queue is not available")
     if application.job_queue is not None:
+        application.job_queue.run_daily(
+            daily_ledger_job,
+            time=day_time(hour=0, minute=0, tzinfo=ZoneInfo(settings.timezone)),
+            name="portal-balances-daily",
+        )
         application.job_queue.run_repeating(
             update_status_job,
             interval=60,
@@ -338,6 +348,15 @@ MENU_LABELS = {
     texts.MENU_HELP_BUTTON: "help",
     texts.MENU_CANCEL_BUTTON: "cancel",
     texts.MENU_ADMIN_BUTTON: "admin",
+    texts.HOME_BUTTON: "home",
+    texts.MENU_MANUAL_BUTTON: "manual",
+    texts.MENU_TEST_ON_BUTTON: "test_on",
+    texts.MENU_TEST_OFF_BUTTON: "test_off",
+    texts.MENU_HEALTH_BUTTON: "health",
+    texts.MENU_OPTIONS_BUTTON: "options",
+    texts.MENU_VERSION_BUTTON: "version",
+    texts.MENU_UPDATE_BUTTON: "update",
+    texts.MENU_CLEAN_BUTTON: "clean",
 }
 _READ_ONLY_ACTIONS = {"home", "help", "receipt", "admin", "version"}
 _ADMIN_ACTIONS = {
@@ -345,18 +364,16 @@ _ADMIN_ACTIONS = {
 }
 
 
-def _admin_keyboard(test_mode: bool = False) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(texts.MENU_MANUAL_BUTTON, callback_data="menu:manual")],
-        [InlineKeyboardButton(
-            texts.MENU_TEST_OFF_BUTTON if test_mode else texts.MENU_TEST_ON_BUTTON,
-            callback_data="menu:test_off" if test_mode else "menu:test_on",
-        )],
-        [InlineKeyboardButton(texts.MENU_HEALTH_BUTTON, callback_data="menu:health")],
-        [InlineKeyboardButton(texts.MENU_OPTIONS_BUTTON, callback_data="menu:options")],
-        [InlineKeyboardButton(texts.MENU_VERSION_BUTTON, callback_data="menu:version")],
-        [InlineKeyboardButton(texts.MENU_CLEAN_BUTTON, callback_data="menu:clean")],
-    ])
+def _admin_keyboard(test_mode: bool = False) -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup([
+        [texts.MENU_MANUAL_BUTTON],
+        [texts.MENU_TEST_OFF_BUTTON if test_mode else texts.MENU_TEST_ON_BUTTON],
+        [texts.MENU_HEALTH_BUTTON, texts.MENU_OPTIONS_BUTTON],
+        [texts.MENU_VERSION_BUTTON, texts.MENU_UPDATE_BUTTON],
+        [texts.MENU_CLEAN_BUTTON],
+        [texts.HOME_BUTTON],
+    ], resize_keyboard=True, is_persistent=True,
+        input_field_placeholder=texts.MENU_PLACEHOLDER)
 
 
 async def _edit_menu_screen(
@@ -371,8 +388,14 @@ async def _edit_menu_screen(
 
 
 async def _show_command_screen(
-    update: Update, text: str, keyboard: InlineKeyboardMarkup | None
+    update: Update, text: str, keyboard: InlineKeyboardMarkup | ReplyKeyboardMarkup | None
 ) -> None:
+    if isinstance(keyboard, ReplyKeyboardMarkup):
+        # Reply keyboards cannot be attached through an edit, including legacy callbacks.
+        message = getattr(update, "effective_message", None) or update.message
+        if message is not None:
+            await message.reply_text(text, reply_markup=keyboard)
+        return
     query = getattr(update, "callback_query", None)
     if query is not None:
         await _edit_menu_screen(query, text, keyboard)
@@ -973,13 +996,11 @@ async def summary_command(
     message = getattr(update, "effective_message", None) or update.message
     if message is None:
         return
-    if context.application.bot_data.get("bilancio_client") is None:
-        await message.reply_text(texts.PORTAL_UNAVAILABLE, reply_markup=_navigation_keyboard())
-        return
     if context.application.bot_data.get(_SUMMARY_RUNNING_KEY):
         await message.reply_text(texts.SUMMARY_BUSY, reply_markup=_navigation_keyboard())
         return
-    start_year = scout_year_start(date.today())
+    settings: Settings = context.application.bot_data["settings"]
+    start_year = scout_year_start(local_now(settings.timezone).date())
     progress = await message.reply_text(_summary_progress_text(start_year), reply_markup=_navigation_keyboard())
     _schedule_summary(
         context,
@@ -996,7 +1017,8 @@ async def summary_callback(
     query = update.callback_query
     if query is None or query.message is None:
         return
-    current_start = scout_year_start(date.today())
+    settings = context.application.bot_data.get("settings")
+    current_start = scout_year_start(local_now(settings.timezone if settings else "Europe/Rome").date())
     try:
         parts = str(query.data).split(":")
         details = len(parts) == 3 and parts[1] == "details"
@@ -1008,9 +1030,6 @@ async def summary_callback(
         return
     if not current_start - 20 <= start_year <= current_start:
         await query.answer()
-        return
-    if context.application.bot_data.get("bilancio_client") is None:
-        await query.answer(texts.PORTAL_UNAVAILABLE)
         return
     if context.application.bot_data.get(_SUMMARY_RUNNING_KEY):
         await query.answer(texts.SUMMARY_BUSY)
@@ -1031,19 +1050,44 @@ async def ledger_summary_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id: int = data["chat_id"]
     message_id: int = data["message_id"]
     start_year: int = data["start_year"]
-    today = date.today()
+    settings = context.application.bot_data.get("settings")
+    zone_name = settings.timezone if settings else "Europe/Rome"
+    today = local_now(zone_name).date()
+    database: Database = context.application.bot_data["database"]
     keyboard = _summary_keyboard(start_year, today)
     try:
-        client: BilancioClient = context.application.bot_data["bilancio_client"]
+        client: BilancioClient | None = context.application.bot_data.get("bilancio_client")
         try:
+            if client is None:
+                raise BilancioClientError("Portal client unavailable")
             ledgers = await client.read_ledgers(
-                transaction_date=reference_date_for(start_year, today)
+                transaction_date=reference_date_for(start_year, today),
+                include_entries=data.get("details", False),
             )
-        except BilancioClientError as error:
+            compact = compact_ledgers(ledgers)
+        except (BilancioClientError, ValueError, TypeError, OSError) as error:
             logger.warning("Ledger summary failed: %s", type(error).__name__)
             messages = [_SUMMARY_FAILED_TEXT]
+            try:
+                snapshot = await asyncio.to_thread(database.get_ledger_snapshot, start_year)
+            except (sqlite3.Error, ValueError, KeyError, TypeError) as cache_error:
+                logger.warning("Ledger snapshot unavailable: %s", type(cache_error).__name__)
+                snapshot = None
+            if snapshot is not None:
+                read_at = snapshot.read_at.astimezone(ZoneInfo(zone_name))
+                messages[0] += "\n\n" + texts.SUMMARY_CACHED.format(
+                    day=read_at, clock=read_at, zone=zone_name,
+                )
+                messages.extend(format_ledger_summary(snapshot.ledgers, start_year))
         else:
             messages = format_ledger_summary(ledgers, start_year, details=data.get("details", False))
+            try:
+                await asyncio.to_thread(
+                    database.save_ledger_snapshot, start_year, local_now(zone_name), compact,
+                )
+            except (sqlite3.Error, OSError, ValueError) as error:
+                logger.warning("Could not save ledger snapshot: %s", type(error).__name__)
+                messages.append(texts.SUMMARY_CACHE_SAVE_FAILED)
         for index, text in enumerate(messages):
             markup = keyboard if index == len(messages) - 1 else None
             if index == 0:

@@ -93,7 +93,7 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
                 if action == "home":
                     self.assertIsInstance(markup, ReplyKeyboardMarkup)
                     query.edit_message_text.assert_not_awaited()
-                elif markup is not None:
+                elif isinstance(markup, InlineKeyboardMarkup):
                     for row in markup.inline_keyboard:
                         self.assertTrue(all("/" not in button.text for button in row))
                 self.assertEqual(self.database.get_conversation_state(12345), state)
@@ -127,12 +127,10 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
                 reopened = Database(self.root / "test.sqlite3")
                 reopened.initialize()
                 self.assertEqual(reopened.get_test_mode(default=False), expected)
-                rendered = update.callback_query.edit_message_text.await_args
+                rendered = self.rendered(update)
                 self.assertIn(messages.MODE_TRIAL if expected else messages.MODE_REAL, rendered.args[0])
-                self.assertIn(
-                    "menu:test_off" if expected else "menu:test_on",
-                    self.callback_values(rendered.kwargs["reply_markup"]),
-                )
+                labels = [b.text for row in rendered.kwargs["reply_markup"].keyboard for b in row]
+                self.assertIn(messages.MENU_TEST_OFF_BUTTON if expected else messages.MENU_TEST_ON_BUTTON, labels)
                 home = self.update("home", user_id=67890)
                 await application.menu_callback(home, self.context)
                 self.assertIn(
@@ -178,23 +176,10 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(stored.payload["total_amount"])
                 self.assertEqual(stored.payload["direction"], direction)
                 reply = update.effective_message.reply_text.await_args
-                self.assertIn(messages.MANUAL_DATE, reply.args[0])
+                self.assertIn(messages.MANUAL_MERCHANT, reply.args[0])
                 self.assertNotRegex(reply.args[0], r"/[a-zA-Z]")
                 buttons = self.callback_values(reply.kwargs["reply_markup"])
-                today = date.today()
-                self.assertEqual(
-                    buttons[:2],
-                    ["receipt:today", f"receipt:day:{(today - timedelta(days=1)).isoformat()}"],
-                )
-                self.assertIn(f"receipt:day:{today.isoformat()}", buttons)
-                self.assertNotIn(f"receipt:day:{(today + timedelta(days=1)).isoformat()}", buttons)
-                self.assertEqual(
-                    buttons[-4:],
-                    [
-                        "receipt:edit:date", "receipt:edit:merchant",
-                        "receipt:edit:total_amount", "receipt:cancel",
-                    ],
-                )
+                self.assertEqual(buttons, ["receipt:cancel"])
                 self.assertNotIn("menu:home", buttons)
                 self.portal.create_expense.assert_not_awaited()
                 await self.workflow.cancel_current(12345)
@@ -299,9 +284,40 @@ class InlineMenuTests(unittest.IsolatedAsyncioTestCase):
 
         update = self.text_update(messages.MENU_ADMIN_BUTTON)
         await application.menu_text(update, self.context)
-        self.assertIn("menu:manual", self.callback_values(
-            update.message.reply_text.await_args.kwargs["reply_markup"]
-        ))
+        markup = update.message.reply_text.await_args.kwargs["reply_markup"]
+        self.assertIsInstance(markup, ReplyKeyboardMarkup)
+        self.assertTrue(markup.is_persistent)
+        labels = [b.text for row in markup.keyboard for b in row]
+        self.assertIn(messages.MENU_MANUAL_BUTTON, labels)
+        self.assertIn(messages.HOME_BUTTON, labels)
+        self.assertNotIn(messages.MENU_RECEIPT_BUTTON, labels)
+
+    async def test_all_admin_reply_labels_reject_forgery_without_mutating_state(self) -> None:
+        await application.menu_text(self.text_update(messages.MENU_INCOME_BUTTON, 67890), self.context)
+        before = self.database.get_conversation_state(67890)
+        for label, action in application.MENU_LABELS.items():
+            if action not in application._ADMIN_ACTIONS:
+                continue
+            with self.subTest(action=action):
+                update = self.text_update(label, 67890)
+                await application.menu_text(update, self.context)
+                update.message.reply_text.assert_awaited_once_with(messages.ADMIN_ONLY)
+                self.assertEqual(self.database.get_conversation_state(67890), before)
+        self.portal.create_expense.assert_not_awaited()
+
+    async def test_admin_reply_keyboard_returns_to_main_and_preserves_entry(self) -> None:
+        await application.menu_text(self.text_update(messages.MENU_INCOME_BUTTON), self.context)
+        before = self.database.get_conversation_state(12345)
+        for label in (messages.MENU_ADMIN_BUTTON, messages.HOME_BUTTON):
+            update = self.text_update(label)
+            await application.menu_text(update, self.context)
+            markup = update.message.reply_text.await_args.kwargs["reply_markup"]
+            self.assertIsInstance(markup, ReplyKeyboardMarkup)
+            self.assertTrue(markup.is_persistent)
+            labels = [b.text for row in markup.keyboard for b in row]
+            self.assertEqual(messages.HOME_BUTTON in labels, label == messages.MENU_ADMIN_BUTTON)
+            self.assertEqual(messages.MENU_RECEIPT_BUTTON in labels, label == messages.HOME_BUTTON)
+            self.assertEqual(self.database.get_conversation_state(12345), before)
 
     async def test_menu_label_during_form_is_not_taken_as_description(self) -> None:
         await application.menu_callback(self.update("income", user_id=67890), self.context)

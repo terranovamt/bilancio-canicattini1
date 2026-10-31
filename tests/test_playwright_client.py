@@ -15,6 +15,7 @@ from bilancio.client import (
     BilancioClientError,
     PortalExpense,
     PortalOption,
+    PortalOptionsUnavailable,
     PortalSubmissionResult,
     TransactionDirection,
 )
@@ -558,6 +559,69 @@ class PlaywrightBilancioClientTests(unittest.IsolatedAsyncioTestCase):
         predicate = page.wait_for_url.await_args_list[1].args[0]
         self.assertTrue(predicate("https://portal.example/prima-nota?id=1&c=Cassa%20EG&u=O1"))
         self.assertFalse(predicate("https://portal.example/prima-nota?id=1&c=Cassa%20LC"))
+
+    async def test_compact_summary_never_opens_account_ledgers(self) -> None:
+        accounts = [PortalOption("Cassa test", "Cassa test")]
+        page = Mock()
+        with tempfile.TemporaryDirectory() as directory:
+            client = self.make_client(Path(directory))
+
+            async def with_page(operation, **kwargs):
+                return await operation(page)
+
+            client._with_page = AsyncMock(side_effect=with_page)
+            client._read_accounts = AsyncMock(return_value=accounts)
+            client._read_account_overview = AsyncMock(return_value=["overview"])
+            client._open_account_ledger = AsyncMock()
+            client._read_account_ledger = AsyncMock()
+            result = await client.read_ledgers(
+                transaction_date=date(2026, 10, 31), include_entries=False
+            )
+            self.assertEqual(result, ["overview"])
+            client._read_account_overview.assert_awaited_once_with(page, accounts)
+            client._open_account_ledger.assert_not_awaited()
+            client._read_account_ledger.assert_not_awaited()
+
+    async def test_reads_observed_overview_columns_and_rejects_incomplete_data(self) -> None:
+        headers = ["Conto", "Unità", "Descrizione", "Data Inizio Attività",
+                   "Data Fine Attività", "Saldo Iniziale", "Entrate", "Uscite", "Saldo"]
+        account = PortalOption("Cassa test", "Cassa test")
+        valid = ["Cassa test", "G1", "Cassa test", "01/10/2023", "",
+                 "100,00 €", "20,00 €", "120,01 €", "-0,01 €"]
+        for case in ("valid", "partial", "blank", "inconsistent", "unknown", "columns", "missing"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                rows = FakeLedgerRows([])
+                cells = list(valid)
+                columns = list(headers)
+                if case == "blank":
+                    cells[6] = ""
+                elif case == "inconsistent":
+                    cells[8] = "2,00 €"
+                elif case == "unknown":
+                    cells[0] = "Other"
+                elif case == "columns":
+                    columns[6] = "Other"
+                rows._rows = [
+                    FakeLedgerRow("cell", [""] * 9),
+                    FakeLedgerRow("columnheader", columns),
+                    *([] if case == "missing" else [FakeLedgerRow("cell", cells)]),
+                ]
+                client = self.make_client(Path(directory))
+                client._locator = Mock(return_value=rows)
+                with patch(
+                    "bilancio.playwright_client._wait_for_ledger_data",
+                    AsyncMock(return_value=(1, 1, 2) if case == "partial" else (1, 1, 1)),
+                ):
+                    if case != "valid":
+                        with self.assertRaises(PortalOptionsUnavailable):
+                            await client._read_account_overview(Mock(), [account])
+                    else:
+                        result = await client._read_account_overview(Mock(), [account])
+                        self.assertEqual(result[0].balance, Decimal("-0.01"))
+                        self.assertEqual(result[0].opening_balance, Decimal("100"))
+                        self.assertEqual(result[0].total_income, Decimal("20"))
+                        self.assertEqual(result[0].total_expense, Decimal("120.01"))
+                        self.assertFalse(result[0].entries_available)
 
     def test_parses_ledger_amounts(self) -> None:
         self.assertEqual(_parse_ledger_amount("arrow_upward1.423,25 €"), Decimal("1423.25"))
