@@ -429,7 +429,7 @@ Se è richiesto un accesso manuale o un codice di verifica, fermati e segnala so
 
 1. In File Station riapri il file `.env`.
 2. Inserisci `GEMINI_API_KEY=` con la tua chiave privata.
-3. Lascia `GEMINI_MODEL=gemini-1.5-flash` oppure imposta un altro modello Gemini compatibile.
+3. Imposta in `GEMINI_MODEL` un modello disponibile nel tuo AI Studio. Per usare tutti gli otto modelli Lite → Flash → Pro, copia anche le cinque impostazioni della sezione [Catena Gemini e avvisi di quota](../README.md#catena-gemini-e-avvisi-di-quota): liste di modelli, limiti al minuto e al giorno, soglia di avviso e timeout totale. La catena prevale sul singolo modello; i nomi e le quote forniti devono essere verificati nel tuo progetto.
 4. Salva il file.
 5. Nel terminale SSH ricrea il servizio bot:
 
@@ -464,7 +464,7 @@ Il bot non chiede al modello di spiegare il proprio guasto: usa il tipo di eccez
 
 Il client mantiene l'output JSON strutturato e rifiuta risposte incomplete. Questo non garantisce tempi o qualità del modello.
 
-Ogni 30 secondi il messaggio Telegram indica il tempo trascorso e la fase (1 preparazione immagine, 2 OCR locale, 3 invio a Gemini, 4 scrittura dei dati); i dati vengono utilizzati soltanto dopo la conclusione e la validazione della risposta.
+Ogni 30 secondi il messaggio Telegram indica il tempo trascorso, il modello Gemini e la fase (1 preparazione immagine, 2 OCR locale, 3 invio, 4 scrittura dei dati). Con la catena attiva il mittente riceve anche gli avvisi di quota e i modelli provati. I migliori dati parziali validati restano proposte da controllare; i campi mancanti vengono chiesti a mano. Il conteggio persistente riguarda solo il bot, non tutte le richieste del progetto Google; un reset non comunicato da Google non viene presentato come certo.
 
 Per vedere i dettagli apri **Container Manager** → **Container** → container del bot → **Dettagli** → **Registro**. Se l'analisi scade, il registro indica la fase raggiunta.
 

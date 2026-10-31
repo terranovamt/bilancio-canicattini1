@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -84,6 +85,10 @@ class Settings:
     puid: int | None
     pgid: int | None
     ai_timeout_seconds: int = 600
+    gemini_models: tuple[str, ...] = ()
+    gemini_rpm_limits: tuple[int, ...] = ()
+    gemini_rpd_limits: tuple[int, ...] = ()
+    gemini_quota_warn_percent: int = 80
 
     @classmethod
     def from_env(
@@ -130,6 +135,23 @@ class Settings:
             raise ConfigurationError(
                 "Setting GEMINI_MODEL requires GEMINI_API_KEY"
             )
+        chain_text = _optional_text(source, "GEMINI_MODELS")
+        models = tuple(part.strip() for part in chain_text.split(",")) if chain_text else ()
+        if models and (
+            not gemini_api_key or len(set(models)) != len(models)
+            or any(not re.fullmatch(r"[a-zA-Z0-9._-]{1,100}", model) for model in models)
+        ):
+            raise ConfigurationError("GEMINI_MODELS requires a key and unique valid model IDs")
+        limits: dict[str, tuple[int, ...]] = {}
+        for name in ("GEMINI_RPM_LIMITS", "GEMINI_RPD_LIMITS"):
+            text = _optional_text(source, name)
+            values = tuple(_positive_integer(part.strip(), name) for part in text.split(",")) if text else ()
+            if (models and len(values) != len(models)) or (values and not models):
+                raise ConfigurationError(f"{name} must have one limit for each GEMINI_MODELS entry")
+            limits[name] = values
+        warn_percent = _positive_integer(source.get("GEMINI_QUOTA_WARN_PERCENT", "80"), "GEMINI_QUOTA_WARN_PERCENT")
+        if warn_percent > 100:
+            raise ConfigurationError("GEMINI_QUOTA_WARN_PERCENT must not exceed 100")
 
         return cls(
             bot_token=bot_token,
@@ -142,6 +164,10 @@ class Settings:
             bilancio_password=bilancio_password,
             gemini_api_key=gemini_api_key,
             gemini_model=gemini_model or ("gemini-1.5-flash" if gemini_api_key else None),
+            gemini_models=models,
+            gemini_rpm_limits=limits["GEMINI_RPM_LIMITS"],
+            gemini_rpd_limits=limits["GEMINI_RPD_LIMITS"],
+            gemini_quota_warn_percent=warn_percent,
             playwright_browser_channel=playwright_browser_channel,
             data_path=_optional_text(source, "DATA_PATH") or "/data",
             storage_path=_optional_text(source, "STORAGE_PATH") or "/scontrini",

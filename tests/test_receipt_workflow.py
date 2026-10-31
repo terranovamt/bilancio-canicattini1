@@ -28,9 +28,11 @@ from vision.receipt_schema import ReceiptParseError
 from vision.gemini_client import (
     AnalysisPhase,
     AnalysisProgress,
+    GeminiReceiptAnalyzer,
     LocalVisionError,
     VisionFailureCode,
 )
+from db.gemini_quota import GeminiQuotaStore
 from vision.preprocess import ImagePreprocessingError
 
 
@@ -189,6 +191,52 @@ class ReceiptWorkflowTests(unittest.IsolatedAsyncioTestCase):
         ):
             result = await self.workflow._analyze_receipt(b"image", "test.png", progress)
         self.assertEqual(result, self.analyzer.receipt)
+
+    async def test_gemini_notices_are_sent_even_for_fast_analysis_and_deduplicated(self) -> None:
+        async def analyze_with_progress(file_bytes, file_name, *, on_progress):
+            event = AnalysisProgress(AnalysisPhase.LOADING_MODEL, model="synthetic", notice="quota_warning")
+            on_progress(event)
+            on_progress(event)
+            on_progress(AnalysisProgress(AnalysisPhase.WRITING, model="synthetic", notice="partial"))
+            return self.analyzer.receipt
+
+        self.workflow._analyzer = SimpleNamespace(analyze_with_progress=analyze_with_progress)
+        progress = SimpleNamespace(edit_text=AsyncMock(), reply_text=AsyncMock())
+        result = await self.workflow._analyze_receipt(b"image", "test.png", progress)
+        self.assertEqual(result, self.analyzer.receipt)
+        progress.reply_text.assert_awaited_once()
+        text = progress.reply_text.await_args.args[0]
+        self.assertEqual(text.count("soglia di avviso"), 1)
+        self.assertIn("migliori dati disponibili", text)
+
+    async def test_gemini_chain_partial_is_persisted_and_only_missing_date_is_requested(self) -> None:
+        portal = FakeBilancioClient()
+        self.workflow._bilancio = portal
+        analyzer = GeminiReceiptAnalyzer(
+            api_key="synthetic-key", model="legacy", models=("lite", "flash"),
+            rpm_limits=(1, 1), rpd_limits=(10, 10),
+            quota_store=GeminiQuotaStore(self.root / "gemini.sqlite3"),
+        )
+        self.workflow._analyzer = analyzer
+        message, update, context = self.make_photo_update(b"synthetic-image")
+        with (
+            patch("vision.gemini_client.preprocess_receipt", return_value=[b"image"]),
+            patch("vision.gemini_client._ocr_text", return_value=""),
+            patch.object(analyzer, "_call_gemini", new=AsyncMock(side_effect=[
+                '{"merchant":"Synthetic","total_amount":12,"confidence":0.6}',
+                '{"confidence":0}',
+            ])),
+        ):
+            await self.workflow.receive_receipt(update, context)
+        state, data = self.database.get_conversation_state(12345)
+        self.assertEqual(state, "awaiting_receipt_data")
+        self.assertEqual(data["missing_fields"], ["date"])
+        expense = self.database.get_expense(data["expense_id"])
+        self.assertEqual(expense.payload["merchant"], "Synthetic")
+        self.assertEqual(expense.payload["total_amount"], "12")
+        self.assertTrue(Path(expense.payload["pending_path"]).is_file())
+        self.assertIn(texts.MISSING_DATE, message.reply_text.await_args.args[0])
+        self.assertEqual(portal.submitted, [])
 
     async def test_timeout_stops_progress_monitor_and_preserves_manual_recovery(self) -> None:
         async def analyze_with_progress(file_bytes, file_name, *, on_progress):

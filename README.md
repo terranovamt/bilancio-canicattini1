@@ -126,7 +126,7 @@ Inviando una foto o un PDF, invece, la direzione è già **Uscita**. Il bot prov
 
 ### Attesa dell'analisi immagini
 
-Il bot usa i dati solo quando la risposta è completa e valida. Durante l'attesa aggiorna lo stesso messaggio ogni 30 secondi indicando la fase: preparazione dell'immagine, OCR locale, invio a Gemini e scrittura dei dati (con il numero di caratteri ricevuti). Non mostra frammenti della ricevuta o del ragionamento e non registra dati parziali.
+Il bot propone solo dati validati, da confermare prima della registrazione. Durante l'attesa aggiorna lo stesso messaggio ogni 30 secondi indicando la fase e il modello Gemini: preparazione dell'immagine, OCR locale, invio e scrittura dei dati (con il numero di caratteri ricevuti). Non mostra frammenti della ricevuta o del ragionamento. Con la catena attiva, se nessun modello legge tutto con sufficiente affidabilità, conserva la migliore proposta parziale, avvisa e chiede solo i campi mancanti.
 
 Il limite predefinito è **600 secondi (10 minuti)** per l'analisi, compresa la preparazione dell'immagine. Se scade o la risposta si interrompe, il file resta conservato e il bot chiede i dati a mano. `/start` e l'aiuto restano disponibili durante l'attesa.
 
@@ -137,6 +137,30 @@ Per un NAS già configurato:
 3. Dalla cartella attiva sul NAS ricrea il bot con `sudo docker compose up -d --force-recreate bot`, quando nessuno sta inserendo un'operazione.
 
 L'aggiornamento del programma non riscrive la configurazione privata: un valore esplicito di `180` continua quindi a valere. Gli errori Telegram nell'aggiornare il messaggio vengono registrati senza interrompere l'analisi.
+
+### Catena Gemini e avvisi di quota
+
+1. Mantieni la chiave privata già presente in `.env`, senza condividerla.
+2. Per abilitare tutti gli otto modelli, aggiungi queste impostazioni:
+
+```dotenv
+GEMINI_MODELS=gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-2.5-flash-lite,gemini-3.8-flash,gemini-3.6-flash,gemini-2.5-flash,gemini-3.1-pro-preview,gemini-2.5-pro
+GEMINI_RPM_LIMITS=30,30,30,10,10,15,2,2
+GEMINI_RPD_LIMITS=1500,1500,1500,1500,1500,1500,50,50
+GEMINI_QUOTA_WARN_PERCENT=80
+GEMINI_TIMEOUT_SECONDS=600
+```
+
+3. Verifica nel tuo AI Studio disponibilità e quote effettive. I nomi e i limiti sono quelli forniti dall'utente, non un catalogo Google verificato; per i limiti indicati come intervallo si usa il valore prudente (10 per i Flash 3.x, 2 per i Pro). Ogni posizione nelle due liste dei limiti corrisponde alla stessa posizione nella lista dei modelli. L'ordine è Lite → Flash → Pro, non una graduatoria misurata di prestazioni.
+4. Installa la versione aggiornata, poi ricrea il bot sul NAS quando non ci sono inserimenti in corso: `sudo docker compose up -d --force-recreate bot`. Il solo riavvio non ricarica la configurazione.
+
+`GEMINI_MODELS` prevale su `GEMINI_MODEL`, che puoi mantenere per tornare al singolo modello. Per disabilitare la catena svuota anche `GEMINI_RPM_LIMITS` e `GEMINI_RPD_LIMITS`. La modalità singolo modello conserva il comportamento precedente, senza il nuovo contatore delle quote.
+
+Il bot prepara immagini e OCR una sola volta; tutti i tentativi condividono il timeout totale. Passa al successivo per letture incomplete, non valide o con affidabilità sotto 0,7, risposte non utilizzabili, modelli assenti (404), quote (429) o errori del servizio. Si ferma alla prima lettura completa e affidabile. Errori di chiave, richiesta (400), connessione e timeout non avviano altre richieste inutili. Il mittente riceve un riepilogo dei modelli provati, degli eventuali limiti e del recupero parziale; nessuna registrazione avviene senza «Accetta».
+
+Le prenotazioni atomiche delle richieste e le attese sono persistite in `DATA_PATH/gemini.sqlite3`: il riavvio non azzera il conteggio. Si conta anche un tentativo fallito, in modo prudente. Avviso al superamento della soglia configurata (80%), non ad ogni richiesta. Il minuto è una finestra mobile di 60 secondi; il giorno del contatore riparte a mezzanotte `America/Los_Angeles`, anche con ora legale. Le attese sono mostrate nell'ora configurata del bot.
+
+**Sono contatori del solo bot**, non il saldo ufficiale di Google: non vedono AI Studio, altri programmi, quote condivise tra modelli o token al minuto. I limiti impostati non garantiscono il piano gratuito. Su 429 il bot rispetta `Retry-After`/`RetryInfo` se disponibili e mostra quando Google suggerisce di riprovare, senza promettere il ripristino di tutte le quote. Se Google non comunica l'attesa, lo dice e sospende quel modello fino al prossimo giorno del contatore, come precauzione: **non è un reset remoto confermato**. Un modello bloccato viene saltato; se tutti sono bloccati puoi completare la ricevuta manualmente senza altre chiamate AI.
 
 ### Menu e opzioni contabili
 

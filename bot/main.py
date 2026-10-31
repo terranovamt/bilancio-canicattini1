@@ -10,6 +10,7 @@ from db.database import Database
 from logging_config import configure_logging
 from bilancio.playwright_client import PlaywrightBilancioClient
 from vision.gemini_client import GeminiReceiptAnalyzer
+from db.gemini_quota import GeminiQuotaStore
 
 
 def main() -> None:
@@ -24,6 +25,11 @@ def main() -> None:
             api_key=settings.gemini_api_key,
             model=settings.gemini_model,
             timeout_seconds=settings.ai_timeout_seconds,
+            models=settings.gemini_models,
+            rpm_limits=settings.gemini_rpm_limits,
+            rpd_limits=settings.gemini_rpd_limits,
+            quota_store=GeminiQuotaStore(data_path / "gemini.sqlite3") if settings.gemini_models else None,
+            quota_warn_percent=settings.gemini_quota_warn_percent,
         )
         if settings.gemini_api_key and settings.gemini_model
         else None

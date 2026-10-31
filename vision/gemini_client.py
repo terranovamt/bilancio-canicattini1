@@ -4,19 +4,26 @@ import asyncio
 import base64
 import json
 import logging
+import math
+import sqlite3
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from email.utils import parsedate_to_datetime
 from io import BytesIO
 
 import httpx
 from PIL import Image, UnidentifiedImageError
+from db.gemini_quota import GeminiQuotaStore
 
 from vision.preprocess import preprocess_receipt
 from vision.receipt_schema import (
     ReceiptData,
     ReceiptParseError,
     parse_analysis_json,
+    missing_required_fields,
+    requires_user_clarification,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,6 +65,9 @@ class AnalysisPhase(str, Enum):
 class AnalysisProgress:
     phase: AnalysisPhase
     characters: int = 0
+    model: str | None = None
+    notice: str | None = None
+    retry_at: float | None = None
 
 
 class VisionFailureCode(str, Enum):
@@ -87,10 +97,12 @@ class LocalVisionError(RuntimeError):
         *,
         code: VisionFailureCode = VisionFailureCode.SERVICE_ERROR,
         status_code: int | None = None,
+        retry_at: float | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.status_code = status_code
+        self.retry_at = retry_at
 
 
 class _ProgressTracker:
@@ -98,12 +110,51 @@ class _ProgressTracker:
         self._on_progress = on_progress
         self.phase: AnalysisPhase | None = None
         self.characters = 0
+        self.model: str | None = None
+        self.best: ReceiptData | None = None
 
-    def emit(self, phase: AnalysisPhase, characters: int = 0) -> None:
+    def emit(
+        self, phase: AnalysisPhase, characters: int = 0, *,
+        notice: str | None = None, retry_at: float | None = None,
+    ) -> None:
         self.phase = phase
         self.characters = characters
         if self._on_progress is not None:
-            self._on_progress(AnalysisProgress(phase, characters))
+            self._on_progress(AnalysisProgress(phase, characters, self.model, notice, retry_at))
+
+
+def _retry_at(response: httpx.Response, now: float) -> float | None:
+    delays: list[float] = []
+    header = response.headers.get("Retry-After")
+    if header:
+        try:
+            delay = float(header)
+        except ValueError:
+            try:
+                delay = parsedate_to_datetime(header).timestamp() - now
+            except (ValueError, TypeError, OverflowError):
+                delay = -1
+        if math.isfinite(delay) and delay >= 0:
+            delays.append(delay)
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    error = body.get("error") if isinstance(body, dict) else None
+    details = error.get("details") if isinstance(error, dict) else None
+    if isinstance(details, list):
+        for detail in details:
+            if not isinstance(detail, dict) or detail.get("@type") != "type.googleapis.com/google.rpc.RetryInfo":
+                continue
+            duration = detail.get("retryDelay")
+            if isinstance(duration, str) and duration.endswith("s"):
+                try:
+                    delay = float(duration[:-1])
+                except ValueError:
+                    continue
+                if math.isfinite(delay) and delay >= 0:
+                    delays.append(delay)
+    return now + max(delays) if delays else None
 
 
 def _error_code(response: httpx.Response) -> VisionFailureCode:
@@ -210,6 +261,11 @@ class GeminiReceiptAnalyzer:
         model: str,
         timeout_seconds: float = 600,
         base_url: str = _DEFAULT_BASE_URL,
+        models: tuple[str, ...] = (),
+        rpm_limits: tuple[int, ...] = (),
+        rpd_limits: tuple[int, ...] = (),
+        quota_store: GeminiQuotaStore | None = None,
+        quota_warn_percent: int = 80,
     ) -> None:
         if not api_key.strip():
             raise ValueError("api_key must not be empty")
@@ -223,6 +279,20 @@ class GeminiReceiptAnalyzer:
         self._model = model.strip()
         self._timeout_seconds = timeout_seconds
         self._url = f"{base_url.rstrip('/')}/models/{self._model}:generateContent"
+        self._base_url = base_url.rstrip("/")
+        if models and (
+            quota_store is None or len(models) != len(rpm_limits)
+            or len(models) != len(rpd_limits)
+            or any(limit <= 0 for limit in (*rpm_limits, *rpd_limits))
+        ):
+            raise ValueError("A model chain requires persistent quotas and positive limits for every model")
+        if not 1 <= quota_warn_percent <= 100:
+            raise ValueError("quota_warn_percent must be between 1 and 100")
+        self._models = models
+        self._rpm_limits = rpm_limits
+        self._rpd_limits = rpd_limits
+        self._quota_store = quota_store
+        self._quota_warn_percent = quota_warn_percent
 
     async def analyze(self, file_bytes: bytes, file_name: str) -> ReceiptData:
         return await self.analyze_with_progress(file_bytes, file_name, on_progress=None)
@@ -235,17 +305,23 @@ class GeminiReceiptAnalyzer:
         on_progress: Callable[[AnalysisProgress], None] | None,
     ) -> ReceiptData:
         tracker = _ProgressTracker(on_progress)
+        tracker.model = self._model if not self._models else None
         try:
             async with asyncio.timeout(self._timeout_seconds):
                 tracker.emit(AnalysisPhase.PREPARING_IMAGE)
                 processed = await asyncio.to_thread(preprocess_receipt, file_bytes, file_name)
                 tracker.emit(AnalysisPhase.READING_IMAGE)
                 ocr_text = await asyncio.to_thread(_ocr_text, processed)
-                tracker.emit(AnalysisPhase.LOADING_MODEL)
-                result = await self._call_gemini(processed, ocr_text)
-                tracker.emit(AnalysisPhase.WRITING, len(result))
-                return parse_analysis_json(result)
+                if not self._models:
+                    tracker.emit(AnalysisPhase.LOADING_MODEL)
+                    result = await self._call_gemini(processed, ocr_text)
+                    tracker.emit(AnalysisPhase.WRITING, len(result))
+                    return parse_analysis_json(result)
+                return await self._analyze_chain(processed, ocr_text, tracker)
         except TimeoutError as error:
+            if tracker.best is not None:
+                tracker.emit(AnalysisPhase.WRITING, notice="partial")
+                return tracker.best
             raise LocalVisionError(
                 "The AI service timed out",
                 code=VisionFailureCode.TIMEOUT,
@@ -256,7 +332,82 @@ class GeminiReceiptAnalyzer:
                 code=VisionFailureCode.INVALID_RECEIPT,
             ) from error
 
-    async def _call_gemini(self, processed_images: list[bytes], ocr_text: str) -> str:
+    async def _analyze_chain(
+        self, processed: list[bytes], ocr_text: str, tracker: _ProgressTracker,
+    ) -> ReceiptData:
+        store = self._quota_store
+        if store is None:
+            raise RuntimeError("Model chain quota store is missing")
+        best: ReceiptData | None = None
+        last_error = LocalVisionError("No model returned usable data", code=VisionFailureCode.EMPTY_RESULT)
+        for model, rpm, rpd in zip(self._models, self._rpm_limits, self._rpd_limits, strict=True):
+            tracker.model = model
+            try:
+                reservation = await asyncio.to_thread(
+                    store.reserve, model, rpm, rpd, self._quota_warn_percent, time.time()
+                )
+            except sqlite3.Error as error:
+                logger.error("Gemini quota reservation failed")
+                raise LocalVisionError("Quota storage is unavailable") from error
+            if not reservation.allowed:
+                tracker.emit(
+                    AnalysisPhase.LOADING_MODEL,
+                    notice="remote_limit" if reservation.remote else "local_limit",
+                    retry_at=reservation.retry_at if reservation.known_retry else None,
+                )
+                last_error = LocalVisionError("Model quota is exhausted", code=VisionFailureCode.QUOTA)
+                continue
+            tracker.emit(AnalysisPhase.LOADING_MODEL, notice="using_model")
+            if reservation.warning:
+                tracker.emit(AnalysisPhase.LOADING_MODEL, notice="quota_warning")
+            try:
+                result = await self._call_gemini(processed, ocr_text, model=model)
+                tracker.emit(AnalysisPhase.WRITING, len(result))
+                receipt = parse_analysis_json(result)
+            except ReceiptParseError:
+                last_error = LocalVisionError("Invalid receipt data", code=VisionFailureCode.INVALID_RECEIPT)
+                tracker.emit(AnalysisPhase.WRITING, notice="unreadable")
+                continue
+            except LocalVisionError as error:
+                last_error = error
+                if error.code == VisionFailureCode.QUOTA:
+                    try:
+                        await asyncio.to_thread(store.record_cooldown, model, time.time(), error.retry_at)
+                    except sqlite3.Error as storage_error:
+                        logger.error("Gemini quota cooldown persistence failed")
+                        raise LocalVisionError("Quota storage is unavailable") from storage_error
+                    tracker.emit(AnalysisPhase.LOADING_MODEL, notice="remote_limit", retry_at=error.retry_at)
+                    continue
+                if error.code == VisionFailureCode.MODEL_NOT_FOUND:
+                    tracker.emit(AnalysisPhase.LOADING_MODEL, notice="unavailable")
+                    continue
+                if error.code in {
+                    VisionFailureCode.INVALID_RESPONSE, VisionFailureCode.INCOMPLETE_RESPONSE,
+                    VisionFailureCode.EMPTY_RESULT, VisionFailureCode.INVALID_RECEIPT,
+                    VisionFailureCode.SERVICE_ERROR,
+                }:
+                    tracker.emit(AnalysisPhase.WRITING, notice="unreadable")
+                    continue
+                if error.code == VisionFailureCode.TIMEOUT and best is not None:
+                    tracker.emit(AnalysisPhase.WRITING, notice="partial")
+                    return best
+                raise
+            if not requires_user_clarification(receipt):
+                return receipt
+            if best is None or (
+                -len(missing_required_fields(receipt)), receipt.confidence
+            ) > (-len(missing_required_fields(best)), best.confidence):
+                best = receipt
+                tracker.best = best
+            tracker.emit(AnalysisPhase.WRITING, notice="unreadable")
+        if best is not None:
+            tracker.emit(AnalysisPhase.WRITING, notice="partial")
+            return best
+        raise last_error
+
+    async def _call_gemini(
+        self, processed_images: list[bytes], ocr_text: str, *, model: str | None = None,
+    ) -> str:
         image_parts = [
             {
                 "inline_data": {
@@ -289,7 +440,7 @@ class GeminiReceiptAnalyzer:
                 trust_env=False,
             ) as client:
                 response = await client.post(
-                    self._url,
+                    self._url if model is None else f"{self._base_url}/models/{model}:generateContent",
                     headers={"x-goog-api-key": self._api_key},
                     json=payload,
                 )
@@ -309,6 +460,7 @@ class GeminiReceiptAnalyzer:
                 "The AI service returned an error",
                 code=_error_code(response),
                 status_code=response.status_code,
+                retry_at=_retry_at(response, time.time()) if response.status_code == 429 else None,
             )
         try:
             body = response.json()

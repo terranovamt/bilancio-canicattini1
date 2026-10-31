@@ -31,6 +31,7 @@ from storage.pending import MAX_PENDING_RECEIPT_BYTES, PendingReceiptStore, has_
 from vision.gemini_client import (
     AnalysisPhase,
     AnalysisProgress,
+    GeminiReceiptAnalyzer,
     LocalVisionError,
     VisionFailureCode,
 )
@@ -145,7 +146,10 @@ def _analysis_progress_text(progress: AnalysisProgress | None, seconds: int) -> 
         texts.ANALYSIS_WAITING if progress is None else _ANALYSIS_PHASE_TEXTS[progress.phase]
     )
     characters = progress.characters if progress is not None else 0
-    return template.format(seconds=seconds, characters=characters)
+    rendered = template.format(seconds=seconds, characters=characters)
+    if progress is not None and progress.model:
+        rendered += texts.GEMINI_MODEL_PROGRESS.format(model=progress.model)
+    return rendered
 
 
 class ReceiptAnalyzer(Protocol):
@@ -347,7 +351,9 @@ class ReceiptWorkflow:
                     "Receipt analyzer is not configured",
                     code=VisionFailureCode.NOT_CONFIGURED,
                 )
-            async with asyncio.timeout(self._settings.ai_timeout_seconds):
+            # Gemini owns its total budget so it can recover a validated partial result.
+            timeout = None if isinstance(self._analyzer, GeminiReceiptAnalyzer) else self._settings.ai_timeout_seconds
+            async with asyncio.timeout(timeout):
                 receipt = await self._analyze_receipt(file_bytes, file_name, progress_message)
         except (LocalVisionError, ReceiptParseError, ImagePreprocessingError, TimeoutError) as error:
             code = (
@@ -423,10 +429,17 @@ class ReceiptWorkflow:
         started = asyncio.get_running_loop().time()
         latest: AnalysisProgress | None = None
         updated = False
+        notices: list[str] = []
 
         def on_progress(progress: AnalysisProgress) -> None:
             nonlocal latest
             latest = progress
+            if progress.notice is not None:
+                notice = texts.gemini_notice(
+                    progress.notice, progress.model, progress.retry_at, self._settings.timezone
+                )
+                if notice not in notices:
+                    notices.append(notice)
 
         async def edit_progress(text: str) -> None:
             try:
@@ -457,6 +470,17 @@ class ReceiptWorkflow:
                 pass
             if updated:
                 await edit_progress(texts.ANALYSIS_FINISHED)
+            if notices:
+                try:
+                    chunk = ""
+                    for notice in notices:
+                        if chunk and len(chunk) + len(notice) + 1 > 3800:
+                            await progress_message.reply_text(chunk, connect_timeout=10, read_timeout=10)
+                            chunk = ""
+                        chunk = f"{chunk}\n{notice}" if chunk else notice
+                    await progress_message.reply_text(chunk, connect_timeout=10, read_timeout=10)
+                except TelegramError as error:
+                    logger.warning("Could not send Gemini analysis notices: %s", type(error).__name__)
 
     async def handle_text(
         self,

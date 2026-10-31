@@ -2,9 +2,34 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Mapping
+from zoneinfo import ZoneInfo
+
+GEMINI_MODEL_PROGRESS = "\nGemini · {model}"
+GEMINI_NOTICES = {
+    "using_model": "Gemini · provo {model}.",
+    "quota_warning": "{model}: raggiunta la soglia di avviso delle richieste contate dal bot.",
+    "local_limit": "{model}: limite configurato del bot raggiunto. Nuovo tentativo dal {retry}.",
+    "remote_limit": "{model}: quota segnalata da Google. {retry}",
+    "unavailable": "{model}: non disponibile; passo al successivo.",
+    "unreadable": "{model}: lettura non affidabile o risposta non utilizzabile; provo il successivo, se disponibile.",
+    "partial": "Gemini non ha ottenuto una lettura completa e affidabile. Ti mostro i migliori dati disponibili: controllali e completa quelli mancanti.",
+}
+
+
+def gemini_notice(notice: str, model: str | None, retry_at: float | None, zone: str) -> str:
+    retry = (
+        datetime.fromtimestamp(retry_at, ZoneInfo(zone)).strftime("%d/%m/%Y %H:%M:%S %Z")
+        if retry_at is not None else ""
+    )
+    if notice == "remote_limit":
+        retry = (
+            f"Google indica di riprovare non prima del {retry}; non garantisce il ripristino di tutte le quote."
+            if retry else "Google non indica quando riprovare. Sospendo questo modello fino al prossimo giorno del contatore; non e' un reset garantito."
+        )
+    return GEMINI_NOTICES[notice].format(model=model, retry=retry)
 
 DAILY_READ_SUCCESS = (
     "✅ Saldi letti dal portale e salvati localmente · anno scout {year}.\n"
