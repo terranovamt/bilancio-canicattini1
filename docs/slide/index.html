@@ -979,6 +979,7 @@
   <div id="msg">
     <div>Non trovo <b>dati.js</b> nella stessa cartella di questa pagina.</div>
   </div>
+  <script src="config.js"></script>
   <script>
     const pm = document.getElementById('pm');
     const ph = document.getElementById('ph'), st = document.getElementById('stage'), prog = document.getElementById('prog'), cnt = document.getElementById('cnt');
@@ -1705,7 +1706,7 @@
       new MutationObserver(all).observe(st, { childList: true });
       if (document.fonts) document.fonts.ready.then(all);
     })();
-    load(true); setInterval(load, 1000);
+    load(true); setInterval(load, window.LIVE && LIVE.ruolo === 'pubblico' ? 30000 : 1000);
     /* ---- esporta tutte le slide in PDF (stato finale, senza animazioni) ---- */
     let pdfBusy = false;
     async function exportPdf() {
